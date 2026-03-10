@@ -133,12 +133,16 @@ function prepareGroupEnvironment(
   delete cleanEnv.CLAUDECODE;
   delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
 
-  // Ensure node is findable by SDK subprocess (cli.js uses #!/usr/bin/env node)
+  // Ensure node and npm-global binaries (codex, etc.) are findable
   const nodeBin = path.dirname(process.execPath);
+  const npmGlobalBin = path.join(os.homedir(), '.npm-global', 'bin');
   const currentPath = cleanEnv.PATH || '/usr/local/bin:/usr/bin:/bin';
-  const enrichedPath = currentPath.includes(nodeBin)
-    ? currentPath
-    : `${nodeBin}:${currentPath}`;
+  const extraPaths = [nodeBin, npmGlobalBin].filter(
+    (p) => !currentPath.includes(p) && fs.existsSync(p),
+  );
+  const enrichedPath = extraPaths.length > 0
+    ? `${extraPaths.join(':')}:${currentPath}`
+    : currentPath;
 
   const env: Record<string, string> = {
     ...cleanEnv,

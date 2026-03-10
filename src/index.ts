@@ -257,6 +257,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
       }
+      // Clear typing indicator after sending a response — the runner may stay
+      // alive waiting for IPC messages, but the user shouldn't see "typing..."
+      await channel.setTyping?.(chatJid, false);
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
