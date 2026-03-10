@@ -225,13 +225,25 @@ export class DiscordChannel implements Channel {
 
       const textChannel = channel as TextChannel;
 
+      // Convert @username mentions to Discord mention format
+      const mentionMap: Record<string, string> = {
+        '눈쟁이': '216851709744513024',
+      };
+      let resolved = text;
+      for (const [name, id] of Object.entries(mentionMap)) {
+        resolved = resolved.replace(
+          new RegExp(`@${name}`, 'g'),
+          `<@${id}>`,
+        );
+      }
+
       // Discord has a 2000 character limit per message — split if needed
       const MAX_LENGTH = 2000;
-      if (text.length <= MAX_LENGTH) {
-        await textChannel.send(text);
+      if (resolved.length <= MAX_LENGTH) {
+        await textChannel.send(resolved);
       } else {
-        for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await textChannel.send(text.slice(i, i + MAX_LENGTH));
+        for (let i = 0; i < resolved.length; i += MAX_LENGTH) {
+          await textChannel.send(resolved.slice(i, i + MAX_LENGTH));
         }
       }
       logger.info({ jid, length: text.length }, 'Discord message sent');
