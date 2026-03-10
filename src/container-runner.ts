@@ -81,18 +81,25 @@ function prepareGroupEnvironment(
   }
 
   // Sync skills and commands into each group's .claude/ session dir
-  // Sources: 1) user's global ~/.claude/  2) container/skills/ (nanoclaw bundled)
+  // Sources: 1) user's global ~/.claude/  2) project workDir/.claude/  3) container/skills/
+  const workDirClaude = group.workDir
+    ? path.join(group.workDir, '.claude')
+    : null;
   const syncDirs = [
     {
       dst: path.join(groupSessionsDir, 'skills'),
       sources: [
         path.join(os.homedir(), '.claude', 'skills'),
+        ...(workDirClaude ? [path.join(workDirClaude, 'skills')] : []),
         path.join(projectRoot, 'container', 'skills'),
       ],
     },
     {
       dst: path.join(groupSessionsDir, 'commands'),
-      sources: [path.join(os.homedir(), '.claude', 'commands')],
+      sources: [
+        path.join(os.homedir(), '.claude', 'commands'),
+        ...(workDirClaude ? [path.join(workDirClaude, 'commands')] : []),
+      ],
     },
   ];
   for (const { dst, sources } of syncDirs) {
