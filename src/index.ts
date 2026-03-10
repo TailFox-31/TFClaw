@@ -244,40 +244,30 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   await channel.setTyping?.(chatJid, true);
 
-  const output = await runAgent(
-    group,
-    prompt,
-    chatJid,
-    async (result) => {
-      if (result.result) {
-        const raw =
-          typeof result.result === 'string'
-            ? result.result
-            : JSON.stringify(result.result);
-        const text = raw
-          .replace(/<internal>[\s\S]*?<\/internal>/g, '')
-          .trim();
-        logger.info(
-          { group: group.name },
-          `Agent output: ${raw.slice(0, 200)}`,
-        );
-        if (text) {
-          await channel.sendMessage(chatJid, text);
-          outputSentToUser = true;
-        }
-        await channel.setTyping?.(chatJid, false);
-        resetIdleTimer();
+  const output = await runAgent(group, prompt, chatJid, async (result) => {
+    if (result.result) {
+      const raw =
+        typeof result.result === 'string'
+          ? result.result
+          : JSON.stringify(result.result);
+      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
+      if (text) {
+        await channel.sendMessage(chatJid, text);
+        outputSentToUser = true;
       }
+      await channel.setTyping?.(chatJid, false);
+      resetIdleTimer();
+    }
 
-      if (result.status === 'success') {
-        queue.notifyIdle(chatJid);
-      }
+    if (result.status === 'success') {
+      queue.notifyIdle(chatJid);
+    }
 
-      if (result.status === 'error') {
-        hadError = true;
-      }
-    },
-  );
+    if (result.status === 'error') {
+      hadError = true;
+    }
+  });
 
   await channel.setTyping?.(chatJid, false);
 
