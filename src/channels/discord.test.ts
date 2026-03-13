@@ -13,6 +13,7 @@ vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
   TRIGGER_PATTERN: /^@Andy\b/i,
   DATA_DIR: '/tmp/nanoclaw-test-data',
+  CACHE_DIR: '/tmp/nanoclaw-test-cache',
 }));
 
 // Mock logger

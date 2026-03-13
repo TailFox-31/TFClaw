@@ -10,11 +10,12 @@ import {
   TextChannel,
 } from 'discord.js';
 
-import { ASSISTANT_NAME, DATA_DIR, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, CACHE_DIR, DATA_DIR, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 
 const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
+const TRANSCRIPTION_CACHE_DIR = path.join(CACHE_DIR, 'transcriptions');
 
 /**
  * Download a Discord image attachment to local disk.
@@ -35,14 +36,53 @@ async function downloadImage(att: Attachment): Promise<string> {
 }
 
 /**
+ * Wait for a pending transcription from the other service (poll cache file).
+ * Returns the cached text, or null if timeout.
+ */
+async function waitForPendingTranscription(
+  cacheFile: string,
+  timeoutMs = 15000,
+): Promise<string | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 300));
+    if (fs.existsSync(cacheFile)) {
+      return fs.readFileSync(cacheFile, 'utf-8');
+    }
+  }
+  return null;
+}
+
+/**
  * Transcribe an audio attachment via OpenAI Whisper API.
- * Returns the transcribed text, or a fallback placeholder on failure.
+ * Uses shared file cache so both services don't duplicate API calls.
  */
 async function transcribeAudio(
   att: Attachment,
   apiKey: string,
 ): Promise<string> {
+  fs.mkdirSync(TRANSCRIPTION_CACHE_DIR, { recursive: true });
+  const cacheFile = path.join(TRANSCRIPTION_CACHE_DIR, `${att.id}.txt`);
+  const pendingFile = path.join(TRANSCRIPTION_CACHE_DIR, `${att.id}.pending`);
+
+  // Check cache first
+  if (fs.existsSync(cacheFile)) {
+    logger.info({ attId: att.id }, 'Transcription cache hit');
+    return fs.readFileSync(cacheFile, 'utf-8');
+  }
+
+  // Another service is already transcribing — wait for result
+  if (fs.existsSync(pendingFile)) {
+    logger.info({ attId: att.id }, 'Waiting for pending transcription');
+    const cached = await waitForPendingTranscription(cacheFile);
+    if (cached) return cached;
+    // Timeout — fall through and transcribe ourselves
+  }
+
   try {
+    // Mark as pending
+    fs.writeFileSync(pendingFile, process.pid.toString());
+
     const res = await fetch(att.url);
     if (!res.ok) throw new Error(`Download failed: ${res.status}`);
     const buffer = Buffer.from(await res.arrayBuffer());
@@ -65,14 +105,25 @@ async function transcribeAudio(
       throw new Error(`Whisper API ${whisperRes.status}: ${errText}`);
     }
     const data = (await whisperRes.json()) as { text: string };
+    const result = `[Voice message transcription]: ${data.text}`;
+
+    // Save to cache for the other service
+    fs.writeFileSync(cacheFile, result);
     logger.info(
       { file: filename, length: data.text.length },
-      'Audio transcribed',
+      'Audio transcribed + cached',
     );
-    return `[Voice message transcription]: ${data.text}`;
+    return result;
   } catch (err) {
     logger.error({ err, file: att.name }, 'Audio transcription failed');
     return `[Audio: ${att.name || 'audio'} (transcription failed)]`;
+  } finally {
+    // Clean up pending marker
+    try {
+      fs.unlinkSync(pendingFile);
+    } catch {
+      /* ignore */
+    }
   }
 }
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -511,12 +562,8 @@ export class DiscordChannel implements Channel {
 
         // Separate into bulk-deletable (< 14 days) and old messages
         const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
-        const recent = messages.filter(
-          (m) => m.createdTimestamp > twoWeeksAgo,
-        );
-        const old = messages.filter(
-          (m) => m.createdTimestamp <= twoWeeksAgo,
-        );
+        const recent = messages.filter((m) => m.createdTimestamp > twoWeeksAgo);
+        const old = messages.filter((m) => m.createdTimestamp <= twoWeeksAgo);
 
         if (recent.size >= 2) {
           await tc.bulkDelete(recent);

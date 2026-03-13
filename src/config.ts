@@ -31,6 +31,8 @@ export const GROUPS_DIR = path.resolve(
 export const DATA_DIR = path.resolve(
   process.env.NANOCLAW_DATA_DIR || path.join(PROJECT_ROOT, 'data'),
 );
+// Shared cache directory (same across both services for dedup)
+export const CACHE_DIR = path.join(PROJECT_ROOT, 'cache');
 
 export const AGENT_TIMEOUT = parseInt(
   process.env.AGENT_TIMEOUT || '1800000',
