@@ -747,9 +747,7 @@ async function buildUsageContent(): Promise<string> {
 
   lines.push(`• 업타임: ${formatElapsed(process.uptime() * 1000)}`);
 
-  return (
-    lines.join('\n') + `\n\n_${new Date().toLocaleTimeString('ko-KR')}_`
-  );
+  return lines.join('\n') + `\n\n_${new Date().toLocaleTimeString('ko-KR')}_`;
 }
 
 // ── Dashboard Lifecycle ─────────────────────────────────────────
@@ -791,6 +789,8 @@ let usageUpdateInProgress = false;
 
 async function startUsageDashboard(): Promise<void> {
   if (!STATUS_CHANNEL_ID) return;
+  // Only one service should show usage (set USAGE_DASHBOARD=true on that service)
+  if (process.env.USAGE_DASHBOARD !== 'true') return;
 
   const statusJid = `dc:${STATUS_CHANNEL_ID}`;
 
