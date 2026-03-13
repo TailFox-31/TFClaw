@@ -494,6 +494,53 @@ export class DiscordChannel implements Channel {
     return result;
   }
 
+  async purgeChannel(jid: string): Promise<number> {
+    if (!this.client) return 0;
+    let deleted = 0;
+    try {
+      const channelId = jid.replace(/^dc:/, '');
+      const channel = await this.client.channels.fetch(channelId);
+      if (!channel || !('bulkDelete' in channel)) return 0;
+      const tc = channel as TextChannel;
+
+      // Fetch and delete in batches (bulkDelete handles up to 100, only < 14 days old)
+      let hasMore = true;
+      while (hasMore) {
+        const messages = await tc.messages.fetch({ limit: 100 });
+        if (messages.size === 0) break;
+
+        // Separate into bulk-deletable (< 14 days) and old messages
+        const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+        const recent = messages.filter(
+          (m) => m.createdTimestamp > twoWeeksAgo,
+        );
+        const old = messages.filter(
+          (m) => m.createdTimestamp <= twoWeeksAgo,
+        );
+
+        if (recent.size >= 2) {
+          await tc.bulkDelete(recent);
+          deleted += recent.size;
+        } else if (recent.size === 1) {
+          await recent.first()!.delete();
+          deleted += 1;
+        }
+
+        for (const [, msg] of old) {
+          await msg.delete();
+          deleted += 1;
+        }
+
+        hasMore = messages.size === 100;
+      }
+
+      logger.info({ jid, deleted }, 'Purged channel messages');
+    } catch (err) {
+      logger.error({ jid, err, deleted }, 'Failed to purge channel messages');
+    }
+    return deleted;
+  }
+
   async editMessage(
     jid: string,
     messageId: string,

@@ -88,6 +88,8 @@ export interface Channel {
   syncGroups?(force: boolean): Promise<void>;
   // Optional: get channel metadata (position, category) for ordering.
   getChannelMeta?(jids: string[]): Promise<Map<string, ChannelMeta>>;
+  // Optional: delete all messages in a channel (used for dashboard cleanup).
+  purgeChannel?(jid: string): Promise<number>;
 }
 
 // Callback type that channels use to deliver inbound messages

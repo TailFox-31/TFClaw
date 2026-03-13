@@ -756,7 +756,10 @@ async function buildUsageContent(): Promise<string> {
 
   lines.push(`• 업타임: ${formatElapsed(os.uptime() * 1000)}`);
 
-  return lines.join('\n') + `\n\n_${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}_`;
+  return (
+    lines.join('\n') +
+    `\n\n_${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}_`
+  );
 }
 
 // ── Dashboard Lifecycle ─────────────────────────────────────────
@@ -1115,6 +1118,16 @@ async function main(): Promise<void> {
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
+  // Purge old messages in status channel before creating fresh dashboards
+  if (STATUS_CHANNEL_ID) {
+    const statusJid = `dc:${STATUS_CHANNEL_ID}`;
+    const ch = channels.find(
+      (c) => c.name.startsWith('discord') && c.isConnected() && c.purgeChannel,
+    );
+    if (ch?.purgeChannel) {
+      await ch.purgeChannel(statusJid);
+    }
+  }
   await startStatusDashboard();
   await startUsageDashboard();
   startMessageLoop().catch((err) => {
