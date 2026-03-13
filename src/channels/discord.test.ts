@@ -494,13 +494,38 @@ describe('DiscordChannel', () => {
   // --- Attachments ---
 
   describe('attachments', () => {
+    let originalFetch: typeof globalThis.fetch;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        }),
+      );
+    });
+
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+    });
+
     it('stores image attachment with placeholder', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
 
       const attachments = new Map([
-        ['att1', { name: 'photo.png', contentType: 'image/png' }],
+        [
+          'att1',
+          {
+            id: 'att1',
+            name: 'photo.png',
+            contentType: 'image/png',
+            url: 'https://cdn.example.com/photo.png',
+          },
+        ],
       ]);
       const msg = createMessage({
         content: '',
@@ -512,7 +537,7 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: '[Image: photo.png]',
+          content: expect.stringMatching(/^\[Image: .+\.png\]$/),
         }),
       );
     });
@@ -569,7 +594,15 @@ describe('DiscordChannel', () => {
       await channel.connect();
 
       const attachments = new Map([
-        ['att1', { name: 'photo.jpg', contentType: 'image/jpeg' }],
+        [
+          'att1',
+          {
+            id: 'att1',
+            name: 'photo.jpg',
+            contentType: 'image/jpeg',
+            url: 'https://cdn.example.com/photo.jpg',
+          },
+        ],
       ]);
       const msg = createMessage({
         content: 'Check this out',
@@ -581,7 +614,7 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: 'Check this out\n[Image: photo.jpg]',
+          content: expect.stringMatching(/^Check this out\n\[Image: .+\.jpg\]$/),
         }),
       );
     });
@@ -592,7 +625,15 @@ describe('DiscordChannel', () => {
       await channel.connect();
 
       const attachments = new Map([
-        ['att1', { name: 'a.png', contentType: 'image/png' }],
+        [
+          'att1',
+          {
+            id: 'att1',
+            name: 'a.png',
+            contentType: 'image/png',
+            url: 'https://cdn.example.com/a.png',
+          },
+        ],
         ['att2', { name: 'b.txt', contentType: 'text/plain' }],
       ]);
       const msg = createMessage({
@@ -605,7 +646,7 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: '[Image: a.png]\n[File: b.txt]',
+          content: expect.stringMatching(/^\[Image: .+\.png\]\n\[File: b\.txt\]$/),
         }),
       );
     });
@@ -702,8 +743,14 @@ describe('DiscordChannel', () => {
       await channel.sendMessage('dc:1234567890123456', longText);
 
       expect(mockChannel.send).toHaveBeenCalledTimes(2);
-      expect(mockChannel.send).toHaveBeenNthCalledWith(1, 'x'.repeat(2000));
-      expect(mockChannel.send).toHaveBeenNthCalledWith(2, 'x'.repeat(1000));
+      expect(mockChannel.send).toHaveBeenNthCalledWith(1, {
+        content: 'x'.repeat(2000),
+        files: undefined,
+      });
+      expect(mockChannel.send).toHaveBeenNthCalledWith(2, {
+        content: 'x'.repeat(1000),
+        files: undefined,
+      });
     });
   });
 

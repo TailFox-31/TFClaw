@@ -79,6 +79,7 @@ import { registerChannel, ChannelOpts } from './registry.js';
 import {
   AgentType,
   Channel,
+  ChannelMeta,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
@@ -436,6 +437,59 @@ export class DiscordChannel implements Channel {
       logger.error({ jid, err }, 'Failed to send tracked Discord message');
       return null;
     }
+  }
+
+  async getChannelMeta(jids: string[]): Promise<Map<string, ChannelMeta>> {
+    const result = new Map<string, ChannelMeta>();
+    if (!this.client) return result;
+
+    const dcJids = jids.filter((j) => j.startsWith('dc:'));
+    if (dcJids.length === 0) return result;
+
+    const channelIdToJid = new Map<string, string>();
+    for (const jid of dcJids) {
+      channelIdToJid.set(jid.replace(/^dc:/, ''), jid);
+    }
+
+    try {
+      // Fetch one channel to discover its guild, then batch-fetch all channels
+      const firstId = dcJids[0].replace(/^dc:/, '');
+      const firstChannel = await this.client.channels.fetch(firstId);
+      if (!firstChannel || !('guild' in firstChannel)) return result;
+
+      const guild = (firstChannel as TextChannel).guild;
+      const allChannels = await guild.channels.fetch();
+
+      for (const [id, channel] of allChannels) {
+        const jid = channelIdToJid.get(id);
+        if (!jid || !channel) continue;
+        result.set(jid, {
+          position: channel.position,
+          category: channel.parent?.name || '',
+          categoryPosition: channel.parent?.position ?? 999,
+        });
+      }
+    } catch {
+      // Fallback: individual fetches
+      for (const jid of dcJids) {
+        try {
+          const channelId = jid.replace(/^dc:/, '');
+          const channel = await this.client.channels.fetch(channelId);
+          if (channel && 'position' in channel) {
+            const tc = channel as TextChannel;
+            result.set(jid, {
+              position: tc.position,
+              category: tc.parent?.name || '',
+              categoryPosition: tc.parent?.position ?? 999,
+            });
+          }
+        } catch {
+          /* skip inaccessible channels */
+        }
+      }
+    }
+
+    return result;
   }
 
   async editMessage(

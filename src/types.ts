@@ -65,6 +65,12 @@ export interface TaskRunLog {
 
 // --- Channel abstraction ---
 
+export interface ChannelMeta {
+  position: number;
+  category: string;
+  categoryPosition: number;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
@@ -79,6 +85,8 @@ export interface Channel {
   sendAndTrack?(jid: string, text: string): Promise<string | null>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: get channel metadata (position, category) for ordering.
+  getChannelMeta?(jids: string[]): Promise<Map<string, ChannelMeta>>;
 }
 
 // Callback type that channels use to deliver inbound messages

@@ -1,4 +1,6 @@
+import { execSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -9,6 +11,7 @@ import {
   STATUS_UPDATE_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
+  USAGE_UPDATE_INTERVAL,
 } from './config.js';
 import './channels/index.js';
 import {
@@ -58,7 +61,7 @@ import {
   startTokenRefreshLoop,
   stopTokenRefreshLoop,
 } from './token-refresh.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, ChannelMeta, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -383,14 +386,28 @@ async function runAgent(
   }
 }
 
-// ── Status Dashboard ────────────────────────────────────────────
+// ── Status & Usage Dashboards ───────────────────────────────────
 
 function formatElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return `${m}m${rem.toString().padStart(2, '0')}s`;
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return `${m}m${rem.toString().padStart(2, '0')}s`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h < 24) return `${h}h${m.toString().padStart(2, '0')}m`;
+  const d = Math.floor(h / 24);
+  const remH = h % 24;
+  return `${d}d${remH}h`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)}GB`;
+  if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(0)}MB`;
+  return `${(bytes / 1024).toFixed(0)}KB`;
 }
 
 const STATUS_ICONS: Record<string, string> = {
@@ -401,30 +418,145 @@ const STATUS_ICONS: Record<string, string> = {
 };
 
 let statusMessageId: string | null = null;
+let usageMessageId: string | null = null;
+
+// Cache for Discord channel metadata (position, category)
+let channelMetaCache = new Map<string, ChannelMeta>();
+let channelMetaLastRefresh = 0;
+const CHANNEL_META_REFRESH_MS = 300000; // 5 minutes
+
+async function refreshChannelMeta(): Promise<void> {
+  const now = Date.now();
+  if (now - channelMetaLastRefresh < CHANNEL_META_REFRESH_MS) return;
+
+  const ch = channels.find(
+    (c) => c.name.startsWith('discord') && c.isConnected() && c.getChannelMeta,
+  );
+  if (!ch?.getChannelMeta) return;
+
+  const jids = Object.keys(registeredGroups).filter((j) =>
+    j.startsWith('dc:'),
+  );
+  try {
+    channelMetaCache = await ch.getChannelMeta(jids);
+    channelMetaLastRefresh = now;
+  } catch (err) {
+    logger.debug({ err }, 'Failed to refresh channel metadata');
+  }
+}
+
+function getStatusLabel(
+  s: import('./group-queue.js').GroupStatus,
+): string {
+  if (s.status === 'processing')
+    return `처리 중 (${formatElapsed(s.elapsedMs || 0)})`;
+  if (s.status === 'idle') return '대기 중';
+  if (s.status === 'waiting')
+    return s.pendingTasks > 0
+      ? `큐 대기 (태스크 ${s.pendingTasks}개)`
+      : '큐 대기 (메시지)';
+  return '비활성';
+}
 
 function buildStatusContent(): string {
   const jids = Object.keys(registeredGroups);
   const statuses = queue.getStatuses(jids);
 
-  const lines = statuses.map((s) => {
-    const group = registeredGroups[s.jid];
-    const name = group?.name || s.jid;
-    const icon = STATUS_ICONS[s.status] || '⚪';
-    const label =
-      s.status === 'processing'
-        ? `처리 중 (${formatElapsed(s.elapsedMs || 0)})`
-        : s.status === 'idle'
-          ? '대기 중'
-          : s.status === 'waiting'
-            ? `큐 대기 (${s.pendingTasks > 0 ? `태스크 ${s.pendingTasks}개` : '메시지'})`
-            : '비활성';
-    return `${icon} **${name}** — ${label}`;
+  const entries = statuses
+    .map((s) => ({
+      status: s,
+      group: registeredGroups[s.jid],
+      meta: channelMetaCache.get(s.jid),
+    }))
+    .filter((e) => e.group);
+
+  // Group by category
+  const categoryMap = new Map<string, typeof entries>();
+  for (const entry of entries) {
+    const cat = entry.meta?.category || '기타';
+    if (!categoryMap.has(cat)) categoryMap.set(cat, []);
+    categoryMap.get(cat)!.push(entry);
+  }
+
+  // Sort categories by position
+  const sortedCategories = [...categoryMap.entries()].sort((a, b) => {
+    const posA = a[1][0]?.meta?.categoryPosition ?? 999;
+    const posB = b[1][0]?.meta?.categoryPosition ?? 999;
+    return posA - posB;
   });
 
-  const active = statuses.filter((s) => s.status === 'processing').length;
-  const idle = statuses.filter((s) => s.status === 'idle').length;
-  const header = `**에이전트 상태** (${ASSISTANT_NAME}) — 활성 ${active} | 대기 ${idle} | 전체 ${statuses.length}`;
-  return `${header}\n\n${lines.join('\n')}\n\n_${new Date().toLocaleTimeString('ko-KR')}_`;
+  const sections: string[] = [];
+  let totalActive = 0;
+  let totalIdle = 0;
+  let total = 0;
+
+  for (const [catName, catEntries] of sortedCategories) {
+    catEntries.sort(
+      (a, b) => (a.meta?.position ?? 999) - (b.meta?.position ?? 999),
+    );
+
+    const lines = catEntries.map((e) => {
+      const icon = STATUS_ICONS[e.status.status] || '⚪';
+      const label = getStatusLabel(e.status);
+      return `  ${icon} **${e.group.name}** — ${label}`;
+    });
+
+    if (channelMetaCache.size > 0 && catName !== '기타') {
+      sections.push(`📁 **${catName}**\n${lines.join('\n')}`);
+    } else {
+      sections.push(lines.join('\n'));
+    }
+
+    totalActive += catEntries.filter(
+      (e) => e.status.status === 'processing',
+    ).length;
+    totalIdle += catEntries.filter(
+      (e) => e.status.status === 'idle',
+    ).length;
+    total += catEntries.length;
+  }
+
+  const header = `**에이전트 상태** (${ASSISTANT_NAME}) — 활성 ${totalActive} | 대기 ${totalIdle} | 전체 ${total}`;
+  return `${header}\n\n${sections.join('\n\n')}\n\n_${new Date().toLocaleTimeString('ko-KR')}_`;
+}
+
+function buildUsageContent(): string {
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  const memPercent = Math.round((usedMem / totalMem) * 100);
+
+  const loadAvg = os.loadavg();
+  const cpuCount = os.cpus().length;
+
+  let diskInfo = '확인 불가';
+  try {
+    const df = execSync('df -h / | tail -1', {
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim();
+    const parts = df.split(/\s+/);
+    diskInfo = `${parts[2]} / ${parts[1]} (${parts[4]})`;
+  } catch {
+    /* ignore */
+  }
+
+  const uptimeMs = process.uptime() * 1000;
+  const procMem = process.memoryUsage();
+
+  const lines = [
+    `**시스템 리소스** (${ASSISTANT_NAME})`,
+    ``,
+    `💻 CPU: ${loadAvg[0].toFixed(1)} / ${cpuCount} cores (1m avg)`,
+    `🧠 시스템 메모리: ${formatBytes(usedMem)} / ${formatBytes(totalMem)} (${memPercent}%)`,
+    `💾 디스크: ${diskInfo}`,
+    `📦 프로세스 메모리: ${formatBytes(procMem.rss)}`,
+    `⏱️ 업타임: ${formatElapsed(uptimeMs)}`,
+  ];
+
+  return (
+    lines.join('\n') + `\n\n_${new Date().toLocaleTimeString('ko-KR')}_`
+  );
 }
 
 async function startStatusDashboard(): Promise<void> {
@@ -440,6 +572,7 @@ async function startStatusDashboard(): Promise<void> {
     if (!ch) return;
 
     try {
+      await refreshChannelMeta();
       const content = buildStatusContent();
 
       if (statusMessageId && ch.editMessage) {
@@ -450,14 +583,45 @@ async function startStatusDashboard(): Promise<void> {
       }
     } catch (err) {
       logger.debug({ err }, 'Status dashboard update failed');
-      statusMessageId = null; // Reset on error, will re-create next tick
+      statusMessageId = null;
     }
   };
 
   setInterval(updateStatus, STATUS_UPDATE_INTERVAL);
-  // Initial send
   await updateStatus();
   logger.info({ channelId: STATUS_CHANNEL_ID }, 'Status dashboard started');
+}
+
+async function startUsageDashboard(): Promise<void> {
+  if (!STATUS_CHANNEL_ID) return;
+
+  const statusJid = `dc:${STATUS_CHANNEL_ID}`;
+
+  const findDiscordChannel = () =>
+    channels.find((c) => c.name.startsWith('discord') && c.isConnected());
+
+  const updateUsage = async () => {
+    const ch = findDiscordChannel();
+    if (!ch) return;
+
+    try {
+      const content = buildUsageContent();
+
+      if (usageMessageId && ch.editMessage) {
+        await ch.editMessage(statusJid, usageMessageId, content);
+      } else if (ch.sendAndTrack) {
+        const id = await ch.sendAndTrack(statusJid, content);
+        if (id) usageMessageId = id;
+      }
+    } catch (err) {
+      logger.debug({ err }, 'Usage dashboard update failed');
+      usageMessageId = null;
+    }
+  };
+
+  setInterval(updateUsage, USAGE_UPDATE_INTERVAL);
+  await updateUsage();
+  logger.info('Usage dashboard started');
 }
 
 async function startMessageLoop(): Promise<void> {
@@ -738,6 +902,7 @@ async function main(): Promise<void> {
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   await startStatusDashboard();
+  await startUsageDashboard();
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

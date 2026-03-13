@@ -59,6 +59,7 @@ export const TRIGGER_PATTERN = new RegExp(
 // Status dashboard: Discord channel ID for live agent status updates
 export const STATUS_CHANNEL_ID = process.env.STATUS_CHANNEL_ID || '';
 export const STATUS_UPDATE_INTERVAL = 10000; // 10s
+export const USAGE_UPDATE_INTERVAL = 300000; // 5 minutes
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
