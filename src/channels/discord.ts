@@ -323,9 +323,15 @@ export class DiscordChannel implements Channel {
         }
       }
       let cleaned = text
-        .replace(MD_LINK_RE, (full, p) =>
-          IMAGE_EXTS.test(p) && seen.has(p.trim()) ? '' : full,
-        )
+        .replace(MD_LINK_RE, (full, p, _offset, _str, groups) => {
+          const trimmed = p.trim();
+          // Image links: remove entirely (attached as files)
+          if (IMAGE_EXTS.test(trimmed) && seen.has(trimmed)) return '';
+          // Non-image local path links: convert to readable filename
+          const basename = path.basename(trimmed.replace(/#.*$/, ''));
+          const lineMatch = trimmed.match(/#L(\d+)/);
+          return lineMatch ? `\`${basename}:${lineMatch[1]}\`` : `\`${basename}\``;
+        })
         .trim();
 
       // Convert @username mentions to Discord mention format
