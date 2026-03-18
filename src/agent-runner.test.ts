@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
+import fs from 'fs';
 
 // Sentinel markers must match agent-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -211,5 +212,42 @@ describe('agent-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+
+  it('materializes repo-managed Claude rules into the session CLAUDE.md', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const path = String(p);
+      return (
+        path.includes('dist/index.js') ||
+        path.endsWith('/prompts/claude-platform.md') ||
+        path.endsWith('/global/CLAUDE.md')
+      );
+    });
+    vi.mocked(fs.readFileSync).mockImplementation((p: fs.PathOrFileDescriptor) => {
+      const path = String(p);
+      if (path.endsWith('/prompts/claude-platform.md')) {
+        return 'Platform Claude Rules';
+      }
+      if (path.endsWith('/global/CLAUDE.md')) {
+        return 'Global Claude Memory';
+      }
+      return '';
+    });
+
+    const resultPromise = runAgentProcess(
+      testGroup,
+      testInput,
+      () => {},
+      undefined,
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      '/tmp/nanoclaw-test-data/sessions/test-group/.claude/CLAUDE.md',
+      'Platform Claude Rules\n\n---\n\nGlobal Claude Memory\n',
+    );
   });
 });

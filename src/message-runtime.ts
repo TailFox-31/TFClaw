@@ -14,13 +14,15 @@ import {
 } from './db.js';
 import { isSessionCommandSenderAllowed } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
-import { findChannel, formatMessages } from './router.js';
+import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
   extractSessionCommand,
   handleSessionCommand,
   isSessionCommandAllowed,
+  isSessionCommandControlMessage,
 } from './session-commands.js';
+import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -68,6 +70,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 } {
   let messageLoopRunning = false;
 
+  const filterOwnChannelMessages = (messages: NewMessage[]): NewMessage[] =>
+    messages.filter((msg) => {
+      const channel = findChannel(deps.channels, msg.chat_jid);
+      if (channel?.isOwnMessage?.(msg)) {
+        return false;
+      }
+      if (msg.is_bot_message && isSessionCommandControlMessage(msg.content)) {
+        return false;
+      }
+      return true;
+    });
+
   const getCurrentAvailableGroups = (): AvailableGroup[] =>
     getAvailableGroups(deps.getRegisteredGroups());
 
@@ -79,6 +93,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     onOutput?: (output: AgentOutput) => Promise<void>,
   ): Promise<'success' | 'error'> => {
     const isMain = group.isMain === true;
+    const isClaudeCodeAgent = (group.agentType || 'claude-code') === 'claude-code';
     const sessions = deps.getSessions();
     const sessionId = sessions[group.folder];
 
@@ -99,10 +114,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     writeGroupsSnapshot(group.folder, isMain, getCurrentAvailableGroups());
 
+    let resetSessionRequested = false;
+
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
           if (output.newSessionId) {
             deps.persistSession(group.folder, output.newSessionId);
+          }
+          if (
+            isClaudeCodeAgent &&
+            shouldResetSessionOnAgentFailure(output)
+          ) {
+            resetSessionRequested = true;
           }
           await onOutput(output);
         }
@@ -127,6 +150,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       if (output.newSessionId) {
         deps.persistSession(group.folder, output.newSessionId);
+      }
+
+      if (
+        isClaudeCodeAgent &&
+        (resetSessionRequested ||
+          shouldResetSessionOnAgentFailure(output))
+      ) {
+        deps.clearSession(group.folder);
+        logger.warn(
+          { group: group.name, chatJid, runId },
+          'Cleared poisoned agent session after unrecoverable error',
+        );
       }
 
       if (output.status === 'error') {
@@ -171,10 +206,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const isMainGroup = group.isMain === true;
     const lastAgentTimestamps = deps.getLastAgentTimestamps();
     const sinceTimestamp = lastAgentTimestamps[chatJid] || '';
-    const missedMessages = getMessagesSince(
-      chatJid,
-      sinceTimestamp,
-      deps.assistantName,
+    const missedMessages = filterOwnChannelMessages(
+      getMessagesSince(
+        chatJid,
+        sinceTimestamp,
+        deps.assistantName,
+      ),
     );
 
     if (missedMessages.length === 0) {
@@ -280,6 +317,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     );
 
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let latestProgressText: string | null = null;
 
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
@@ -296,7 +334,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     };
 
     let hadError = false;
-    let outputSentToUser = false;
+    let finalOutputSentToUser = false;
+    let progressOutputSentToUser = false;
+    let poisonedSessionDetected = false;
+    const isClaudeCodeAgent = (group.agentType || 'claude-code') === 'claude-code';
+
+    const sendProgressMessage = async (text: string) => {
+      if (!text || text === latestProgressText) {
+        return;
+      }
+
+      latestProgressText = text;
+      await channel.sendMessage(chatJid, text);
+      progressOutputSentToUser = true;
+    };
 
     await channel.setTyping?.(chatJid, true);
 
@@ -306,14 +357,30 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       chatJid,
       runId,
       async (result) => {
+        if (
+          isClaudeCodeAgent &&
+          shouldResetSessionOnAgentFailure(result) &&
+          !poisonedSessionDetected
+        ) {
+          poisonedSessionDetected = true;
+          hadError = true;
+          deps.clearSession(group.folder);
+          deps.queue.closeStdin(chatJid, {
+            runId,
+            reason: 'poisoned-session',
+          });
+          logger.warn(
+            { chatJid, group: group.name, groupFolder: group.folder, runId },
+            'Detected poisoned Claude session from streamed output, forcing close',
+          );
+        }
+
         if (result.result) {
           const raw =
             typeof result.result === 'string'
               ? result.result
               : JSON.stringify(result.result);
-          const text = raw
-            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
-            .trim();
+          const text = formatOutbound(raw);
           logger.info(
             {
               chatJid,
@@ -324,16 +391,26 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             },
             `Agent output: ${raw.slice(0, 200)}`,
           );
+          if (result.phase === 'progress') {
+            if (text) {
+              await sendProgressMessage(text);
+            }
+            return;
+          }
+
           if (text) {
             await channel.sendMessage(chatJid, text);
-            outputSentToUser = true;
+            finalOutputSentToUser = true;
           }
         }
 
         await channel.setTyping?.(chatJid, false);
-        resetIdleTimer();
 
-        if (result.status === 'success') {
+        if (!poisonedSessionDetected) {
+          resetIdleTimer();
+        }
+
+        if (result.status === 'success' && !poisonedSessionDetected) {
           deps.queue.notifyIdle(chatJid, runId);
         }
 
@@ -352,10 +429,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     if (idleTimer) clearTimeout(idleTimer);
 
     if (hadError) {
-      if (outputSentToUser) {
+      if (finalOutputSentToUser || progressOutputSentToUser) {
         logger.warn(
           { chatJid, group: group.name, groupFolder: group.folder, runId },
-          'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
+          'Agent error after conversational output was sent, skipping cursor rollback to prevent duplicates',
         );
         return true;
       }
@@ -374,7 +451,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         group: group.name,
         groupFolder: group.folder,
         runId,
-        outputSentToUser,
+        outputSentToUser: finalOutputSentToUser,
+        progressOutputSentToUser,
       },
       'Queued run completed successfully',
     );
@@ -395,17 +473,22 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       try {
         const registeredGroups = deps.getRegisteredGroups();
         const jids = Object.keys(registeredGroups);
-        const { messages, newTimestamp } = getNewMessages(
+        const { messages: rawMessages, newTimestamp } = getNewMessages(
           jids,
           deps.getLastTimestamp(),
           deps.assistantName,
         );
+        const messages = filterOwnChannelMessages(rawMessages);
 
-        if (messages.length > 0) {
+        if (rawMessages.length > 0) {
           logger.info({ count: messages.length }, 'New messages');
 
           deps.setLastTimestamp(newTimestamp);
           deps.saveState();
+
+          if (messages.length === 0) {
+            continue;
+          }
 
           const messagesByGroup = new Map<string, NewMessage[]>();
           for (const msg of messages) {
@@ -484,10 +567,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             }
 
             const lastAgentTimestamps = deps.getLastAgentTimestamps();
-            const allPending = getMessagesSince(
-              chatJid,
-              lastAgentTimestamps[chatJid] || '',
-              deps.assistantName,
+            const allPending = filterOwnChannelMessages(
+              getMessagesSince(
+                chatJid,
+                lastAgentTimestamps[chatJid] || '',
+                deps.assistantName,
+              ),
             );
             const messagesToSend =
               allPending.length > 0 ? allPending : groupMessages;
@@ -526,10 +611,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const lastAgentTimestamps = deps.getLastAgentTimestamps();
     for (const [chatJid, group] of Object.entries(registeredGroups)) {
       const sinceTimestamp = lastAgentTimestamps[chatJid] || '';
-      const pending = getMessagesSince(
-        chatJid,
-        sinceTimestamp,
-        deps.assistantName,
+      const pending = filterOwnChannelMessages(
+        getMessagesSince(
+          chatJid,
+          sinceTimestamp,
+          deps.assistantName,
+        ),
       );
       if (pending.length > 0) {
         logger.info(

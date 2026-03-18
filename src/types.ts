@@ -78,6 +78,8 @@ export interface Channel {
   sendMessage(jid: string, text: string): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
+  // Optional: whether a stored inbound message was authored by this channel's own bot/user.
+  isOwnMessage?(msg: NewMessage): boolean;
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;

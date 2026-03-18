@@ -313,9 +313,53 @@ describe('DiscordChannel', () => {
         expect.any(String),
         expect.objectContaining({
           content: 'I am a bot',
+          is_from_me: false,
           is_bot_message: true,
         }),
       );
+    });
+
+    it('ignores self-authored bot messages', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const msg = createMessage({
+        authorId: '999888777',
+        isBot: true,
+        content: 'I am this bot',
+      });
+      await triggerMessage(msg);
+
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('identifies stored messages authored by the current bot', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      expect(
+        channel.isOwnMessage?.({
+          id: 'msg_bot',
+          chat_jid: 'dc:1234567890123456',
+          sender: '999888777',
+          sender_name: 'Andy',
+          content: 'bot message',
+          timestamp: '2024-01-01T00:00:00.000Z',
+          is_bot_message: true,
+        }),
+      ).toBe(true);
+      expect(
+        channel.isOwnMessage?.({
+          id: 'msg_user',
+          chat_jid: 'dc:1234567890123456',
+          sender: '55512345',
+          sender_name: 'Alice',
+          content: 'user message',
+          timestamp: '2024-01-01T00:00:00.000Z',
+        }),
+      ).toBe(false);
     });
 
     it('uses member displayName when available (server nickname)', async () => {

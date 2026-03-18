@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   extractSessionCommand,
   handleSessionCommand,
+  isSessionCommandControlMessage,
   isSessionCommandAllowed,
 } from './session-commands.js';
 import type { NewMessage } from './types.js';
@@ -64,6 +65,28 @@ describe('isSessionCommandAllowed', () => {
 
   it('allows trusted sender in main group', () => {
     expect(isSessionCommandAllowed(true, true, false)).toBe(true);
+  });
+});
+
+describe('isSessionCommandControlMessage', () => {
+  it('matches clear confirmation output', () => {
+    expect(
+      isSessionCommandControlMessage(
+        'Current session cleared. The next message will start a new conversation.',
+      ),
+    ).toBe(true);
+  });
+
+  it('matches admin denial output', () => {
+    expect(
+      isSessionCommandControlMessage('Session commands require admin access.'),
+    ).toBe(true);
+  });
+
+  it('does not match regular bot conversation', () => {
+    expect(isSessionCommandControlMessage('좋네요. 필요해지면 바로 말씀드리겠습니다.')).toBe(
+      false,
+    );
   });
 });
 

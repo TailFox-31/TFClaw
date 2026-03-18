@@ -32,6 +32,8 @@ interface GroupState {
   processName: string | null;
   groupFolder: string | null;
   retryCount: number;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+  retryScheduledAt: number | null;
   startedAt: number | null;
 }
 
@@ -68,6 +70,8 @@ export class GroupQueue {
         processName: null,
         groupFolder: null,
         retryCount: 0,
+        retryTimer: null,
+        retryScheduledAt: null,
         startedAt: null,
       };
       this.groups.set(groupJid, state);
@@ -98,6 +102,22 @@ export class GroupQueue {
     if (state.active) {
       state.pendingMessages = true;
       logger.debug({ groupJid }, 'Agent active, message queued');
+      return;
+    }
+
+    if (
+      state.retryScheduledAt !== null &&
+      Date.now() < state.retryScheduledAt
+    ) {
+      state.pendingMessages = true;
+      logger.debug(
+        {
+          groupJid,
+          retryCount: state.retryCount,
+          retryScheduledAt: state.retryScheduledAt,
+        },
+        'Retry backoff active, message queued until retry window opens',
+      );
       return;
     }
 
@@ -335,6 +355,7 @@ export class GroupQueue {
         });
         if (success) {
           state.retryCount = 0;
+          state.retryScheduledAt = null;
         } else {
           outcome = 'retry_scheduled';
           this.scheduleRetry(groupJid, state, runId);
@@ -415,6 +436,11 @@ export class GroupQueue {
   ): void {
     state.retryCount++;
     if (state.retryCount > MAX_RETRIES) {
+      if (state.retryTimer) {
+        clearTimeout(state.retryTimer);
+        state.retryTimer = null;
+      }
+      state.retryScheduledAt = null;
       logger.error(
         { groupJid, runId, retryCount: state.retryCount },
         'Max retries exceeded, dropping messages (will retry on next incoming message)',
@@ -424,11 +450,17 @@ export class GroupQueue {
     }
 
     const delayMs = BASE_RETRY_MS * Math.pow(2, state.retryCount - 1);
+    state.retryScheduledAt = Date.now() + delayMs;
     logger.info(
       { groupJid, runId, retryCount: state.retryCount, delayMs },
       'Scheduling retry with backoff',
     );
-    setTimeout(() => {
+    if (state.retryTimer) {
+      clearTimeout(state.retryTimer);
+    }
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = null;
+      state.retryScheduledAt = null;
       if (!this.shuttingDown) {
         this.enqueueMessageCheck(groupJid);
       }

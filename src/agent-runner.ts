@@ -18,6 +18,11 @@ import {
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
+import { isPairedRoomJid } from './db.js';
+import {
+  readPairedRoomPrompt,
+  readPlatformPrompt,
+} from './platform-prompts.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -39,6 +44,7 @@ export interface AgentInput {
 export interface AgentOutput {
   status: 'success' | 'error';
   result: string | null;
+  phase?: 'progress' | 'final';
   newSessionId?: string;
   error?: string;
 }
@@ -50,6 +56,7 @@ export interface AgentOutput {
 function prepareGroupEnvironment(
   group: RegisteredGroup,
   isMain: boolean,
+  chatJid: string,
 ): { env: Record<string, string>; groupDir: string; runnerDir: string } {
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
@@ -115,6 +122,31 @@ function prepareGroupEnvironment(
 
   // Global memory directory (for non-main groups)
   const globalDir = path.join(GROUPS_DIR, 'global');
+  const globalClaudeMdPath = path.join(globalDir, 'CLAUDE.md');
+  const isPairedRoom = isPairedRoomJid(chatJid);
+
+  const claudePlatformPrompt = readPlatformPrompt('claude-code', projectRoot);
+  const claudePairedRoomPrompt = isPairedRoom
+    ? readPairedRoomPrompt('claude-code', projectRoot)
+    : undefined;
+  const globalClaudeMemory =
+    !isMain && fs.existsSync(globalClaudeMdPath)
+      ? fs.readFileSync(globalClaudeMdPath, 'utf-8').trim()
+      : undefined;
+  const sessionClaudeMd = [
+    claudePlatformPrompt,
+    claudePairedRoomPrompt,
+    globalClaudeMemory,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join('\n\n---\n\n')
+    .trim();
+  const sessionClaudeMdPath = path.join(groupSessionsDir, 'CLAUDE.md');
+  if (sessionClaudeMd) {
+    fs.writeFileSync(sessionClaudeMdPath, sessionClaudeMd + '\n');
+  } else if (fs.existsSync(sessionClaudeMdPath)) {
+    fs.unlinkSync(sessionClaudeMdPath);
+  }
 
   // Additional mount directories (validated)
   const extraDirs: string[] = [];
@@ -215,12 +247,26 @@ function prepareGroupEnvironment(
     const authSrc = path.join(hostCodexDir, 'auth.json');
     const authDst = path.join(sessionCodexDir, 'auth.json');
     if (fs.existsSync(authSrc)) fs.copyFileSync(authSrc, authDst);
-    for (const file of ['config.toml', 'config.json', 'AGENTS.md']) {
+    for (const file of ['config.toml', 'config.json']) {
       const src = path.join(hostCodexDir, file);
       const dst = path.join(sessionCodexDir, file);
       if (fs.existsSync(src)) {
         fs.copyFileSync(src, dst);
       }
+    }
+    const sessionAgentsPath = path.join(sessionCodexDir, 'AGENTS.md');
+    const codexPlatformPrompt = readPlatformPrompt('codex', projectRoot);
+    const codexPairedRoomPrompt = isPairedRoom
+      ? readPairedRoomPrompt('codex', projectRoot)
+      : undefined;
+    const sessionAgents = [codexPlatformPrompt, codexPairedRoomPrompt]
+      .filter((value): value is string => Boolean(value))
+      .join('\n\n---\n\n')
+      .trim();
+    if (sessionAgents) {
+      fs.writeFileSync(sessionAgentsPath, sessionAgents + '\n');
+    } else if (fs.existsSync(sessionAgentsPath)) {
+      fs.unlinkSync(sessionAgentsPath);
     }
     // Sync skills into Codex session dir
     // SSOT: ~/.claude/skills/ (shared with Claude Code) + runners/skills/
@@ -324,6 +370,7 @@ export async function runAgentProcess(
   const { env, groupDir, runnerDir } = prepareGroupEnvironment(
     group,
     input.isMain,
+    input.chatJid,
   );
   if (input.runId) {
     env.NANOCLAW_RUN_ID = input.runId;

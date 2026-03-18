@@ -1,5 +1,14 @@
 import type { NewMessage } from './types.js';
 import { logger } from './logger.js';
+import { formatOutbound } from './router.js';
+
+const SESSION_COMMAND_CONTROL_PATTERNS = [
+  /^Current session cleared\. The next message will start a new conversation\.$/,
+  /^Session commands require admin access\.$/,
+  /^Failed to process messages before \/compact\. Try again\.$/,
+  /^\/compact failed\. The session is unchanged\.$/,
+  /^Conversation compacted\.$/,
+];
 
 /**
  * Extract a session slash command from a message, stripping the trigger prefix if present.
@@ -28,10 +37,18 @@ export function isSessionCommandAllowed(
   return isMainGroup || isFromMe || isAdminSender;
 }
 
+export function isSessionCommandControlMessage(content: string): boolean {
+  const trimmed = content.trim();
+  return SESSION_COMMAND_CONTROL_PATTERNS.some((pattern) =>
+    pattern.test(trimmed),
+  );
+}
+
 /** Minimal agent result interface — matches the subset of AgentOutput used here. */
 export interface AgentResult {
   status: 'success' | 'error';
   result?: string | object | null;
+  phase?: 'progress' | 'final';
 }
 
 /** Dependencies injected by the orchestrator. */
@@ -54,7 +71,7 @@ export interface SessionCommandDeps {
 function resultToText(result: string | object | null | undefined): string {
   if (!result) return '';
   const raw = typeof result === 'string' ? result : JSON.stringify(result);
-  return raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+  return formatOutbound(raw);
 }
 
 /**
@@ -133,6 +150,7 @@ export async function handleSessionCommand(opts: {
 
     const preResult = await deps.runAgent(prePrompt, async (result) => {
       if (result.status === 'error') hadPreError = true;
+      if (result.phase === 'progress') return;
       const text = resultToText(result.result);
       if (text) {
         await deps.sendMessage(text);
@@ -169,6 +187,7 @@ export async function handleSessionCommand(opts: {
   let hadCmdError = false;
   const cmdOutput = await deps.runAgent(command, async (result) => {
     if (result.status === 'error') hadCmdError = true;
+    if (result.phase === 'progress') return;
     const text = resultToText(result.result);
     if (text) await deps.sendMessage(text);
   });

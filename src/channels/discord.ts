@@ -19,6 +19,7 @@ import {
 } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
+import { formatOutbound } from '../router.js';
 
 const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
 const TRANSCRIPTION_CACHE_DIR = path.join(CACHE_DIR, 'transcriptions');
@@ -158,6 +159,7 @@ import {
   AgentType,
   Channel,
   ChannelMeta,
+  NewMessage,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
@@ -446,6 +448,7 @@ export class DiscordChannel implements Channel {
       for (const [name, id] of Object.entries(mentionMap)) {
         cleaned = cleaned.replace(new RegExp(`@${name}`, 'g'), `<@${id}>`);
       }
+      cleaned = formatOutbound(cleaned);
 
       // Discord has a 2000 character limit per message — split if needed
       const MAX_LENGTH = 2000;
@@ -453,6 +456,11 @@ export class DiscordChannel implements Channel {
         attachment: f,
         name: path.basename(f),
       }));
+
+      if (!cleaned && files.length === 0) {
+        logger.debug({ jid }, 'Skipping empty Discord outbound message');
+        return;
+      }
 
       if (cleaned.length <= MAX_LENGTH) {
         await textChannel.send({
@@ -488,6 +496,10 @@ export class DiscordChannel implements Channel {
     if (!group) return false;
     const groupType = group.agentType || 'claude-code';
     return groupType === this.agentTypeFilter;
+  }
+
+  isOwnMessage(msg: NewMessage): boolean {
+    return !!this.client?.user?.id && msg.sender === this.client.user.id;
   }
 
   async disconnect(): Promise<void> {

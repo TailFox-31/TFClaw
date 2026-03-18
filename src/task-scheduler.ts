@@ -183,6 +183,9 @@ async function runTask(
       (proc, processName) =>
         deps.onProcess(task.chat_jid, proc, processName, task.group_folder),
       async (streamedOutput: AgentOutput) => {
+        if (streamedOutput.phase === 'progress') {
+          return;
+        }
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (sendMessage handles formatting)

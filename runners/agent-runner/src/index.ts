@@ -62,7 +62,6 @@ interface SDKUserMessage {
 // Paths configurable via env vars (defaults to container paths for backwards compat)
 const GROUP_DIR = process.env.NANOCLAW_GROUP_DIR || '/workspace/group';
 const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
-const GLOBAL_DIR = process.env.NANOCLAW_GLOBAL_DIR || '/workspace/global';
 const EXTRA_BASE = process.env.NANOCLAW_EXTRA_DIR || '/workspace/extra';
 // Optional: override cwd (agent works in this directory instead of GROUP_DIR)
 const WORK_DIR = process.env.NANOCLAW_WORK_DIR || '';
@@ -450,13 +449,6 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
-  // Load global CLAUDE.md as additional system context (shared across all groups)
-  const globalClaudeMdPath = path.join(GLOBAL_DIR, 'CLAUDE.md');
-  let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
-  }
-
   // Discover additional directories
   const extraDirs: string[] = [];
 
@@ -507,9 +499,6 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
-        : undefined,
       allowedTools: [
         'Bash',
         'Read', 'Write', 'Edit', 'Glob', 'Grep',

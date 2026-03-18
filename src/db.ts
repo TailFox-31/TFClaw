@@ -13,6 +13,7 @@ import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
   NewMessage,
+  AgentType,
   RegisteredGroup,
   ScheduledTask,
   TaskRunLog,
@@ -82,13 +83,18 @@ function createSchema(database: Database.Database): void {
       PRIMARY KEY (group_folder, agent_type)
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
-      jid TEXT PRIMARY KEY,
+      jid TEXT NOT NULL,
       name TEXT NOT NULL,
-      folder TEXT NOT NULL UNIQUE,
+      folder TEXT NOT NULL,
       trigger_pattern TEXT NOT NULL,
       added_at TEXT NOT NULL,
       container_config TEXT,
-      requires_trigger INTEGER DEFAULT 1
+      requires_trigger INTEGER DEFAULT 1,
+      is_main INTEGER DEFAULT 0,
+      agent_type TEXT NOT NULL DEFAULT 'claude-code',
+      work_dir TEXT,
+      PRIMARY KEY (jid, agent_type),
+      UNIQUE (folder, agent_type)
     );
   `);
 
@@ -114,33 +120,80 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
-  // Add is_main column if it doesn't exist (migration for existing DBs)
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`,
+  // Migrate registered_groups to composite keys so Claude/Codex can share a jid/folder.
+  const registeredGroupsSql = (
+    database
+      .prepare(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'registered_groups'`,
+      )
+      .get() as { sql?: string } | undefined
+  )?.sql;
+  if (
+    registeredGroupsSql &&
+    !registeredGroupsSql.includes('PRIMARY KEY (jid, agent_type)')
+  ) {
+    const registeredGroupCols = database
+      .prepare('PRAGMA table_info(registered_groups)')
+      .all() as Array<{ name: string }>;
+    const hasIsMain = registeredGroupCols.some((col) => col.name === 'is_main');
+    const hasAgentType = registeredGroupCols.some(
+      (col) => col.name === 'agent_type',
     );
+    const hasWorkDir = registeredGroupCols.some((col) => col.name === 'work_dir');
+
+    database.exec(`
+      CREATE TABLE registered_groups_new (
+        jid TEXT NOT NULL,
+        name TEXT NOT NULL,
+        folder TEXT NOT NULL,
+        trigger_pattern TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        container_config TEXT,
+        requires_trigger INTEGER DEFAULT 1,
+        is_main INTEGER DEFAULT 0,
+        agent_type TEXT NOT NULL DEFAULT 'claude-code',
+        work_dir TEXT,
+        PRIMARY KEY (jid, agent_type),
+        UNIQUE (folder, agent_type)
+      );
+    `);
+
+    database.exec(`
+      INSERT INTO registered_groups_new (
+        jid,
+        name,
+        folder,
+        trigger_pattern,
+        added_at,
+        container_config,
+        requires_trigger,
+        is_main,
+        agent_type,
+        work_dir
+      )
+      SELECT
+        jid,
+        name,
+        folder,
+        trigger_pattern,
+        added_at,
+        container_config,
+        requires_trigger,
+        ${hasIsMain ? 'COALESCE(is_main, 0)' : "CASE WHEN folder = 'main' THEN 1 ELSE 0 END"},
+        ${hasAgentType ? "COALESCE(agent_type, 'claude-code')" : "'claude-code'"},
+        ${hasWorkDir ? 'work_dir' : 'NULL'}
+      FROM registered_groups;
+    `);
+
+    database.exec(`
+      DROP TABLE registered_groups;
+      ALTER TABLE registered_groups_new RENAME TO registered_groups;
+    `);
+  } else {
     // Backfill: existing rows with folder = 'main' are the main group
     database.exec(
-      `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
+      `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main' AND COALESCE(is_main, 0) = 0`,
     );
-  } catch {
-    /* column already exists */
-  }
-
-  // Add agent_type column if it doesn't exist (migration for Codex support)
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN agent_type TEXT DEFAULT 'claude-code'`,
-    );
-  } catch {
-    /* column already exists */
-  }
-
-  // Add work_dir column if it doesn't exist (migration for per-group working directory)
-  try {
-    database.exec(`ALTER TABLE registered_groups ADD COLUMN work_dir TEXT`);
-  } catch {
-    /* column already exists */
   }
 
   // Migrate sessions table to composite PK (group_folder, agent_type)
@@ -300,9 +353,9 @@ export function getNewMessages(
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
   const placeholders = jids.map(() => '?').join(',');
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
-  // Subquery takes the N most recent, outer query re-sorts chronologically.
+  // Filter legacy prefixed outbound messages as a backstop for rows written
+  // before explicit bot flags existed. Self-message filtering is channel-specific
+  // and happens in message-runtime so cross-bot collaboration still works.
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
@@ -333,9 +386,9 @@ export function getMessagesSince(
   botPrefix: string,
   limit: number = 200,
 ): NewMessage[] {
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
-  // Subquery takes the N most recent, outer query re-sorts chronologically.
+  // Filter legacy prefixed outbound messages as a backstop for rows written
+  // before explicit bot flags existed. Self-message filtering is channel-specific
+  // and happens in message-runtime so cross-bot collaboration still works.
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
@@ -679,6 +732,28 @@ export function getAllRegisteredGroups(
     };
   }
   return result;
+}
+
+export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
+  if (!db) return [];
+
+  const rows = db
+    .prepare('SELECT agent_type FROM registered_groups WHERE jid = ?')
+    .all(jid) as Array<{ agent_type: string | null }>;
+
+  const types = new Set<AgentType>();
+  for (const row of rows) {
+    const agentType = row.agent_type as AgentType | null;
+    if (agentType === 'claude-code' || agentType === 'codex') {
+      types.add(agentType);
+    }
+  }
+  return [...types];
+}
+
+export function isPairedRoomJid(jid: string): boolean {
+  const types = getRegisteredAgentTypesForJid(jid);
+  return types.includes('claude-code') && types.includes('codex');
 }
 
 // --- JSON migration ---
