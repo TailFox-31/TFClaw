@@ -505,6 +505,129 @@ describe('createMessageRuntime', () => {
     }
   });
 
+  it('starts a fresh tracked progress message for each Codex turn in one runner session', async () => {
+    vi.useFakeTimers();
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+      },
+    ]);
+
+    vi.mocked(channel.sendAndTrack!)
+      .mockResolvedValueOnce('progress-1')
+      .mockResolvedValueOnce('progress-2');
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '첫 번째 진행상황입니다.',
+          newSessionId: 'session-multi-turn',
+        });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '첫 번째 결과입니다.',
+          newSessionId: 'session-multi-turn',
+        });
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '두 번째 진행상황입니다.',
+          newSessionId: 'session-multi-turn',
+        });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '두 번째 결과입니다.',
+          newSessionId: 'session-multi-turn',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'session-multi-turn',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    try {
+      const result = await runtime.processGroupMessages(chatJid, {
+        runId: 'run-multi-turn',
+        reason: 'messages',
+      });
+
+      expect(result).toBe(true);
+      expect(channel.sendAndTrack).toHaveBeenNthCalledWith(
+        1,
+        chatJid,
+        '첫 번째 진행상황입니다.\n\n0초',
+      );
+      expect(channel.sendAndTrack).toHaveBeenNthCalledWith(
+        2,
+        chatJid,
+        '두 번째 진행상황입니다.\n\n0초',
+      );
+      expect(channel.editMessage).toHaveBeenNthCalledWith(
+        1,
+        chatJid,
+        'progress-1',
+        '첫 번째 진행상황입니다.\n\n10초',
+      );
+      expect(channel.editMessage).toHaveBeenNthCalledWith(
+        2,
+        chatJid,
+        'progress-2',
+        '두 번째 진행상황입니다.\n\n10초',
+      );
+      expect(channel.sendMessage).toHaveBeenNthCalledWith(
+        1,
+        chatJid,
+        '첫 번째 결과입니다.',
+      );
+      expect(channel.sendMessage).toHaveBeenNthCalledWith(
+        2,
+        chatJid,
+        '두 번째 결과입니다.',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not roll back when a streamed progress message was already posted before an error', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');

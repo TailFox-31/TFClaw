@@ -344,6 +344,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       }
     };
 
+    const resetProgressState = () => {
+      clearProgressTicker();
+      latestProgressText = null;
+      latestProgressRendered = null;
+      progressMessageId = null;
+      progressStartedAt = null;
+    };
+
     const renderProgressMessage = (text: string) => {
       const elapsedSeconds =
         progressStartedAt === null
@@ -393,7 +401,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     const finalizeProgressMessage = async () => {
       await syncTrackedProgressMessage();
-      clearProgressTicker();
+      resetProgressState();
     };
 
     const sendProgressMessage = async (text: string) => {
