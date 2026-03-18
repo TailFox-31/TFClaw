@@ -15,7 +15,7 @@ describe('platform-prompts', () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-prompts-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-prompts-'));
     vi.spyOn(process, 'cwd').mockReturnValue(tempDir);
   });
 

@@ -3,6 +3,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import {
+  fetchClaudeUsageViaCli,
+  type ClaudeUsageData,
+} from './claude-usage.js';
 import { USAGE_DASHBOARD_ENABLED } from './config.js';
 import { readEnvFile } from './env.js';
 import { GroupQueue, GroupStatus } from './group-queue.js';
@@ -18,11 +22,6 @@ export interface DashboardOptions {
   statusChannelId: string;
   statusUpdateInterval: number;
   usageUpdateInterval: number;
-}
-
-interface ClaudeUsageData {
-  five_hour?: { utilization: number; resets_at: string };
-  seven_day?: { utilization: number; resets_at: string };
 }
 
 interface CodexRateLimit {
@@ -71,6 +70,7 @@ function formatResetKST(value: string | number): string {
   try {
     const date =
       typeof value === 'number' ? new Date(value * 1000) : new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
     return date.toLocaleString('ko-KR', {
       timeZone: 'Asia/Seoul',
       month: 'short',
@@ -188,6 +188,9 @@ export function buildStatusContent(opts: DashboardOptions): string {
 }
 
 async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
+  const cliUsage = await fetchClaudeUsageViaCli();
+  if (cliUsage) return cliUsage;
+
   try {
     const envToken = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN']);
     let token =

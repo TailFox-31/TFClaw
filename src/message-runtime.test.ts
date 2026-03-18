@@ -346,7 +346,19 @@ describe('createMessageRuntime', () => {
           'progress-1',
           '오래 걸리는 작업입니다.\n\n1분 10초',
         );
-        await vi.advanceTimersByTimeAsync(3_600_000);
+        await vi.advanceTimersByTimeAsync(50_000);
+        expect(channel.editMessage).toHaveBeenLastCalledWith(
+          chatJid,
+          'progress-1',
+          '오래 걸리는 작업입니다.\n\n2분 0초',
+        );
+        await vi.advanceTimersByTimeAsync(3_480_000);
+        expect(channel.editMessage).toHaveBeenLastCalledWith(
+          chatJid,
+          'progress-1',
+          '오래 걸리는 작업입니다.\n\n1시간 0분 0초',
+        );
+        await vi.advanceTimersByTimeAsync(70_000);
         await onOutput?.({
           status: 'success',
           result: null,

@@ -139,7 +139,9 @@ function createSchema(database: Database.Database): void {
     const hasAgentType = registeredGroupCols.some(
       (col) => col.name === 'agent_type',
     );
-    const hasWorkDir = registeredGroupCols.some((col) => col.name === 'work_dir');
+    const hasWorkDir = registeredGroupCols.some(
+      (col) => col.name === 'work_dir',
+    );
 
     database.exec(`
       CREATE TABLE registered_groups_new (

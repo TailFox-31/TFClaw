@@ -84,9 +84,11 @@ describe('isSessionCommandControlMessage', () => {
   });
 
   it('does not match regular bot conversation', () => {
-    expect(isSessionCommandControlMessage('좋네요. 필요해지면 바로 말씀드리겠습니다.')).toBe(
-      false,
-    );
+    expect(
+      isSessionCommandControlMessage(
+        '좋네요. 필요해지면 바로 말씀드리겠습니다.',
+      ),
+    ).toBe(false);
   });
 });
 

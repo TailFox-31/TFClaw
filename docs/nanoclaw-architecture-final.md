@@ -1,4 +1,4 @@
-# NanoClaw Skills Architecture
+# EJClaw Skills Architecture
 
 ## Core Principle
 
@@ -123,7 +123,7 @@ skills/
 - Git's three-way merge uses context matching, so it works even if the user has moved code around — unlike line-number-based diffs that break immediately
 - Auditable: `diff .nanoclaw/base/src/server.ts skills/add-whatsapp/modify/src/server.ts` shows exactly what the skill changes
 - Deterministic: same three inputs always produce the same merge result
-- Size is negligible since NanoClaw's core files are small
+- Size is negligible since EJClaw's core files are small
 
 ### Intent Files
 
@@ -382,11 +382,11 @@ If tests fail and Level 2 can't resolve, restore from `.nanoclaw/backup/` and re
 
 ### The Problem
 
-`git rerere` is local by default. But NanoClaw has thousands of users applying the same skill combinations. Every user hitting the same conflict and waiting for Claude Code to resolve it is wasteful.
+`git rerere` is local by default. But EJClaw has thousands of users applying the same skill combinations. Every user hitting the same conflict and waiting for Claude Code to resolve it is wasteful.
 
 ### The Solution
 
-NanoClaw maintains a verified resolution cache in `.nanoclaw/resolutions/` that ships with the project. This is the shared artifact — **not** `.git/rr-cache/`, which stays local.
+EJClaw maintains a verified resolution cache in `.nanoclaw/resolutions/` that ships with the project. This is the shared artifact — **not** `.git/rr-cache/`, which stays local.
 
 ```
 .nanoclaw/
@@ -588,7 +588,7 @@ There is no unrecoverable state.
 
 ## 10. Core Updates
 
-Core updates must be as programmatic as possible. The NanoClaw team is responsible for ensuring updates apply cleanly to common skill combinations.
+Core updates must be as programmatic as possible. The EJClaw team is responsible for ensuring updates apply cleanly to common skill combinations.
 
 ### Patches and Migrations
 
@@ -977,7 +977,7 @@ Each passing combination generates a verified resolution entry for the shared ca
 
 ### `.gitattributes`
 
-Ship with NanoClaw to reduce noisy merge conflicts:
+Ship with EJClaw to reduce noisy merge conflicts:
 
 ```
 * text=auto

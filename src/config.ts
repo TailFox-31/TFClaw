@@ -1,3 +1,4 @@
+import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -36,21 +37,33 @@ export const SCHEDULER_POLL_INTERVAL = 60000;
 
 const PROJECT_ROOT = process.cwd();
 const HOME_DIR = process.env.HOME || os.homedir();
+const CONFIG_ROOT = path.join(HOME_DIR, '.config');
+const EJCLAW_CONFIG_DIR = path.join(CONFIG_ROOT, 'ejclaw');
+const LEGACY_NANOCLAW_CONFIG_DIR = path.join(CONFIG_ROOT, 'nanoclaw');
+const ACTIVE_CONFIG_DIR = fs.existsSync(EJCLAW_CONFIG_DIR)
+  ? EJCLAW_CONFIG_DIR
+  : fs.existsSync(LEGACY_NANOCLAW_CONFIG_DIR)
+    ? LEGACY_NANOCLAW_CONFIG_DIR
+    : EJCLAW_CONFIG_DIR;
 
 export const SENDER_ALLOWLIST_PATH = path.join(
-  HOME_DIR,
-  '.config',
-  'nanoclaw',
+  ACTIVE_CONFIG_DIR,
   'sender-allowlist.json',
 );
 export const STORE_DIR = path.resolve(
-  process.env.NANOCLAW_STORE_DIR || path.join(PROJECT_ROOT, 'store'),
+  process.env.EJCLAW_STORE_DIR ||
+    process.env.NANOCLAW_STORE_DIR ||
+    path.join(PROJECT_ROOT, 'store'),
 );
 export const GROUPS_DIR = path.resolve(
-  process.env.NANOCLAW_GROUPS_DIR || path.join(PROJECT_ROOT, 'groups'),
+  process.env.EJCLAW_GROUPS_DIR ||
+    process.env.NANOCLAW_GROUPS_DIR ||
+    path.join(PROJECT_ROOT, 'groups'),
 );
 export const DATA_DIR = path.resolve(
-  process.env.NANOCLAW_DATA_DIR || path.join(PROJECT_ROOT, 'data'),
+  process.env.EJCLAW_DATA_DIR ||
+    process.env.NANOCLAW_DATA_DIR ||
+    path.join(PROJECT_ROOT, 'data'),
 );
 // Shared cache directory (same across both services for dedup)
 export const CACHE_DIR = path.join(PROJECT_ROOT, 'cache');

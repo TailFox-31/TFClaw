@@ -11,8 +11,8 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 vi.mock('./config.js', () => ({
   AGENT_MAX_OUTPUT_SIZE: 10485760,
   AGENT_TIMEOUT: 1800000, // 30min
-  DATA_DIR: '/tmp/nanoclaw-test-data',
-  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
+  DATA_DIR: '/tmp/ejclaw-test-data',
+  GROUPS_DIR: '/tmp/ejclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
   SERVICE_ID: 'claude',
   SERVICE_AGENT_TYPE: 'claude-code',
@@ -223,16 +223,18 @@ describe('agent-runner timeout behavior', () => {
         path.endsWith('/global/CLAUDE.md')
       );
     });
-    vi.mocked(fs.readFileSync).mockImplementation((p: fs.PathOrFileDescriptor) => {
-      const path = String(p);
-      if (path.endsWith('/prompts/claude-platform.md')) {
-        return 'Platform Claude Rules';
-      }
-      if (path.endsWith('/global/CLAUDE.md')) {
-        return 'Global Claude Memory';
-      }
-      return '';
-    });
+    vi.mocked(fs.readFileSync).mockImplementation(
+      (p: fs.PathOrFileDescriptor) => {
+        const path = String(p);
+        if (path.endsWith('/prompts/claude-platform.md')) {
+          return 'Platform Claude Rules';
+        }
+        if (path.endsWith('/global/CLAUDE.md')) {
+          return 'Global Claude Memory';
+        }
+        return '';
+      },
+    );
 
     const resultPromise = runAgentProcess(
       testGroup,
@@ -246,7 +248,7 @@ describe('agent-runner timeout behavior', () => {
     await resultPromise;
 
     expect(fs.writeFileSync).toHaveBeenCalledWith(
-      '/tmp/nanoclaw-test-data/sessions/test-group/.claude/CLAUDE.md',
+      '/tmp/ejclaw-test-data/sessions/test-group/.claude/CLAUDE.md',
       'Platform Claude Rules\n\n---\n\nGlobal Claude Memory\n',
     );
   });

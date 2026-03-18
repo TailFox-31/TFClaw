@@ -1,5 +1,5 @@
 /**
- * NanoClaw Agent Runner
+ * EJClaw Agent Runner
  * Runs inside a container, receives config via stdin, outputs result to stdout
  *
  * Input protocol:
@@ -60,11 +60,19 @@ interface SDKUserMessage {
 }
 
 // Paths configurable via env vars (defaults to container paths for backwards compat)
-const GROUP_DIR = process.env.NANOCLAW_GROUP_DIR || '/workspace/group';
-const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
-const EXTRA_BASE = process.env.NANOCLAW_EXTRA_DIR || '/workspace/extra';
+const GROUP_DIR =
+  process.env.EJCLAW_GROUP_DIR ||
+  process.env.NANOCLAW_GROUP_DIR ||
+  '/workspace/group';
+const IPC_DIR =
+  process.env.EJCLAW_IPC_DIR || process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
+const EXTRA_BASE =
+  process.env.EJCLAW_EXTRA_DIR ||
+  process.env.NANOCLAW_EXTRA_DIR ||
+  '/workspace/extra';
 // Optional: override cwd (agent works in this directory instead of GROUP_DIR)
-const WORK_DIR = process.env.NANOCLAW_WORK_DIR || '';
+const WORK_DIR =
+  process.env.EJCLAW_WORK_DIR || process.env.NANOCLAW_WORK_DIR || '';
 
 const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const MAX_TURNS = 100;

@@ -20,6 +20,9 @@ import {
 } from './platform.js';
 import { emitStatus } from './status.js';
 
+const EJCLAW_SERVICE_NAME = 'ejclaw';
+const EJCLAW_LAUNCHD_LABEL = 'com.ejclaw';
+
 export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();
   const platform = getPlatform();
@@ -77,7 +80,7 @@ function setupLaunchd(
     homeDir,
     'Library',
     'LaunchAgents',
-    'com.nanoclaw.plist',
+    `${EJCLAW_LAUNCHD_LABEL}.plist`,
   );
   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
 
@@ -86,7 +89,7 @@ function setupLaunchd(
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.nanoclaw</string>
+    <string>${EJCLAW_LAUNCHD_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
         <string>${nodePath}</string>
@@ -106,9 +109,9 @@ function setupLaunchd(
         <string>${homeDir}</string>
     </dict>
     <key>StandardOutPath</key>
-    <string>${projectRoot}/logs/nanoclaw.log</string>
+    <string>${projectRoot}/logs/ejclaw.log</string>
     <key>StandardErrorPath</key>
-    <string>${projectRoot}/logs/nanoclaw.error.log</string>
+    <string>${projectRoot}/logs/ejclaw.error.log</string>
 </dict>
 </plist>`;
 
@@ -128,7 +131,7 @@ function setupLaunchd(
   let serviceLoaded = false;
   try {
     const output = execSync('launchctl list', { encoding: 'utf-8' });
-    serviceLoaded = output.includes('com.nanoclaw');
+    serviceLoaded = output.includes(EJCLAW_LAUNCHD_LABEL);
   } catch {
     // launchctl list failed
   }
@@ -160,7 +163,7 @@ function setupLinux(
 }
 
 /**
- * Kill any orphaned nanoclaw node processes left from previous runs or debugging.
+ * Kill any orphaned ejclaw node processes left from previous runs or debugging.
  * Prevents connection conflicts when two instances connect to the same channel simultaneously.
  */
 function killOrphanedProcesses(projectRoot: string): void {
@@ -168,7 +171,7 @@ function killOrphanedProcesses(projectRoot: string): void {
     execSync(`pkill -f '${projectRoot}/dist/index\\.js' || true`, {
       stdio: 'ignore',
     });
-    logger.info('Stopped any orphaned nanoclaw processes');
+    logger.info('Stopped any orphaned ejclaw processes');
   } catch {
     // pkill not available or no orphans
   }
@@ -186,7 +189,7 @@ function setupSystemd(
   let systemctlPrefix: string;
 
   if (runningAsRoot) {
-    unitPath = '/etc/systemd/system/nanoclaw.service';
+    unitPath = `/etc/systemd/system/${EJCLAW_SERVICE_NAME}.service`;
     systemctlPrefix = 'systemctl';
     logger.info('Running as root — installing system-level systemd unit');
   } else {
@@ -202,12 +205,12 @@ function setupSystemd(
     }
     const unitDir = path.join(homeDir, '.config', 'systemd', 'user');
     fs.mkdirSync(unitDir, { recursive: true });
-    unitPath = path.join(unitDir, 'nanoclaw.service');
+    unitPath = path.join(unitDir, `${EJCLAW_SERVICE_NAME}.service`);
     systemctlPrefix = 'systemctl --user';
   }
 
   const unit = `[Unit]
-Description=NanoClaw Personal Assistant
+Description=EJClaw Personal Assistant
 After=network.target
 
 [Service]
@@ -218,8 +221,8 @@ Restart=always
 RestartSec=5
 Environment=HOME=${homeDir}
 Environment=PATH=${path.dirname(nodePath)}:/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:${homeDir}/.npm-global/bin
-StandardOutput=append:${projectRoot}/logs/nanoclaw.log
-StandardError=append:${projectRoot}/logs/nanoclaw.error.log
+StandardOutput=append:${projectRoot}/logs/ejclaw.log
+StandardError=append:${projectRoot}/logs/ejclaw.error.log
 
 [Install]
 WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
@@ -227,7 +230,7 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
   fs.writeFileSync(unitPath, unit);
   logger.info({ unitPath }, 'Wrote systemd unit');
 
-  // Kill orphaned nanoclaw processes to avoid channel connection conflicts
+  // Kill orphaned ejclaw processes to avoid channel connection conflicts
   killOrphanedProcesses(projectRoot);
 
   // Enable and start
@@ -238,13 +241,17 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
   }
 
   try {
-    execSync(`${systemctlPrefix} enable nanoclaw`, { stdio: 'ignore' });
+    execSync(`${systemctlPrefix} enable ${EJCLAW_SERVICE_NAME}`, {
+      stdio: 'ignore',
+    });
   } catch (err) {
     logger.error({ err }, 'systemctl enable failed');
   }
 
   try {
-    execSync(`${systemctlPrefix} start nanoclaw`, { stdio: 'ignore' });
+    execSync(`${systemctlPrefix} start ${EJCLAW_SERVICE_NAME}`, {
+      stdio: 'ignore',
+    });
   } catch (err) {
     logger.error({ err }, 'systemctl start failed');
   }
@@ -252,7 +259,9 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
   // Verify
   let serviceLoaded = false;
   try {
-    execSync(`${systemctlPrefix} is-active nanoclaw`, { stdio: 'ignore' });
+    execSync(`${systemctlPrefix} is-active ${EJCLAW_SERVICE_NAME}`, {
+      stdio: 'ignore',
+    });
     serviceLoaded = true;
   } catch {
     // Not active
@@ -276,12 +285,12 @@ function setupNohupFallback(
 ): void {
   logger.warn('No systemd detected — generating nohup wrapper script');
 
-  const wrapperPath = path.join(projectRoot, 'start-nanoclaw.sh');
-  const pidFile = path.join(projectRoot, 'nanoclaw.pid');
+  const wrapperPath = path.join(projectRoot, 'start-ejclaw.sh');
+  const pidFile = path.join(projectRoot, 'ejclaw.pid');
 
   const lines = [
     '#!/bin/bash',
-    '# start-nanoclaw.sh — Start NanoClaw without systemd',
+    '# start-ejclaw.sh — Start EJClaw without systemd',
     `# To stop: kill \\$(cat ${pidFile})`,
     '',
     'set -euo pipefail',
@@ -292,20 +301,20 @@ function setupNohupFallback(
     `if [ -f ${JSON.stringify(pidFile)} ]; then`,
     `  OLD_PID=$(cat ${JSON.stringify(pidFile)} 2>/dev/null || echo "")`,
     '  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then',
-    '    echo "Stopping existing NanoClaw (PID $OLD_PID)..."',
+    '    echo "Stopping existing EJClaw (PID $OLD_PID)..."',
     '    kill "$OLD_PID" 2>/dev/null || true',
     '    sleep 2',
     '  fi',
     'fi',
     '',
-    'echo "Starting NanoClaw..."',
+    'echo "Starting EJClaw..."',
     `nohup ${JSON.stringify(nodePath)} ${JSON.stringify(projectRoot + '/dist/index.js')} \\`,
-    `  >> ${JSON.stringify(projectRoot + '/logs/nanoclaw.log')} \\`,
-    `  2>> ${JSON.stringify(projectRoot + '/logs/nanoclaw.error.log')} &`,
+    `  >> ${JSON.stringify(projectRoot + '/logs/ejclaw.log')} \\`,
+    `  2>> ${JSON.stringify(projectRoot + '/logs/ejclaw.error.log')} &`,
     '',
     `echo $! > ${JSON.stringify(pidFile)}`,
-    'echo "NanoClaw started (PID $!)"',
-    `echo "Logs: tail -f ${projectRoot}/logs/nanoclaw.log"`,
+    'echo "EJClaw started (PID $!)"',
+    `echo "Logs: tail -f ${projectRoot}/logs/ejclaw.log"`,
   ];
   const wrapper = lines.join('\n') + '\n';
 

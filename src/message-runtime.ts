@@ -352,15 +352,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const hours = Math.floor(elapsedSeconds / 3600);
       const minutes = Math.floor((elapsedSeconds % 3600) / 60);
       const seconds = elapsedSeconds % 60;
-      const elapsedParts: string[] = [];
+      const elapsedLabel =
+        hours > 0
+          ? `${hours}시간 ${minutes}분 ${seconds}초`
+          : minutes > 0
+            ? `${minutes}분 ${seconds}초`
+            : `${seconds}초`;
 
-      if (hours > 0) elapsedParts.push(`${hours}시간`);
-      if (minutes > 0) elapsedParts.push(`${minutes}분`);
-      if (seconds > 0 || elapsedParts.length === 0) {
-        elapsedParts.push(`${seconds}초`);
-      }
-
-      return `${text}\n\n${elapsedParts.join(' ')}`;
+      return `${text}\n\n${elapsedLabel}`;
     };
 
     const syncTrackedProgressMessage = async () => {
@@ -552,7 +551,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }
     messageLoopRunning = true;
 
-    logger.info(`NanoClaw running (trigger: @${deps.assistantName})`);
+    logger.info(`EJClaw running (trigger: @${deps.assistantName})`);
 
     while (true) {
       try {

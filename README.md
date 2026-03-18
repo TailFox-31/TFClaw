@@ -1,13 +1,11 @@
-<p align="center">
-  <img src="assets/nanoclaw-logo.png" alt="NanoClaw" width="400">
-</p>
+<h1 align="center">EJClaw</h1>
 
 <p align="center">
   Dual-agent AI assistant running Claude Code + Codex as parallel services over Discord.
 </p>
 
 <p align="center">
-  Based on <a href="https://github.com/qwibitai/nanoclaw">qwibitai/nanoclaw</a>
+  Forked from <a href="https://github.com/qwibitai/nanoclaw">qwibitai/nanoclaw</a>
 </p>
 
 ## Overview
@@ -40,7 +38,7 @@ Discord ──► SQLite ──► GroupQueue ──┬──► Claude Agent SD
 ### Directory Layout
 
 ```
-nanoclaw/
+ejclaw/
 ├── src/
 │   ├── index.ts                # Orchestrator: state, message loop, agent invocation
 │   ├── agent-runner.ts         # Spawns agent processes, manages env/sessions/skills
@@ -119,8 +117,8 @@ Skills are managed from a single source of truth (`~/.claude/skills/` on the ser
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/phj1081/nanoclaw.git
-cd nanoclaw
+git clone https://github.com/phj1081/nanoclaw.git ejclaw
+cd ejclaw
 npm install
 npm run build:runners   # installs + builds both agent-runner and codex-runner
 npm run build           # builds main project
@@ -163,17 +161,17 @@ DISCORD_BOT_TOKEN=           # Codex Discord bot token (different from above)
 
 ### 4. Systemd Services (Linux)
 
-Create `~/.config/systemd/user/nanoclaw.service`:
+Create `~/.config/systemd/user/ejclaw.service`:
 
 ```ini
 [Unit]
-Description=NanoClaw Claude Code
+Description=EJClaw Claude Code
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/path/to/node /path/to/nanoclaw/dist/index.js
-WorkingDirectory=/path/to/nanoclaw
+ExecStart=/path/to/node /path/to/ejclaw/dist/index.js
+WorkingDirectory=/path/to/ejclaw
 Restart=always
 RestartSec=5
 Environment=HOME=/home/youruser
@@ -183,26 +181,26 @@ Environment=PATH=/path/to/node/bin:/usr/local/bin:/usr/bin:/bin
 WantedBy=default.target
 ```
 
-Create `~/.config/systemd/user/nanoclaw-codex.service`:
+Create `~/.config/systemd/user/ejclaw-codex.service`:
 
 ```ini
 [Unit]
-Description=NanoClaw Codex
+Description=EJClaw Codex
 After=network.target
 
 [Service]
-EnvironmentFile=/path/to/nanoclaw/.env.codex
+EnvironmentFile=/path/to/ejclaw/.env.codex
 Type=simple
-ExecStart=/path/to/node /path/to/nanoclaw/dist/index.js
-WorkingDirectory=/path/to/nanoclaw
+ExecStart=/path/to/node /path/to/ejclaw/dist/index.js
+WorkingDirectory=/path/to/ejclaw
 Restart=always
 RestartSec=5
 Environment=HOME=/home/youruser
 Environment=PATH=/path/to/node/bin:/usr/local/bin:/usr/bin:/bin
 Environment=ASSISTANT_NAME=codex
-Environment=NANOCLAW_STORE_DIR=/path/to/nanoclaw/store-codex
-Environment=NANOCLAW_DATA_DIR=/path/to/nanoclaw/data-codex
-Environment=NANOCLAW_GROUPS_DIR=/path/to/nanoclaw/groups-codex
+Environment=EJCLAW_STORE_DIR=/path/to/ejclaw/store-codex
+Environment=EJCLAW_DATA_DIR=/path/to/ejclaw/data-codex
+Environment=EJCLAW_GROUPS_DIR=/path/to/ejclaw/groups-codex
 
 [Install]
 WantedBy=default.target
@@ -212,12 +210,12 @@ Then enable and start:
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable nanoclaw nanoclaw-codex
-systemctl --user start nanoclaw nanoclaw-codex
+systemctl --user enable ejclaw ejclaw-codex
+systemctl --user start ejclaw ejclaw-codex
 
 # Logs
-journalctl --user -u nanoclaw -f
-journalctl --user -u nanoclaw-codex -f
+journalctl --user -u ejclaw -f
+journalctl --user -u ejclaw-codex -f
 ```
 
 ### 5. Register Discord Channels
@@ -247,9 +245,9 @@ Fields:
 ### macOS (launchd)
 
 ```bash
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl load ~/Library/LaunchAgents/com.nanoclaw-codex.plist
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+launchctl load ~/Library/LaunchAgents/com.ejclaw.plist
+launchctl load ~/Library/LaunchAgents/com.ejclaw-codex.plist
+launchctl kickstart -k gui/$(id -u)/com.ejclaw
 ```
 
 ## Development

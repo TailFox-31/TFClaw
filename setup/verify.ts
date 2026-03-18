@@ -26,6 +26,9 @@ export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();
   const platform = getPlatform();
   const homeDir = os.homedir();
+  const launchdLabels = ['com.ejclaw', 'com.nanoclaw'];
+  const systemdUnits = ['ejclaw', 'nanoclaw'];
+  const pidFiles = ['ejclaw.pid', 'nanoclaw.pid'];
 
   logger.info('Starting verification');
 
@@ -36,9 +39,10 @@ export async function run(_args: string[]): Promise<void> {
   if (mgr === 'launchd') {
     try {
       const output = execSync('launchctl list', { encoding: 'utf-8' });
-      if (output.includes('com.nanoclaw')) {
+      const matchedLabel = launchdLabels.find((label) => output.includes(label));
+      if (matchedLabel) {
         // Check if it has a PID (actually running)
-        const line = output.split('\n').find((l) => l.includes('com.nanoclaw'));
+        const line = output.split('\n').find((l) => l.includes(matchedLabel));
         if (line) {
           const pidField = line.trim().split(/\s+/)[0];
           service = pidField !== '-' && pidField ? 'running' : 'stopped';
@@ -49,15 +53,23 @@ export async function run(_args: string[]): Promise<void> {
     }
   } else if (mgr === 'systemd') {
     const prefix = isRoot() ? 'systemctl' : 'systemctl --user';
-    try {
-      execSync(`${prefix} is-active nanoclaw`, { stdio: 'ignore' });
+    const activeUnit = systemdUnits.find((unit) => {
+      try {
+        execSync(`${prefix} is-active ${unit}`, { stdio: 'ignore' });
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    if (activeUnit) {
       service = 'running';
-    } catch {
+    } else {
       try {
         const output = execSync(`${prefix} list-unit-files`, {
           encoding: 'utf-8',
         });
-        if (output.includes('nanoclaw')) {
+        if (systemdUnits.some((unit) => output.includes(unit))) {
           service = 'stopped';
         }
       } catch {
@@ -66,8 +78,10 @@ export async function run(_args: string[]): Promise<void> {
     }
   } else {
     // Check for nohup PID file
-    const pidFile = path.join(projectRoot, 'nanoclaw.pid');
-    if (fs.existsSync(pidFile)) {
+    const pidFile = pidFiles
+      .map((name) => path.join(projectRoot, name))
+      .find((candidate) => fs.existsSync(candidate));
+    if (pidFile) {
       try {
         const raw = fs.readFileSync(pidFile, 'utf-8').trim();
         const pid = Number(raw);
@@ -144,6 +158,7 @@ export async function run(_args: string[]): Promise<void> {
   // 5. Check mount allowlist
   let mountAllowlist = 'missing';
   if (
+    fs.existsSync(path.join(homeDir, '.config', 'ejclaw', 'mount-allowlist.json')) ||
     fs.existsSync(
       path.join(homeDir, '.config', 'nanoclaw', 'mount-allowlist.json'),
     )

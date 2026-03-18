@@ -1,12 +1,12 @@
 /**
- * NanoClaw Codex Runner
+ * EJClaw Codex Runner
  *
  * Default runtime is Codex app-server, with SDK fallback available via
  * CODEX_RUNTIME=sdk or automatic fallback when app-server startup fails.
  *
  * Input protocol:
  *   Stdin: Full ContainerInput JSON (read until EOF)
- *   IPC:   Follow-up messages as JSON files in $NANOCLAW_IPC_DIR/input/
+ *   IPC:   Follow-up messages as JSON files in $EJCLAW_IPC_DIR/input/
  *          Sentinel: _close — signals session end
  *
  * Stdout protocol:
@@ -45,9 +45,14 @@ interface ContainerOutput {
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const GROUP_DIR = process.env.NANOCLAW_GROUP_DIR || '/workspace/group';
-const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
-const WORK_DIR = process.env.NANOCLAW_WORK_DIR || '';
+const GROUP_DIR =
+  process.env.EJCLAW_GROUP_DIR ||
+  process.env.NANOCLAW_GROUP_DIR ||
+  '/workspace/group';
+const IPC_DIR =
+  process.env.EJCLAW_IPC_DIR || process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
+const WORK_DIR =
+  process.env.EJCLAW_WORK_DIR || process.env.NANOCLAW_WORK_DIR || '';
 const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
