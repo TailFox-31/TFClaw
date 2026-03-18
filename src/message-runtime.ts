@@ -93,7 +93,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     onOutput?: (output: AgentOutput) => Promise<void>,
   ): Promise<'success' | 'error'> => {
     const isMain = group.isMain === true;
-    const isClaudeCodeAgent = (group.agentType || 'claude-code') === 'claude-code';
+    const isClaudeCodeAgent =
+      (group.agentType || 'claude-code') === 'claude-code';
     const sessions = deps.getSessions();
     const sessionId = sessions[group.folder];
 
@@ -121,10 +122,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           if (output.newSessionId) {
             deps.persistSession(group.folder, output.newSessionId);
           }
-          if (
-            isClaudeCodeAgent &&
-            shouldResetSessionOnAgentFailure(output)
-          ) {
+          if (isClaudeCodeAgent && shouldResetSessionOnAgentFailure(output)) {
             resetSessionRequested = true;
           }
           await onOutput(output);
@@ -154,8 +152,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       if (
         isClaudeCodeAgent &&
-        (resetSessionRequested ||
-          shouldResetSessionOnAgentFailure(output))
+        (resetSessionRequested || shouldResetSessionOnAgentFailure(output))
       ) {
         deps.clearSession(group.folder);
         logger.warn(
@@ -207,11 +204,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const lastAgentTimestamps = deps.getLastAgentTimestamps();
     const sinceTimestamp = lastAgentTimestamps[chatJid] || '';
     const missedMessages = filterOwnChannelMessages(
-      getMessagesSince(
-        chatJid,
-        sinceTimestamp,
-        deps.assistantName,
-      ),
+      getMessagesSince(chatJid, sinceTimestamp, deps.assistantName),
     );
 
     if (missedMessages.length === 0) {
@@ -318,6 +311,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let latestProgressText: string | null = null;
+    let latestProgressRendered: string | null = null;
+    let progressMessageId: string | null = null;
+    let progressStartedAt: number | null = null;
+    let progressTicker: ReturnType<typeof setInterval> | null = null;
 
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
@@ -337,15 +334,98 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     let finalOutputSentToUser = false;
     let progressOutputSentToUser = false;
     let poisonedSessionDetected = false;
-    const isClaudeCodeAgent = (group.agentType || 'claude-code') === 'claude-code';
+    const isClaudeCodeAgent =
+      (group.agentType || 'claude-code') === 'claude-code';
+
+    const clearProgressTicker = () => {
+      if (progressTicker) {
+        clearInterval(progressTicker);
+        progressTicker = null;
+      }
+    };
+
+    const renderProgressMessage = (text: string) => {
+      const elapsedSeconds =
+        progressStartedAt === null
+          ? 0
+          : Math.floor((Date.now() - progressStartedAt) / 10_000) * 10;
+      const hours = Math.floor(elapsedSeconds / 3600);
+      const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+      const seconds = elapsedSeconds % 60;
+      const elapsedParts: string[] = [];
+
+      if (hours > 0) elapsedParts.push(`${hours}시간`);
+      if (minutes > 0) elapsedParts.push(`${minutes}분`);
+      if (seconds > 0 || elapsedParts.length === 0) {
+        elapsedParts.push(`${seconds}초`);
+      }
+
+      return `${text}\n\n${elapsedParts.join(' ')}`;
+    };
+
+    const syncTrackedProgressMessage = async () => {
+      if (!progressMessageId || !channel.editMessage || !latestProgressText) {
+        return;
+      }
+
+      const rendered = renderProgressMessage(latestProgressText);
+      if (rendered === latestProgressRendered) {
+        return;
+      }
+
+      try {
+        await channel.editMessage(chatJid, progressMessageId, rendered);
+        latestProgressRendered = rendered;
+      } catch {
+        clearProgressTicker();
+        progressMessageId = null;
+      }
+    };
+
+    const ensureProgressTicker = () => {
+      if (!progressMessageId || !channel.editMessage || progressTicker) {
+        return;
+      }
+
+      progressTicker = setInterval(() => {
+        void syncTrackedProgressMessage();
+      }, 10_000);
+    };
+
+    const finalizeProgressMessage = async () => {
+      await syncTrackedProgressMessage();
+      clearProgressTicker();
+    };
 
     const sendProgressMessage = async (text: string) => {
       if (!text || text === latestProgressText) {
         return;
       }
 
+      if (progressStartedAt === null) {
+        progressStartedAt = Date.now();
+      }
       latestProgressText = text;
-      await channel.sendMessage(chatJid, text);
+      const rendered = renderProgressMessage(text);
+
+      if (progressMessageId && channel.editMessage) {
+        await syncTrackedProgressMessage();
+        progressOutputSentToUser = true;
+        return;
+      }
+
+      if (channel.sendAndTrack) {
+        progressMessageId = await channel.sendAndTrack(chatJid, rendered);
+        if (progressMessageId) {
+          latestProgressRendered = rendered;
+          ensureProgressTicker();
+          progressOutputSentToUser = true;
+          return;
+        }
+      }
+
+      latestProgressRendered = rendered;
+      await channel.sendMessage(chatJid, rendered);
       progressOutputSentToUser = true;
     };
 
@@ -399,9 +479,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           }
 
           if (text) {
+            await finalizeProgressMessage();
             await channel.sendMessage(chatJid, text);
             finalOutputSentToUser = true;
           }
+        } else {
+          await finalizeProgressMessage();
         }
 
         await channel.setTyping?.(chatJid, false);
@@ -425,6 +508,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     if (output === 'error') {
       hadError = true;
     }
+
+    clearProgressTicker();
 
     if (idleTimer) clearTimeout(idleTimer);
 
@@ -612,11 +697,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     for (const [chatJid, group] of Object.entries(registeredGroups)) {
       const sinceTimestamp = lastAgentTimestamps[chatJid] || '';
       const pending = filterOwnChannelMessages(
-        getMessagesSince(
-          chatJid,
-          sinceTimestamp,
-          deps.assistantName,
-        ),
+        getMessagesSince(chatJid, sinceTimestamp, deps.assistantName),
       );
       if (pending.length > 0) {
         logger.info(
