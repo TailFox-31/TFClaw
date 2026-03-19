@@ -1,0 +1,62 @@
+export const DEFAULT_WATCH_CI_INTERVAL_SECONDS = 60;
+export const MIN_WATCH_CI_INTERVAL_SECONDS = 30;
+export const MAX_WATCH_CI_INTERVAL_SECONDS = 3600;
+
+export interface BuildCiWatchPromptArgs {
+  taskId: string;
+  target: string;
+  checkInstructions: string;
+}
+
+export function normalizeWatchCiIntervalSeconds(seconds?: number): number {
+  if (seconds === undefined) {
+    return DEFAULT_WATCH_CI_INTERVAL_SECONDS;
+  }
+
+  if (!Number.isInteger(seconds)) {
+    throw new Error('poll_interval_seconds must be an integer.');
+  }
+
+  if (
+    seconds < MIN_WATCH_CI_INTERVAL_SECONDS ||
+    seconds > MAX_WATCH_CI_INTERVAL_SECONDS
+  ) {
+    throw new Error(
+      `poll_interval_seconds must be between ${MIN_WATCH_CI_INTERVAL_SECONDS} and ${MAX_WATCH_CI_INTERVAL_SECONDS}.`,
+    );
+  }
+
+  return seconds;
+}
+
+export function buildCiWatchPrompt({
+  taskId,
+  target,
+  checkInstructions,
+}: BuildCiWatchPromptArgs): string {
+  return `
+[BACKGROUND CI WATCH]
+
+You are running as an EJClaw background CI watcher.
+
+Watch target:
+${target}
+
+Task ID:
+${taskId}
+
+Check instructions:
+${checkInstructions}
+
+Rules:
+- On each run, check whether the target is still queued, pending, running, in progress, or otherwise non-terminal.
+- If it is still not finished, send no visible message and end this run quietly.
+- If it reached a terminal state such as success, failure, cancelled, timed out, neutral, skipped, or action required:
+  1. Send exactly one concise completion message with \`send_message\`.
+  2. Include the final status and only the most important details.
+  3. Call \`cancel_task\` with task_id "${taskId}" so this watcher stops itself.
+- If you hit a transient problem such as a rate limit, network issue, or temporary auth failure, send no visible message and leave the task active for the next retry.
+- Prefer no normal final response. Use \`send_message\` for the completion message, and keep any non-user-facing notes inside \`<internal>\` tags if needed.
+- Do not claim continued monitoring after you cancel the task.
+`.trim();
+}
