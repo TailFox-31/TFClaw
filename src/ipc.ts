@@ -3,7 +3,12 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  DATA_DIR,
+  IPC_POLL_INTERVAL,
+  SERVICE_AGENT_TYPE,
+  TIMEZONE,
+} from './config.js';
 import { AvailableGroup } from './agent-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -20,7 +25,6 @@ export interface IpcDeps {
     groupFolder: string,
     isMain: boolean,
     availableGroups: AvailableGroup[],
-    registeredJids: Set<string>,
   ) => void;
 }
 
@@ -258,6 +262,7 @@ export async function processTaskIpc(
           id: taskId,
           group_folder: targetFolder,
           chat_jid: targetJid,
+          agent_type: targetGroupEntry.agentType || SERVICE_AGENT_TYPE,
           prompt: data.prompt,
           schedule_type: scheduleType,
           schedule_value: data.schedule_value,
@@ -267,7 +272,13 @@ export async function processTaskIpc(
           created_at: new Date().toISOString(),
         });
         logger.info(
-          { taskId, sourceGroup, targetFolder, contextMode },
+          {
+            taskId,
+            sourceGroup,
+            targetFolder,
+            contextMode,
+            agentType: targetGroupEntry.agentType || SERVICE_AGENT_TYPE,
+          },
           'Task created via IPC',
         );
       }
@@ -401,12 +412,7 @@ export async function processTaskIpc(
         await deps.syncGroups(true);
         // Write updated snapshot immediately
         const availableGroups = deps.getAvailableGroups();
-        deps.writeGroupsSnapshot(
-          sourceGroup,
-          true,
-          availableGroups,
-          new Set(Object.keys(registeredGroups)),
-        );
+        deps.writeGroupsSnapshot(sourceGroup, true, availableGroups);
       } else {
         logger.warn(
           { sourceGroup },

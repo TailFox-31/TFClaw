@@ -3,6 +3,7 @@ import type { AgentOutput } from './agent-runner.js';
 const SESSION_RESET_PATTERNS = [
   /An image in the conversation exceeds the dimension limit for many-image requests \(2000px\)\./i,
   /Start a new session with fewer images\./i,
+  /No conversation found with session ID/i,
 ];
 
 function toText(value: string | object | null | undefined): string[] {

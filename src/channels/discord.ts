@@ -20,6 +20,7 @@ import {
 import { isPairedRoomJid } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
+import { formatOutbound } from '../router.js';
 
 const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
 const TRANSCRIPTION_CACHE_DIR = path.join(CACHE_DIR, 'transcriptions');
@@ -449,6 +450,7 @@ export class DiscordChannel implements Channel {
       for (const [name, id] of Object.entries(mentionMap)) {
         cleaned = cleaned.replace(new RegExp(`@${name}`, 'g'), `<@${id}>`);
       }
+      cleaned = formatOutbound(cleaned);
 
       // Discord has a 2000 character limit per message — split if needed
       const MAX_LENGTH = 2000;
@@ -456,6 +458,11 @@ export class DiscordChannel implements Channel {
         attachment: f,
         name: path.basename(f),
       }));
+
+      if (!cleaned && files.length === 0) {
+        logger.debug({ jid }, 'Skipping empty Discord outbound message');
+        return;
+      }
 
       if (cleaned.length <= MAX_LENGTH) {
         await textChannel.send({
@@ -496,6 +503,7 @@ export class DiscordChannel implements Channel {
     const groupType = group.agentType || 'claude-code';
     return groupType === this.agentTypeFilter;
   }
+
 
   async disconnect(): Promise<void> {
     if (this.client) {

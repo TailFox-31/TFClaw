@@ -170,5 +170,5 @@ export function isAppServerTurnFinished(state: AppServerTurnState): boolean {
 export function getAppServerTurnResult(
   state: AppServerTurnState,
 ): string | null {
-  return state.finalAnswer || state.latestAgentMessage;
+  return state.finalAnswer;
 }

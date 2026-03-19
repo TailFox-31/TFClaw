@@ -556,22 +556,32 @@ async function runQuery(
       if (isError) {
         // Log full error details for debugging
         const msg = message as Record<string, unknown>;
+        const sdkErrors = Array.isArray(msg.errors) ? msg.errors as string[] : [];
         const errorDetail = JSON.stringify({
           subtype: message.subtype,
           result: textResult?.slice(0, 500),
-          errors: msg.errors,
+          errors: sdkErrors,
           stop_reason: msg.stop_reason,
           duration_ms: msg.duration_ms,
           duration_api_ms: msg.duration_api_ms,
           session_id: msg.session_id,
         });
         log(`Error result detail: ${errorDetail}`);
+        // Pass SDK errors through so host can detect session issues
+        const errorText = sdkErrors.length > 0 ? sdkErrors.join('; ') : undefined;
+        writeOutput({
+          status: 'error',
+          result: textResult || null,
+          newSessionId,
+          error: errorText || `Agent error: ${message.subtype}`,
+        });
+      } else {
+        writeOutput({
+          status: 'success',
+          result: textResult || null,
+          newSessionId
+        });
       }
-      writeOutput({
-        status: 'success',
-        result: textResult || null,
-        newSessionId
-      });
     }
   }
 

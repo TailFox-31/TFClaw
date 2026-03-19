@@ -3,12 +3,18 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   createTask,
+  deleteSession,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
+  getDueTasks,
+  getRegisteredAgentTypesForJid,
   getMessagesSince,
   getNewMessages,
+  isPairedRoomJid,
+  getSession,
   getTaskById,
+  setSession,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
@@ -187,13 +193,12 @@ describe('getMessagesSince', () => {
       '2024-01-01T00:00:02.000Z',
       'Andy',
     );
-    // Should exclude m1, m2 (before/at timestamp); m3 (bot) is now included
     expect(msgs).toHaveLength(2);
     expect(msgs[0].content).toBe('bot reply');
     expect(msgs[1].content).toBe('third');
   });
 
-  it('includes bot messages with is_bot_message flag', () => {
+  it('includes bot messages from other senders', () => {
     const msgs = getMessagesSince(
       'group@g.us',
       '2024-01-01T00:00:00.000Z',
@@ -204,9 +209,8 @@ describe('getMessagesSince', () => {
     expect(botMsgs[0].is_bot_message).toBe(true);
   });
 
-  it('returns all messages including bot when sinceTimestamp is empty', () => {
+  it('returns all messages when sinceTimestamp is empty', () => {
     const msgs = getMessagesSince('group@g.us', '', 'Andy');
-    // 3 user messages + 1 bot message
     expect(msgs).toHaveLength(4);
   });
 
@@ -277,7 +281,6 @@ describe('getNewMessages', () => {
       '2024-01-01T00:00:00.000Z',
       'Andy',
     );
-    // Includes bot message, returns all 4 messages
     expect(messages).toHaveLength(4);
     expect(newTimestamp).toBe('2024-01-01T00:00:04.000Z');
   });
@@ -288,7 +291,6 @@ describe('getNewMessages', () => {
       '2024-01-01T00:00:02.000Z',
       'Andy',
     );
-    // bot reply (00:00:03) + g1 msg2 (00:00:04) after ts
     expect(messages).toHaveLength(2);
     expect(messages[0].content).toBe('bot reply');
     expect(messages[1].content).toBe('g1 msg2');
@@ -298,6 +300,16 @@ describe('getNewMessages', () => {
     const { messages, newTimestamp } = getNewMessages([], '', 'Andy');
     expect(messages).toHaveLength(0);
     expect(newTimestamp).toBe('');
+  });
+});
+
+describe('session accessors', () => {
+  it('deletes only the current service session for a group', () => {
+    setSession('group-a', 'session-123');
+    expect(getSession('group-a')).toBe('session-123');
+
+    deleteSession('group-a');
+    expect(getSession('group-a')).toBeUndefined();
   });
 });
 
@@ -391,6 +403,43 @@ describe('task CRUD', () => {
 
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
+  });
+
+  it('returns due tasks only for the requested agent type', () => {
+    const dueAt = new Date(Date.now() - 1_000).toISOString();
+
+    createTask({
+      id: 'task-claude',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'claude task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    createTask({
+      id: 'task-codex',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      agent_type: 'codex',
+      prompt: 'codex task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2024-01-01T00:00:01.000Z',
+    });
+
+    expect(getDueTasks('claude-code').map((task) => task.id)).toEqual([
+      'task-claude',
+    ]);
+    expect(getDueTasks('codex').map((task) => task.id)).toEqual([
+      'task-codex',
+    ]);
   });
 });
 
@@ -508,5 +557,43 @@ describe('registered group isMain', () => {
     expect(claudeGroups['dc:shared']?.name).toBe('Shared Room Claude');
     expect(codexGroups['dc:shared']?.agentType).toBe('codex');
     expect(codexGroups['dc:shared']?.name).toBe('Shared Room Codex');
+  });
+});
+
+describe('paired room registration', () => {
+  it('detects when both Claude and Codex are registered on the same jid', () => {
+    setRegisteredGroup('dc:123', {
+      name: 'Paired Room Claude',
+      folder: 'paired-claude',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    setRegisteredGroup('dc:123', {
+      name: 'Paired Room Codex',
+      folder: 'paired-codex',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+
+    expect(getRegisteredAgentTypesForJid('dc:123').sort()).toEqual([
+      'claude-code',
+      'codex',
+    ]);
+    expect(isPairedRoomJid('dc:123')).toBe(true);
+  });
+
+  it('does not mark solo rooms as paired', () => {
+    setRegisteredGroup('dc:solo', {
+      name: 'Solo Claude Room',
+      folder: 'solo-claude',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+
+    expect(getRegisteredAgentTypesForJid('dc:solo')).toEqual(['claude-code']);
+    expect(isPairedRoomJid('dc:solo')).toBe(false);
   });
 });

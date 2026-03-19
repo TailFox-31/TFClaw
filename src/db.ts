@@ -48,6 +48,9 @@ function createSchema(database: Database.Database): void {
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
       chat_jid TEXT NOT NULL,
+      agent_type TEXT,
+      status_message_id TEXT,
+      status_started_at TEXT,
       prompt TEXT NOT NULL,
       schedule_type TEXT NOT NULL,
       schedule_value TEXT NOT NULL,
@@ -106,6 +109,47 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN agent_type TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN status_message_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN status_started_at TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  database.exec(`
+    UPDATE scheduled_tasks
+    SET agent_type = COALESCE(
+      (
+        SELECT CASE WHEN COUNT(*) = 1 THEN MIN(agent_type) ELSE NULL END
+        FROM registered_groups
+        WHERE jid = scheduled_tasks.chat_jid
+          AND folder = scheduled_tasks.group_folder
+      ),
+      (
+        SELECT CASE WHEN COUNT(*) = 1 THEN MIN(agent_type) ELSE NULL END
+        FROM registered_groups
+        WHERE jid = scheduled_tasks.chat_jid
+      ),
+      (
+        SELECT CASE WHEN COUNT(*) = 1 THEN MIN(agent_type) ELSE NULL END
+        FROM registered_groups
+        WHERE folder = scheduled_tasks.group_folder
+      )
+    )
+    WHERE agent_type IS NULL;
+  `);
 
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
@@ -476,17 +520,31 @@ export function getLastHumanMessageTimestamp(chatJid: string): string | null {
 }
 
 export function createTask(
-  task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
+  task: Omit<
+    ScheduledTask,
+    | 'last_run'
+    | 'last_result'
+    | 'agent_type'
+    | 'status_message_id'
+    | 'status_started_at'
+  > & {
+    agent_type?: AgentType | null;
+    status_message_id?: string | null;
+    status_started_at?: string | null;
+  },
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, agent_type, status_message_id, status_started_at, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
     task.group_folder,
     task.chat_jid,
+    task.agent_type || SERVICE_AGENT_TYPE,
+    task.status_message_id || null,
+    task.status_started_at || null,
     task.prompt,
     task.schedule_type,
     task.schedule_value,
@@ -503,7 +561,18 @@ export function getTaskById(id: string): ScheduledTask | undefined {
     | undefined;
 }
 
-export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
+export function getTasksForGroup(
+  groupFolder: string,
+  agentType?: AgentType,
+): ScheduledTask[] {
+  if (agentType) {
+    return db
+      .prepare(
+        'SELECT * FROM scheduled_tasks WHERE group_folder = ? AND agent_type = ? ORDER BY created_at DESC',
+      )
+      .all(groupFolder, agentType) as ScheduledTask[];
+  }
+
   return db
     .prepare(
       'SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC',
@@ -511,7 +580,15 @@ export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
     .all(groupFolder) as ScheduledTask[];
 }
 
-export function getAllTasks(): ScheduledTask[] {
+export function getAllTasks(agentType?: AgentType): ScheduledTask[] {
+  if (agentType) {
+    return db
+      .prepare(
+        'SELECT * FROM scheduled_tasks WHERE agent_type = ? ORDER BY created_at DESC',
+      )
+      .all(agentType) as ScheduledTask[];
+  }
+
   return db
     .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
     .all() as ScheduledTask[];
@@ -558,23 +635,49 @@ export function updateTask(
   ).run(...values);
 }
 
+export function updateTaskStatusTracking(
+  id: string,
+  updates: Partial<Pick<ScheduledTask, 'status_message_id' | 'status_started_at'>>,
+): void {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (updates.status_message_id !== undefined) {
+    fields.push('status_message_id = ?');
+    values.push(updates.status_message_id);
+  }
+  if (updates.status_started_at !== undefined) {
+    fields.push('status_started_at = ?');
+    values.push(updates.status_started_at);
+  }
+
+  if (fields.length === 0) return;
+
+  values.push(id);
+  db.prepare(
+    `UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`,
+  ).run(...values);
+}
+
 export function deleteTask(id: string): void {
   // Delete child records first (FK constraint)
   db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
   db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
 }
 
-export function getDueTasks(): ScheduledTask[] {
+export function getDueTasks(
+  agentType: AgentType = SERVICE_AGENT_TYPE,
+): ScheduledTask[] {
   const now = new Date().toISOString();
   return db
     .prepare(
       `
     SELECT * FROM scheduled_tasks
-    WHERE status = 'active' AND next_run IS NOT NULL AND next_run <= ?
+    WHERE status = 'active' AND agent_type = ? AND next_run IS NOT NULL AND next_run <= ?
     ORDER BY next_run
   `,
     )
-    .all(now) as ScheduledTask[];
+    .all(agentType, now) as ScheduledTask[];
 }
 
 export function updateTaskAfterRun(

@@ -4,7 +4,7 @@ import { GroupQueue } from './group-queue.js';
 
 // Mock config to control concurrency limit
 vi.mock('./config.js', () => ({
-  DATA_DIR: '/tmp/nanoclaw-test-data',
+  DATA_DIR: '/tmp/ejclaw-test-data',
   MAX_CONCURRENT_AGENTS: 2,
 }));
 
@@ -164,6 +164,29 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10000);
     await vi.advanceTimersByTimeAsync(10);
     expect(callCount).toBe(3);
+  });
+
+  it('does not bypass retry backoff when new messages arrive', async () => {
+    let callCount = 0;
+
+    const processMessages = vi.fn(async () => {
+      callCount++;
+      return false;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(callCount).toBe(1);
+
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(callCount).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(4000);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(callCount).toBe(2);
   });
 
   // --- Shutdown prevents new enqueues ---
@@ -411,6 +434,34 @@ describe('GroupQueue', () => {
 
     resolveTask!();
     await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('does not pipe follow-up messages to an agent after closeStdin', async () => {
+    let resolveProcess: () => void;
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us', 'test-group');
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.registerProcess('group1@g.us', {} as any, 'agent-1', 'test-group');
+    queue.notifyIdle('group1@g.us');
+    queue.closeStdin('group1@g.us');
+
+    expect(queue.sendMessage('group1@g.us', 'hello after clear')).toBe(false);
+
+    queue.enqueueMessageCheck('group1@g.us', 'test-group');
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(processMessages).toHaveBeenCalledTimes(2);
   });
 
   it('preempts when idle arrives with pending tasks', async () => {

@@ -4,6 +4,9 @@ import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
+  extractWatchCiTarget,
+  isWatchCiTask,
+  renderWatchCiStatusMessage,
   startSchedulerLoop,
 } from './task-scheduler.js';
 
@@ -52,12 +55,99 @@ describe('task scheduler', () => {
     expect(task?.status).toBe('paused');
   });
 
+  it('only enqueues tasks owned by the current service agent type', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-claude',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      prompt: 'claude task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+    createTask({
+      id: 'task-codex',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      prompt: 'codex task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:01.000Z',
+    });
+
+    const enqueueTask = vi.fn();
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+    expect(enqueueTask.mock.calls[0][1]).toBe('task-codex');
+  });
+
+  it('renders watcher heartbeat messages with target and timing', () => {
+    const prompt = `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 123456
+
+Task ID:
+task-123
+
+Check instructions:
+Check the run.
+`.trim();
+
+    expect(isWatchCiTask({ prompt } as any)).toBe(true);
+    expect(extractWatchCiTarget(prompt)).toBe('GitHub Actions run 123456');
+
+    const rendered = renderWatchCiStatusMessage({
+      task: { prompt },
+      phase: 'waiting',
+      checkedAt: '2026-03-19T07:02:10.000Z',
+      nextRun: '2026-03-19T07:04:10.000Z',
+    });
+
+    expect(rendered).toContain('CI 감시 중: GitHub Actions run 123456');
+    expect(rendered).toContain('- 상태: 대기 중');
+    expect(rendered).toContain('- 마지막 확인:');
+    expect(rendered).toContain('- 다음 확인:');
+    expect(rendered).not.toContain('2분 10초');
+  });
+
   it('computeNextRun anchors interval tasks to scheduled time to prevent drift', () => {
     const scheduledTime = new Date(Date.now() - 2000).toISOString(); // 2s ago
     const task = {
       id: 'drift-test',
       group_folder: 'test',
       chat_jid: 'test@g.us',
+      agent_type: 'claude-code' as const,
+      status_message_id: null,
+      status_started_at: null,
       prompt: 'test',
       schedule_type: 'interval' as const,
       schedule_value: '60000', // 1 minute
@@ -82,6 +172,9 @@ describe('task scheduler', () => {
       id: 'once-test',
       group_folder: 'test',
       chat_jid: 'test@g.us',
+      agent_type: 'claude-code' as const,
+      status_message_id: null,
+      status_started_at: null,
       prompt: 'test',
       schedule_type: 'once' as const,
       schedule_value: '2026-01-01T00:00:00.000Z',
@@ -106,6 +199,9 @@ describe('task scheduler', () => {
       id: 'skip-test',
       group_folder: 'test',
       chat_jid: 'test@g.us',
+      agent_type: 'claude-code' as const,
+      status_message_id: null,
+      status_started_at: null,
       prompt: 'test',
       schedule_type: 'interval' as const,
       schedule_value: String(ms),

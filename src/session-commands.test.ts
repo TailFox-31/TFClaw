@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   extractSessionCommand,
   handleSessionCommand,
+  isSessionCommandControlMessage,
   isSessionCommandAllowed,
 } from './session-commands.js';
 import type { NewMessage } from './types.js';
@@ -16,6 +17,10 @@ describe('extractSessionCommand', () => {
 
   it('detects /compact with trigger prefix', () => {
     expect(extractSessionCommand('@Andy /compact', trigger)).toBe('/compact');
+  });
+
+  it('detects bare /clear', () => {
+    expect(extractSessionCommand('/clear', trigger)).toBe('/clear');
   });
 
   it('rejects /compact with extra text', () => {
@@ -43,19 +48,47 @@ describe('extractSessionCommand', () => {
 
 describe('isSessionCommandAllowed', () => {
   it('allows main group regardless of sender', () => {
-    expect(isSessionCommandAllowed(true, false)).toBe(true);
+    expect(isSessionCommandAllowed(true, false, false)).toBe(true);
   });
 
   it('allows trusted/admin sender (is_from_me) in non-main group', () => {
-    expect(isSessionCommandAllowed(false, true)).toBe(true);
+    expect(isSessionCommandAllowed(false, true, false)).toBe(true);
+  });
+
+  it('allows configured admin sender in non-main group', () => {
+    expect(isSessionCommandAllowed(false, false, true)).toBe(true);
   });
 
   it('denies untrusted sender in non-main group', () => {
-    expect(isSessionCommandAllowed(false, false)).toBe(false);
+    expect(isSessionCommandAllowed(false, false, false)).toBe(false);
   });
 
   it('allows trusted sender in main group', () => {
-    expect(isSessionCommandAllowed(true, true)).toBe(true);
+    expect(isSessionCommandAllowed(true, true, false)).toBe(true);
+  });
+});
+
+describe('isSessionCommandControlMessage', () => {
+  it('matches clear confirmation output', () => {
+    expect(
+      isSessionCommandControlMessage(
+        'Current session cleared. The next message will start a new conversation.',
+      ),
+    ).toBe(true);
+  });
+
+  it('matches admin denial output', () => {
+    expect(
+      isSessionCommandControlMessage('Session commands require admin access.'),
+    ).toBe(true);
+  });
+
+  it('does not match regular bot conversation', () => {
+    expect(
+      isSessionCommandControlMessage(
+        '좋네요. 필요해지면 바로 말씀드리겠습니다.',
+      ),
+    ).toBe(false);
   });
 });
 
@@ -123,6 +156,26 @@ describe('handleSessionCommand', () => {
       expect.any(Function),
     );
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+  });
+
+  it('handles authorized /clear without invoking the agent', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/clear')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.closeStdin).toHaveBeenCalledTimes(1);
+    expect(deps.clearSession).toHaveBeenCalledTimes(1);
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Current session cleared. The next message will start a new conversation.',
+    );
   });
 
   it('sends denial to interactable sender in non-main group', async () => {
@@ -202,6 +255,27 @@ describe('handleSessionCommand', () => {
     expect(deps.runAgent).toHaveBeenCalledWith(
       '/compact',
       expect.any(Function),
+    );
+  });
+
+  it('allows configured admin sender in non-main group', async () => {
+    const deps = makeDeps({
+      isAdminSender: vi.fn().mockReturnValue(true),
+    });
+    const result = await handleSessionCommand({
+      missedMessages: [
+        makeMsg('/clear', { is_from_me: false, sender: 'discord-user-1' }),
+      ],
+      isMainGroup: false,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.clearSession).toHaveBeenCalledTimes(1);
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Current session cleared. The next message will start a new conversation.',
     );
   });
 

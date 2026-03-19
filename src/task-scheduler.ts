@@ -2,7 +2,12 @@ import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 
-import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  ASSISTANT_NAME,
+  SCHEDULER_POLL_INTERVAL,
+  SERVICE_AGENT_TYPE,
+  TIMEZONE,
+} from './config.js';
 import {
   AgentOutput,
   runAgentProcess,
@@ -13,13 +18,14 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
+  updateTaskStatusTracking,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, ScheduledTask } from './types.js';
+import { AgentType, RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -63,6 +69,7 @@ export function computeNextRun(task: ScheduledTask): string | null {
 }
 
 export interface SchedulerDependencies {
+  serviceAgentType?: AgentType;
   registeredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
@@ -73,6 +80,70 @@ export interface SchedulerDependencies {
     groupFolder: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendTrackedMessage?: (jid: string, text: string) => Promise<string | null>;
+  editTrackedMessage?: (
+    jid: string,
+    messageId: string,
+    text: string,
+  ) => Promise<void>;
+}
+
+type WatcherStatusPhase = 'checking' | 'waiting' | 'retrying' | 'completed';
+
+const WATCH_CI_PREFIX = '[BACKGROUND CI WATCH]';
+const TASK_STATUS_MESSAGE_PREFIX = '\u2063\u2063\u2063';
+
+export function isWatchCiTask(task: Pick<ScheduledTask, 'prompt'>): boolean {
+  return task.prompt.startsWith(WATCH_CI_PREFIX);
+}
+
+export function isTaskStatusControlMessage(content: string): boolean {
+  return content.startsWith(TASK_STATUS_MESSAGE_PREFIX);
+}
+
+export function extractWatchCiTarget(prompt: string): string | null {
+  const match = prompt.match(/Watch target:\n([\s\S]*?)\n\nTask ID:/);
+  return match?.[1]?.trim() || null;
+}
+
+function formatTimeLabel(timestampIso: string): string {
+  return new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone: TIMEZONE,
+  }).format(new Date(timestampIso));
+}
+
+export function renderWatchCiStatusMessage(args: {
+  task: Pick<ScheduledTask, 'prompt'>;
+  phase: WatcherStatusPhase;
+  checkedAt: string;
+  nextRun?: string | null;
+}): string {
+  const target = extractWatchCiTarget(args.task.prompt) || 'CI watcher';
+  const title =
+    args.phase === 'completed' ? `CI 감시 종료: ${target}` : `CI 감시 중: ${target}`;
+  const statusLabel =
+    args.phase === 'checking'
+      ? '확인 중'
+      : args.phase === 'retrying'
+        ? '재시도 대기'
+        : args.phase === 'completed'
+          ? '완료'
+          : '대기 중';
+
+  const lines = [
+    title,
+    `- 상태: ${statusLabel}`,
+    `- 마지막 확인: ${formatTimeLabel(args.checkedAt)}`,
+  ];
+
+  if (args.nextRun) {
+    lines.push(`- 다음 확인: ${formatTimeLabel(args.nextRun)}`);
+  }
+  return lines.join('\n');
 }
 
 async function runTask(
@@ -131,7 +202,9 @@ async function runTask(
 
   // Update tasks snapshot for agent to read (filtered by group)
   const isMain = group.isMain === true;
-  const tasks = getAllTasks();
+  const taskAgentType =
+    task.agent_type || deps.serviceAgentType || SERVICE_AGENT_TYPE;
+  const tasks = getAllTasks(taskAgentType);
   writeTasksSnapshot(
     task.group_folder,
     isMain,
@@ -148,6 +221,8 @@ async function runTask(
 
   let result: string | null = null;
   let error: string | null = null;
+  let statusMessageId = task.status_message_id;
+  let statusStartedAt = task.status_started_at;
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -168,7 +243,62 @@ async function runTask(
     }, TASK_CLOSE_DELAY_MS);
   };
 
+  const shouldTrackStatus =
+    isWatchCiTask(task) &&
+    typeof deps.sendTrackedMessage === 'function' &&
+    typeof deps.editTrackedMessage === 'function';
+
+  const persistStatusTracking = () => {
+    const currentTask = getTaskById(task.id);
+    if (!currentTask) return;
+    updateTaskStatusTracking(task.id, {
+      status_message_id: statusMessageId,
+      status_started_at: statusStartedAt,
+    });
+  };
+
+  const updateWatcherStatus = async (
+    phase: WatcherStatusPhase,
+    nextRun?: string | null,
+  ) => {
+    if (!shouldTrackStatus) {
+      return;
+    }
+
+    const checkedAt = new Date().toISOString();
+    if (!statusStartedAt) {
+      statusStartedAt = checkedAt;
+    }
+
+    const text = renderWatchCiStatusMessage({
+      task,
+      phase,
+      checkedAt,
+      nextRun,
+    });
+    const payload = `${TASK_STATUS_MESSAGE_PREFIX}${text}`;
+
+    if (statusMessageId) {
+      try {
+        await deps.editTrackedMessage!(task.chat_jid, statusMessageId, payload);
+        persistStatusTracking();
+        return;
+      } catch {
+        statusMessageId = null;
+        persistStatusTracking();
+      }
+    }
+
+    const messageId = await deps.sendTrackedMessage!(task.chat_jid, payload);
+    if (messageId) {
+      statusMessageId = messageId;
+      persistStatusTracking();
+    }
+  };
+
   try {
+    await updateWatcherStatus('checking');
+
     const output = await runAgentProcess(
       group,
       {
@@ -183,6 +313,9 @@ async function runTask(
       (proc, processName) =>
         deps.onProcess(task.chat_jid, proc, processName, task.group_folder),
       async (streamedOutput: AgentOutput) => {
+        if (streamedOutput.phase === 'progress') {
+          return;
+        }
         if (streamedOutput.result) {
           result = streamedOutput.result;
           // Forward result to user (sendMessage handles formatting)
@@ -209,7 +342,11 @@ async function runTask(
     }
 
     logger.info(
-      { taskId: task.id, durationMs: Date.now() - startTime },
+      {
+        taskId: task.id,
+        agentType: taskAgentType,
+        durationMs: Date.now() - startTime,
+      },
       'Task completed',
     );
   } catch (err) {
@@ -219,6 +356,22 @@ async function runTask(
   }
 
   const durationMs = Date.now() - startTime;
+  const currentTask = getTaskById(task.id);
+  const nextRun = currentTask ? computeNextRun(task) : null;
+
+  if (!currentTask) {
+    await updateWatcherStatus('completed');
+    logger.debug({ taskId: task.id }, 'Task deleted during execution, skipping persistence');
+    return;
+  }
+
+  if (error) {
+    await updateWatcherStatus('retrying', nextRun);
+  } else if (nextRun) {
+    await updateWatcherStatus('waiting', nextRun);
+  } else {
+    await updateWatcherStatus('completed');
+  }
 
   logTaskRun({
     task_id: task.id,
@@ -229,7 +382,6 @@ async function runTask(
     error,
   });
 
-  const nextRun = computeNextRun(task);
   const resultSummary = error
     ? `Error: ${error}`
     : result
@@ -250,7 +402,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
 
   const loop = async () => {
     try {
-      const dueTasks = getDueTasks();
+      const dueTasks = getDueTasks(
+        deps.serviceAgentType || SERVICE_AGENT_TYPE,
+      );
       if (dueTasks.length > 0) {
         logger.info({ count: dueTasks.length }, 'Found due tasks');
       }
