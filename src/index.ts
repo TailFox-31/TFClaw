@@ -7,6 +7,7 @@ import {
   ASSISTANT_NAME,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  isSessionCommandSenderAllowed,
   STATUS_CHANNEL_ID,
   STATUS_UPDATE_INTERVAL,
   TIMEZONE,
@@ -37,6 +38,7 @@ import {
   initDatabase,
   setRegisteredGroup,
   setRouterState,
+  deleteSession,
   setSession,
   storeChatMetadata,
   storeMessage,
@@ -92,6 +94,11 @@ function loadState(): void {
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
   setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+}
+
+function clearSession(groupFolder: string): void {
+  delete sessions[groupFolder];
+  deleteSession(groupFolder);
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
@@ -182,11 +189,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       runAgent: (prompt, onOutput) =>
         runAgent(group, prompt, chatJid, onOutput),
       closeStdin: () => queue.closeStdin(chatJid),
+      clearSession: () => clearSession(group.folder),
       advanceCursor: (ts) => {
         lastAgentTimestamp[chatJid] = ts;
         saveState();
       },
       formatMessages,
+      isAdminSender: (msg) => isSessionCommandSenderAllowed(msg.sender),
       canSenderInteract: (msg) => {
         const hasTrigger = TRIGGER_PATTERN.test(msg.content.trim());
         const reqTrigger = !isMainGroup && group.requiresTrigger !== false;
@@ -921,6 +930,7 @@ async function startMessageLoop(): Promise<void> {
               isSessionCommandAllowed(
                 isMainGroup,
                 loopCmdMsg.is_from_me === true,
+                isSessionCommandSenderAllowed(loopCmdMsg.sender),
               )
             ) {
               queue.closeStdin(chatJid);

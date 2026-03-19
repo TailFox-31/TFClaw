@@ -10,10 +10,9 @@ const STEPS: Record<
   () => Promise<{ run: (args: string[]) => Promise<void> }>
 > = {
   environment: () => import('./environment.js'),
-  runners: () => import('./container.js'),
+  runners: () => import('./runners.js'),
   groups: () => import('./groups.js'),
   register: () => import('./register.js'),
-  mounts: () => import('./mounts.js'),
   service: () => import('./service.js'),
   verify: () => import('./verify.js'),
 };

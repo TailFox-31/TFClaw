@@ -1,153 +1,84 @@
 ---
 name: add-ollama-tool
-description: Add Ollama MCP server so the container agent can call local models for cheaper/faster tasks like summarization, translation, or general queries.
+description: Add an Ollama MCP tool to the current host-process Claude runner.
 ---
 
-# Add Ollama Integration
+# Add Ollama Tool
 
-This skill adds a stdio-based MCP server that exposes local Ollama models as tools for the container agent. Claude remains the orchestrator but can offload work to local models.
+현재 구조에서는 컨테이너를 건드리지 않습니다. Ollama 연동은 호스트에서 실행되는 Claude 러너에 MCP를 추가하는 방식으로 넣습니다.
 
-Tools added:
-- `ollama_list_models` — lists installed Ollama models
-- `ollama_generate` — sends a prompt to a specified model and returns the response
-
-## Phase 1: Pre-flight
-
-### Check if already applied
-
-Check if `container/agent-runner/src/ollama-mcp-stdio.ts` exists. If it does, skip to Phase 3 (Configure).
-
-### Check prerequisites
-
-Verify Ollama is installed and running on the host:
+## 전제 조건
 
 ```bash
 ollama list
 ```
 
-If Ollama is not installed, direct the user to https://ollama.com/download.
+- Ollama가 설치되어 있어야 합니다.
+- 최소 한 개 이상의 모델이 있어야 합니다.
 
-If no models are installed, suggest pulling one:
-
-> You need at least one model. I recommend:
->
-> ```bash
-> ollama pull gemma3:1b    # Small, fast (1GB)
-> ollama pull llama3.2     # Good general purpose (2GB)
-> ollama pull qwen3-coder:30b  # Best for code tasks (18GB)
-> ```
-
-## Phase 2: Apply Code Changes
-
-### Ensure upstream remote
+권장 예시:
 
 ```bash
-git remote -v
+ollama pull gemma3:1b
+ollama pull llama3.2
 ```
 
-If `upstream` is missing, add it:
+## 수정 지점
+
+### 1. 환경 변수 전달
+
+`src/agent-runner.ts`
+
+- `.env`에서 `OLLAMA_HOST`를 읽도록 `readEnvFile([...])` 목록에 추가합니다.
+- Claude 러너 child env에 `OLLAMA_HOST`를 명시적으로 넣습니다.
+
+기본값을 쓰면 생략 가능하지만, 원격 Ollama나 다른 포트를 쓸 때는 필요합니다.
+
+## 2. MCP 서버 추가
+
+`runners/agent-runner/src/index.ts`
+
+- 호스트에서 동작하는 stdio MCP 서버 파일을 추가합니다.
+  - 예: `runners/agent-runner/src/ollama-mcp-stdio.ts`
+- `query({ options: { mcpServers, allowedTools } })` 쪽에 Ollama 서버를 등록합니다.
+- `allowedTools`에 `mcp__ollama__*` 또는 실제 툴 prefix를 추가합니다.
+
+핵심은 두 가지입니다.
+
+- Claude가 Ollama를 CLI가 아니라 MCP 도구로 보게 만들 것
+- 툴 이름이 `allowedTools`에 포함될 것
+
+## 3. 프롬프트 문서화
+
+`groups/global/CLAUDE.md` 또는 대상 그룹의 `CLAUDE.md`
+
+- 언제 Ollama를 쓰는지
+- 어떤 모델을 우선 쓰는지
+- 빠른 요약/분류/초안 작업에 먼저 쓰도록 할지
+
+이 부분을 적어두지 않으면 에이전트가 도구를 잘 안 고릅니다.
+
+## 4. 빌드와 검증
 
 ```bash
-git remote add upstream https://github.com/qwibitai/nanoclaw.git
-```
-
-### Merge the skill branch
-
-```bash
-git fetch upstream skill/ollama-tool
-git merge upstream/skill/ollama-tool
-```
-
-This merges in:
-- `container/agent-runner/src/ollama-mcp-stdio.ts` (Ollama MCP server)
-- `scripts/ollama-watch.sh` (macOS notification watcher)
-- Ollama MCP config in `container/agent-runner/src/index.ts` (allowedTools + mcpServers)
-- `[OLLAMA]` log surfacing in `src/container-runner.ts`
-- `OLLAMA_HOST` in `.env.example`
-
-If the merge reports conflicts, resolve them by reading the conflicted files and understanding the intent of both sides.
-
-### Copy to per-group agent-runner
-
-Existing groups have a cached copy of the agent-runner source. Copy the new files:
-
-```bash
-for dir in data/sessions/*/agent-runner-src; do
-  cp container/agent-runner/src/ollama-mcp-stdio.ts "$dir/"
-  cp container/agent-runner/src/index.ts "$dir/"
-done
-```
-
-### Validate code changes
-
-```bash
+npm run build:runners
 npm run build
-./container/build.sh
+npm run setup -- --step service
 ```
 
-Build must be clean before proceeding.
+디스코드에서 테스트:
 
-## Phase 3: Configure
+> `ollama 도구를 써서 이 문단을 3줄로 요약해줘`
 
-### Set Ollama host (optional)
+## 문제 확인
 
-By default, the MCP server connects to `http://host.docker.internal:11434` (Docker Desktop) with a fallback to `localhost`. To use a custom Ollama host, add to `.env`:
+### 에이전트가 `ollama` CLI를 직접 치려고 함
 
-```bash
-OLLAMA_HOST=http://your-ollama-host:11434
-```
+- MCP 서버 등록이 빠졌거나
+- `allowedTools`에 툴 prefix가 없거나
+- 프롬프트 문서에 사용 규칙이 없습니다
 
-### Restart the service
+### 연결 실패
 
-```bash
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # macOS
-# Linux: systemctl --user restart nanoclaw
-```
-
-## Phase 4: Verify
-
-### Test via WhatsApp
-
-Tell the user:
-
-> Send a message like: "use ollama to tell me the capital of France"
->
-> The agent should use `ollama_list_models` to find available models, then `ollama_generate` to get a response.
-
-### Monitor activity (optional)
-
-Run the watcher script for macOS notifications when Ollama is used:
-
-```bash
-./scripts/ollama-watch.sh
-```
-
-### Check logs if needed
-
-```bash
-tail -f logs/nanoclaw.log | grep -i ollama
-```
-
-Look for:
-- `Agent output: ... Ollama ...` — agent used Ollama successfully
-- `[OLLAMA] >>> Generating` — generation started (if log surfacing works)
-- `[OLLAMA] <<< Done` — generation completed
-
-## Troubleshooting
-
-### Agent says "Ollama is not installed"
-
-The agent is trying to run `ollama` CLI inside the container instead of using the MCP tools. This means:
-1. The MCP server wasn't registered — check `container/agent-runner/src/index.ts` has the `ollama` entry in `mcpServers`
-2. The per-group source wasn't updated — re-copy files (see Phase 2)
-3. The container wasn't rebuilt — run `./container/build.sh`
-
-### "Failed to connect to Ollama"
-
-1. Verify Ollama is running: `ollama list`
-2. Check Docker can reach the host: `docker run --rm curlimages/curl curl -s http://host.docker.internal:11434/api/tags`
-3. If using a custom host, check `OLLAMA_HOST` in `.env`
-
-### Agent doesn't use Ollama tools
-
-The agent may not know about the tools. Try being explicit: "use the ollama_generate tool with gemma3:1b to answer: ..."
+- `ollama list`가 호스트에서 되는지 먼저 확인합니다
+- 원격 호스트면 `.env`의 `OLLAMA_HOST`를 확인합니다

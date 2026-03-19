@@ -1,115 +1,70 @@
 ---
 name: customize
-description: Add new capabilities or modify NanoClaw behavior. Use when user wants to add channels (Telegram, Slack, email input), change triggers, add integrations, modify the router, or make any other customizations. This is an interactive skill that asks questions to understand what the user wants.
+description: Customize Discord-only NanoClaw behavior, routing, integrations, prompts, or commands.
 ---
 
 # NanoClaw Customization
 
-This skill helps users add capabilities or modify behavior. Use AskUserQuestion to understand what they want before making changes.
+이 스킬은 현재 디스코드 전용 NanoClaw를 기준으로 동작합니다. 새 채널 추가보다 기존 디스코드 흐름, 러너, 프롬프트, 스케줄링, 도구 연결을 직접 수정하는 쪽을 우선합니다.
 
-## Workflow
+## 진행 순서
 
-1. **Install marketplace** - If feature skills aren't available yet, install the marketplace plugin:
-   ```bash
-   claude plugin install nanoclaw-skills@nanoclaw-skills --scope project
-   ```
-   This is hot-loaded — all feature skills become immediately available.
-2. **Understand the request** - Ask clarifying questions
-3. **Plan the changes** - Identify files to modify. If a skill exists for the request (e.g., `/add-telegram` for adding Telegram), invoke it instead of implementing manually.
-4. **Implement** - Make changes directly to the code
-5. **Test guidance** - Tell user how to verify
+1. 요청을 `행동 변경`, `명령 추가`, `도구 연동`, `설정/배포`, `프롬프트 수정` 중 어디에 속하는지 먼저 정리합니다.
+2. 영향 범위를 좁힙니다.
+3. 관련 파일만 수정합니다.
+4. 가능하면 바로 검증합니다.
 
-## Key Files
+## 자주 보는 수정 지점
 
-| File | Purpose |
-|------|---------|
-| `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/channels/whatsapp.ts` | WhatsApp connection, auth, send/receive |
-| `src/ipc.ts` | IPC watcher and task processing |
-| `src/router.ts` | Message formatting and outbound routing |
-| `src/types.ts` | TypeScript interfaces (includes Channel) |
-| `src/config.ts` | Assistant name, trigger pattern, directories |
-| `src/db.ts` | Database initialization and queries |
-| `src/whatsapp-auth.ts` | Standalone WhatsApp authentication script |
-| `groups/CLAUDE.md` | Global memory/persona |
+- `src/channels/discord.ts` - 디스코드 메시지 파싱, 멘션 규칙, 첨부파일 처리, 음성 전사
+- `src/index.ts` - 오케스트레이션, 세션 명령, 라우팅, 상태 갱신
+- `src/session-commands.ts` - `/compact`, `/clear` 같은 세션 명령
+- `src/db.ts` - 등록 그룹, 세션, 스케줄, 마이그레이션
+- `src/config.ts` - 서비스 식별값, 디렉터리, 타임아웃, 기능 플래그
+- `src/agent-runner.ts` - 에이전트 실행과 환경 변수 전달
+- `runners/agent-runner/src/index.ts` - Claude Code 쪽 허용 도구와 MCP
+- `runners/codex-runner/src/index.ts` - Codex 쪽 실행 경로
+- `setup/register.ts` - 디스코드 채널 등록
+- `groups/global/CLAUDE.md` 및 각 그룹의 `CLAUDE.md` - 프롬프트/운영 규칙
 
-## Common Customization Patterns
+## 요청별 가이드
 
-### Adding a New Input Channel (e.g., Telegram, Slack, Email)
+### 동작을 바꾸고 싶을 때
 
-Questions to ask:
-- Which channel? (Telegram, Slack, Discord, email, SMS, etc.)
-- Same trigger word or different?
-- Same memory hierarchy or separate?
-- Should messages from this channel go to existing groups or new ones?
+- 응답 조건, 멘션 처리, 첨부파일 처리: `src/channels/discord.ts`
+- 세션 명령, 상태머신, 런루프: `src/index.ts`, `src/session-commands.ts`
+- 페르소나/응답 스타일: `groups/global/CLAUDE.md`
 
-Implementation pattern:
-1. Create `src/channels/{name}.ts` implementing the `Channel` interface from `src/types.ts` (see `src/channels/whatsapp.ts` for reference)
-2. Add the channel instance to `main()` in `src/index.ts` and wire callbacks (`onMessage`, `onChatMetadata`)
-3. Messages are stored via the `onMessage` callback; routing is automatic via `ownsJid()`
+### 도구나 MCP를 붙일 때
 
-### Adding a New MCP Integration
+- 러너에 실제 도구 허용과 MCP 설정을 추가합니다.
+- Claude Code 쪽은 `runners/agent-runner/src/index.ts`를 먼저 보고, 필요하면 `src/agent-runner.ts`의 env 전달 범위를 같이 수정합니다.
+- 그룹별 사용 규칙은 해당 `CLAUDE.md`에 문서화합니다.
 
-Questions to ask:
-- What service? (Calendar, Notion, database, etc.)
-- What operations needed? (read, write, both)
-- Which groups should have access?
+### 새 명령을 만들 때
 
-Implementation:
-1. Add MCP server config to the container settings (see `src/container-runner.ts` for how MCP servers are mounted)
-2. Document available tools in `groups/CLAUDE.md`
+- 먼저 슬래시 명령인지, 자연어 규칙인지 구분합니다.
+- 슬래시/예약 명령이면 `src/session-commands.ts`와 `src/index.ts` 경로를 봅니다.
+- 자연어 지시만으로 충분하면 프롬프트 문서만 수정합니다.
 
-### Changing Assistant Behavior
+### 등록/배포 흐름을 바꿀 때
 
-Questions to ask:
-- What aspect? (name, trigger, persona, response style)
-- Apply to all groups or specific ones?
+- 설치/검증 단계는 `setup/*`
+- 서비스 동작은 `setup/service.ts`
+- 그룹 등록 형식은 `setup/register.ts`
 
-Simple changes → edit `src/config.ts`
-Persona changes → edit `groups/CLAUDE.md`
-Per-group behavior → edit specific group's `CLAUDE.md`
+## 검증 원칙
 
-### Adding New Commands
+작게 바꿨으면 최소 이 정도는 확인합니다.
 
-Questions to ask:
-- What should the command do?
-- Available in all groups or main only?
-- Does it need new MCP tools?
-
-Implementation:
-1. Commands are handled by the agent naturally — add instructions to `groups/CLAUDE.md` or the group's `CLAUDE.md`
-2. For trigger-level routing changes, modify `processGroupMessages()` in `src/index.ts`
-
-### Changing Deployment
-
-Questions to ask:
-- Target platform? (Linux server, Docker, different Mac)
-- Service manager? (systemd, Docker, supervisord)
-
-Implementation:
-1. Create appropriate service files
-2. Update paths in config
-3. Provide setup instructions
-
-## After Changes
-
-Always tell the user:
 ```bash
-# Rebuild and restart
-npm run build
-# macOS:
-launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist
-launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
-# Linux:
-# systemctl --user restart nanoclaw
+npm run typecheck
+npm test
 ```
 
-## Example Interaction
+러너나 실행 경로를 건드렸으면 추가로 확인합니다.
 
-User: "Add Telegram as an input channel"
-
-1. Ask: "Should Telegram use the same @Andy trigger, or a different one?"
-2. Ask: "Should Telegram messages create separate conversation contexts, or share with WhatsApp groups?"
-3. Create `src/channels/telegram.ts` implementing the `Channel` interface (see `src/channels/whatsapp.ts`)
-4. Add the channel to `main()` in `src/index.ts`
-5. Tell user how to authenticate and test
+```bash
+npm run build:runners
+npm run setup -- --step verify
+```

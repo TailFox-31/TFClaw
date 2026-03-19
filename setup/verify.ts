@@ -6,7 +6,6 @@
  */
 import { execSync } from 'child_process';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 
 import Database from 'better-sqlite3';
@@ -14,18 +13,12 @@ import Database from 'better-sqlite3';
 import { STORE_DIR } from '../src/config.js';
 import { readEnvFile } from '../src/env.js';
 import { logger } from '../src/logger.js';
-import {
-  getPlatform,
-  getServiceManager,
-  hasSystemd,
-  isRoot,
-} from './platform.js';
+import { getPlatform, getServiceManager, isRoot } from './platform.js';
 import { emitStatus } from './status.js';
 
 export async function run(_args: string[]): Promise<void> {
   const projectRoot = process.cwd();
   const platform = getPlatform();
-  const homeDir = os.homedir();
 
   logger.info('Starting verification');
 
@@ -93,31 +86,10 @@ export async function run(_args: string[]): Promise<void> {
   }
 
   // 3. Check channel auth (detect configured channels by credentials)
-  const envVars = readEnvFile([
-    'TELEGRAM_BOT_TOKEN',
-    'SLACK_BOT_TOKEN',
-    'SLACK_APP_TOKEN',
-    'DISCORD_BOT_TOKEN',
-  ]);
+  const envVars = readEnvFile(['DISCORD_BOT_TOKEN']);
 
   const channelAuth: Record<string, string> = {};
 
-  // WhatsApp: check for auth credentials on disk
-  const authDir = path.join(projectRoot, 'store', 'auth');
-  if (fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0) {
-    channelAuth.whatsapp = 'authenticated';
-  }
-
-  // Token-based channels: check .env
-  if (process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN) {
-    channelAuth.telegram = 'configured';
-  }
-  if (
-    (process.env.SLACK_BOT_TOKEN || envVars.SLACK_BOT_TOKEN) &&
-    (process.env.SLACK_APP_TOKEN || envVars.SLACK_APP_TOKEN)
-  ) {
-    channelAuth.slack = 'configured';
-  }
   if (process.env.DISCORD_BOT_TOKEN || envVars.DISCORD_BOT_TOKEN) {
     channelAuth.discord = 'configured';
   }
@@ -141,16 +113,6 @@ export async function run(_args: string[]): Promise<void> {
     }
   }
 
-  // 5. Check mount allowlist
-  let mountAllowlist = 'missing';
-  if (
-    fs.existsSync(
-      path.join(homeDir, '.config', 'nanoclaw', 'mount-allowlist.json'),
-    )
-  ) {
-    mountAllowlist = 'configured';
-  }
-
   // Determine overall status
   const status =
     service === 'running' &&
@@ -168,7 +130,6 @@ export async function run(_args: string[]): Promise<void> {
     CONFIGURED_CHANNELS: configuredChannels.join(','),
     CHANNEL_AUTH: JSON.stringify(channelAuth),
     REGISTERED_GROUPS: registeredGroups,
-    MOUNT_ALLOWLIST: mountAllowlist,
     STATUS: status,
     LOG: 'logs/setup.log',
   });

@@ -3,6 +3,7 @@ node_modules/
 .npm-cache/
 # Build output
 dist/
+runners/*/dist/
 
 # Local data & auth
 store/
@@ -24,12 +25,22 @@ groups/global/*
 # Secrets
 *.keys.json
 .env
+.env.codex
 
 # Temp files
 .tmp-*
+tmp/
+backups/
+dist-backups/
+.deploy-backups/
+cache/
+runners/*/node_modules/
+runners/codex-runner-backups/
+*.bak-*
 
 # OS
 .DS_Store
+._*
 
 # IDE
 .idea/

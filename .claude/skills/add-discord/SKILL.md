@@ -1,212 +1,84 @@
 ---
 name: add-discord
-description: Add Discord bot channel integration to NanoClaw.
+description: Finish Discord bot setup and registration for NanoClaw.
 ---
 
 # Add Discord Channel
 
-This skill adds Discord support to NanoClaw, then walks through interactive setup.
+현재 저장소에는 디스코드 채널 구현이 이미 포함되어 있습니다. 이 스킬은 외부 브랜치를 머지하는 용도가 아니라, 토큰 설정과 채널 등록을 빠르게 끝내는 체크리스트로 사용합니다.
 
-## Phase 1: Pre-flight
+## 1. 전제 확인
 
-### Check if already applied
+확인할 것:
 
-Check if `src/channels/discord.ts` exists. If it does, skip to Phase 3 (Setup). The code changes are already in place.
+- `src/channels/discord.ts`가 존재하는지
+- `package.json`에 `discord.js`가 있는지
+- `npm run typecheck`가 통과하는지
 
-### Ask the user
+## 2. 봇 토큰 준비
 
-Use `AskUserQuestion` to collect configuration:
+토큰이 없다면 디스코드 개발자 포털에서 새 애플리케이션과 봇을 만들고 아래 권한을 켭니다.
 
-AskUserQuestion: Do you have a Discord bot token, or do you need to create one?
+- `Message Content Intent`
+- 필요하면 `Server Members Intent`
 
-If they have one, collect it now. If not, we'll create one in Phase 3.
+봇 초대 링크는 `bot` 스코프와 최소 `Send Messages`, `Read Message History`, `View Channels` 권한으로 생성합니다.
 
-## Phase 2: Apply Code Changes
+## 3. 환경 변수 설정
 
-### Ensure channel remote
-
-```bash
-git remote -v
-```
-
-If `discord` is missing, add it:
+`.env`:
 
 ```bash
-git remote add discord https://github.com/qwibitai/nanoclaw-discord.git
+DISCORD_BOT_TOKEN=<token>
 ```
 
-### Merge the skill branch
+선택:
 
 ```bash
-git fetch discord main
-git merge discord/main
+DISCORD_CODEX_BOT_TOKEN=<second-token>
 ```
 
-This merges in:
-- `src/channels/discord.ts` (DiscordChannel class with self-registration via `registerChannel`)
-- `src/channels/discord.test.ts` (unit tests with discord.js mock)
-- `import './discord.js'` appended to the channel barrel file `src/channels/index.ts`
-- `discord.js` npm dependency in `package.json`
-- `DISCORD_BOT_TOKEN` in `.env.example`
+두 번째 토큰이 있으면 Codex 전용 디스코드 봇도 따로 띄울 수 있습니다.
 
-If the merge reports conflicts, resolve them by reading the conflicted files and understanding the intent of both sides.
+## 4. 채널 등록
 
-### Validate code changes
+디스코드에서 개발자 모드를 켜고 채널 ID를 복사합니다. 등록 JID는 `dc:<channel-id>` 형식입니다.
+
+메인 채널:
 
 ```bash
-npm install
-npm run build
-npx vitest run src/channels/discord.test.ts
+npm run setup -- --step register -- \
+  --jid dc:<channel-id> \
+  --name "<server-name> #<channel-name>" \
+  --folder discord_main \
+  --trigger @Andy \
+  --is-main \
+  --no-trigger-required
 ```
 
-All tests must pass (including the new Discord tests) and build must be clean before proceeding.
-
-## Phase 3: Setup
-
-### Create Discord Bot (if needed)
-
-If the user doesn't have a bot token, tell them:
-
-> I need you to create a Discord bot:
->
-> 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
-> 2. Click **New Application** and give it a name (e.g., "Andy Assistant")
-> 3. Go to the **Bot** tab on the left sidebar
-> 4. Click **Reset Token** to generate a new bot token — copy it immediately (you can only see it once)
-> 5. Under **Privileged Gateway Intents**, enable:
->    - **Message Content Intent** (required to read message text)
->    - **Server Members Intent** (optional, for member display names)
-> 6. Go to **OAuth2** > **URL Generator**:
->    - Scopes: select `bot`
->    - Bot Permissions: select `Send Messages`, `Read Message History`, `View Channels`
->    - Copy the generated URL and open it in your browser to invite the bot to your server
-
-Wait for the user to provide the token.
-
-### Configure environment
-
-Add to `.env`:
+보조 채널:
 
 ```bash
-DISCORD_BOT_TOKEN=<their-token>
+npm run setup -- --step register -- \
+  --jid dc:<channel-id> \
+  --name "<server-name> #<channel-name>" \
+  --folder discord_<channel-name> \
+  --trigger @Andy
 ```
 
-Channels auto-enable when their credentials are present — no extra configuration needed.
-
-Sync to container environment:
-
-```bash
-mkdir -p data/env && cp .env data/env/env
-```
-
-The container reads environment from `data/env/env`, not `.env` directly.
-
-### Build and restart
+## 5. 빌드와 검증
 
 ```bash
 npm run build
-launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run build:runners
+npm run setup -- --step service
+npm run setup -- --step verify
 ```
 
-## Phase 4: Registration
-
-### Get Channel ID
-
-Tell the user:
-
-> To get the channel ID for registration:
->
-> 1. In Discord, go to **User Settings** > **Advanced** > Enable **Developer Mode**
-> 2. Right-click the text channel you want the bot to respond in
-> 3. Click **Copy Channel ID**
->
-> The channel ID will be a long number like `1234567890123456`.
-
-Wait for the user to provide the channel ID (format: `dc:1234567890123456`).
-
-### Register the channel
-
-Use the IPC register flow or register directly. The channel ID, name, and folder name are needed.
-
-For a main channel (responds to all messages):
-
-```typescript
-registerGroup("dc:<channel-id>", {
-  name: "<server-name> #<channel-name>",
-  folder: "discord_main",
-  trigger: `@${ASSISTANT_NAME}`,
-  added_at: new Date().toISOString(),
-  requiresTrigger: false,
-  isMain: true,
-});
-```
-
-For additional channels (trigger-only):
-
-```typescript
-registerGroup("dc:<channel-id>", {
-  name: "<server-name> #<channel-name>",
-  folder: "discord_<channel-name>",
-  trigger: `@${ASSISTANT_NAME}`,
-  added_at: new Date().toISOString(),
-  requiresTrigger: true,
-});
-```
-
-## Phase 5: Verify
-
-### Test the connection
-
-Tell the user:
-
-> Send a message in your registered Discord channel:
-> - For main channel: Any message works
-> - For non-main: @mention the bot in Discord
->
-> The bot should respond within a few seconds.
-
-### Check logs if needed
+필요하면 로그 확인:
 
 ```bash
 tail -f logs/nanoclaw.log
 ```
 
-## Troubleshooting
-
-### Bot not responding
-
-1. Check `DISCORD_BOT_TOKEN` is set in `.env` AND synced to `data/env/env`
-2. Check channel is registered: `sqlite3 store/messages.db "SELECT * FROM registered_groups WHERE jid LIKE 'dc:%'"`
-3. For non-main channels: message must include trigger pattern (@mention the bot)
-4. Service is running: `launchctl list | grep nanoclaw`
-5. Verify the bot has been invited to the server (check OAuth2 URL was used)
-
-### Bot only responds to @mentions
-
-This is the default behavior for non-main channels (`requiresTrigger: true`). To change:
-- Update the registered group's `requiresTrigger` to `false`
-- Or register the channel as the main channel
-
-### Message Content Intent not enabled
-
-If the bot connects but can't read messages, ensure:
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Select your application > **Bot** tab
-3. Under **Privileged Gateway Intents**, enable **Message Content Intent**
-4. Restart NanoClaw
-
-### Getting Channel ID
-
-If you can't copy the channel ID:
-- Ensure **Developer Mode** is enabled: User Settings > Advanced > Developer Mode
-- Right-click the channel name in the server sidebar > Copy Channel ID
-
-## After Setup
-
-The Discord bot supports:
-- Text messages in registered channels
-- Attachment descriptions (images, videos, files shown as placeholders)
-- Reply context (shows who the user is replying to)
-- @mention translation (Discord `<@botId>` → NanoClaw trigger format)
-- Message splitting for responses over 2000 characters
-- Typing indicators while the agent processes
+메인 채널이면 일반 메시지, 보조 채널이면 멘션 또는 트리거 메시지로 테스트합니다.

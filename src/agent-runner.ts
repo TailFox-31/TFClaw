@@ -18,6 +18,11 @@ import {
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
+import { isPairedRoomJid } from './db.js';
+import {
+  readPairedRoomPrompt,
+  readPlatformPrompt,
+} from './platform-prompts.js';
 import { RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
@@ -29,6 +34,7 @@ export interface AgentInput {
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
+  runId?: string;
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
@@ -49,6 +55,7 @@ export interface AgentOutput {
 function prepareGroupEnvironment(
   group: RegisteredGroup,
   isMain: boolean,
+  chatJid: string,
 ): { env: Record<string, string>; groupDir: string; runnerDir: string } {
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
@@ -82,14 +89,14 @@ function prepareGroupEnvironment(
   }
 
   // Sync skills into each group's .claude/ session dir
-  // Sources: 1) user's global ~/.claude/skills  2) project workDir/.claude/skills  3) container/skills/
+  // Sources: 1) user's global ~/.claude/skills  2) project workDir/.claude/skills  3) runners/skills/
   const workDirClaude = group.workDir
     ? path.join(group.workDir, '.claude')
     : null;
   const skillSources = [
     path.join(os.homedir(), '.claude', 'skills'),
     ...(workDirClaude ? [path.join(workDirClaude, 'skills')] : []),
-    path.join(projectRoot, 'container', 'skills'),
+    path.join(projectRoot, 'runners', 'skills'),
   ];
   const skillsDst = path.join(groupSessionsDir, 'skills');
   for (const src of skillSources) {
@@ -114,21 +121,36 @@ function prepareGroupEnvironment(
 
   // Global memory directory (for non-main groups)
   const globalDir = path.join(GROUPS_DIR, 'global');
+  const globalClaudeMdPath = path.join(globalDir, 'CLAUDE.md');
+  const isPairedRoom = isPairedRoomJid(chatJid);
 
-  // Additional mount directories (validated)
-  const extraDirs: string[] = [];
-  if (group.agentConfig?.additionalMounts) {
-    for (const mount of group.agentConfig.additionalMounts) {
-      if (fs.existsSync(mount.hostPath)) {
-        extraDirs.push(mount.hostPath);
-      }
-    }
+  const claudePlatformPrompt = readPlatformPrompt('claude-code', projectRoot);
+  const claudePairedRoomPrompt = isPairedRoom
+    ? readPairedRoomPrompt('claude-code', projectRoot)
+    : undefined;
+  const globalClaudeMemory =
+    !isMain && fs.existsSync(globalClaudeMdPath)
+      ? fs.readFileSync(globalClaudeMdPath, 'utf-8').trim()
+      : undefined;
+  const sessionClaudeMd = [
+    claudePlatformPrompt,
+    claudePairedRoomPrompt,
+    globalClaudeMemory,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join('\n\n---\n\n')
+    .trim();
+  const sessionClaudeMdPath = path.join(groupSessionsDir, 'CLAUDE.md');
+  if (sessionClaudeMd) {
+    fs.writeFileSync(sessionClaudeMdPath, sessionClaudeMd + '\n');
+  } else if (fs.existsSync(sessionClaudeMdPath)) {
+    fs.unlinkSync(sessionClaudeMdPath);
   }
 
   // Determine runner directory
   const agentType = group.agentType || 'claude-code';
   const runnerDirName = agentType === 'codex' ? 'codex-runner' : 'agent-runner';
-  const runnerDir = path.join(projectRoot, 'container', runnerDirName);
+  const runnerDir = path.join(projectRoot, 'runners', runnerDirName);
 
   // Build environment variables for the runner process
   const envVars = readEnvFile([
@@ -170,7 +192,6 @@ function prepareGroupEnvironment(
     NANOCLAW_GROUP_DIR: groupDir,
     NANOCLAW_IPC_DIR: groupIpcDir,
     NANOCLAW_GLOBAL_DIR: globalDir,
-    NANOCLAW_EXTRA_DIR: extraDirs.length > 0 ? extraDirs[0] : '',
     // Working directory override (agent uses this as cwd instead of group dir)
     ...(group.workDir ? { NANOCLAW_WORK_DIR: group.workDir } : {}),
     // MCP server context
@@ -214,18 +235,32 @@ function prepareGroupEnvironment(
     const authSrc = path.join(hostCodexDir, 'auth.json');
     const authDst = path.join(sessionCodexDir, 'auth.json');
     if (fs.existsSync(authSrc)) fs.copyFileSync(authSrc, authDst);
-    for (const file of ['config.toml', 'config.json', 'instructions.md']) {
+    for (const file of ['config.toml', 'config.json']) {
       const src = path.join(hostCodexDir, file);
       const dst = path.join(sessionCodexDir, file);
       if (fs.existsSync(src)) {
         fs.copyFileSync(src, dst);
       }
     }
+    const sessionAgentsPath = path.join(sessionCodexDir, 'AGENTS.md');
+    const codexPlatformPrompt = readPlatformPrompt('codex', projectRoot);
+    const codexPairedRoomPrompt = isPairedRoom
+      ? readPairedRoomPrompt('codex', projectRoot)
+      : undefined;
+    const sessionAgents = [codexPlatformPrompt, codexPairedRoomPrompt]
+      .filter((value): value is string => Boolean(value))
+      .join('\n\n---\n\n')
+      .trim();
+    if (sessionAgents) {
+      fs.writeFileSync(sessionAgentsPath, sessionAgents + '\n');
+    } else if (fs.existsSync(sessionAgentsPath)) {
+      fs.unlinkSync(sessionAgentsPath);
+    }
     // Sync skills into Codex session dir
-    // SSOT: ~/.claude/skills/ (shared with Claude Code) + container/skills/
+    // SSOT: ~/.claude/skills/ (shared with Claude Code) + runners/skills/
     const codexSkillSources = [
       path.join(os.homedir(), '.claude', 'skills'),
-      path.join(projectRoot, 'container', 'skills'),
+      path.join(projectRoot, 'runners', 'skills'),
     ];
     const codexSkillsDst = path.join(sessionCodexDir, 'skills');
     for (const src of codexSkillSources) {
@@ -245,7 +280,7 @@ function prepareGroupEnvironment(
     // Inject nanoclaw MCP server into Codex config.toml
     const mcpServerPath = path.join(
       projectRoot,
-      'container',
+      'runners',
       'agent-runner',
       'dist',
       'ipc-mcp-stdio.js',
@@ -323,17 +358,22 @@ export async function runAgentProcess(
   const { env, groupDir, runnerDir } = prepareGroupEnvironment(
     group,
     input.isMain,
+    input.chatJid,
   );
+  if (input.runId) {
+    env.NANOCLAW_RUN_ID = input.runId;
+  }
 
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const processName = `nanoclaw-${safeName}-${Date.now()}`;
+  const processSuffix = input.runId || `${Date.now()}`;
+  const processName = `nanoclaw-${safeName}-${processSuffix}`;
 
   // Check if runner is built
   const distEntry = path.join(runnerDir, 'dist', 'index.js');
   if (!fs.existsSync(distEntry)) {
     logger.error(
-      { runnerDir },
-      'Runner not built. Run: cd container/agent-runner && npm install && npm run build',
+      { runnerDir, chatJid: input.chatJid, runId: input.runId },
+      'Runner not built. Run: cd runners/agent-runner && npm install && npm run build',
     );
     return {
       status: 'error',
@@ -345,6 +385,9 @@ export async function runAgentProcess(
   logger.info(
     {
       group: group.name,
+      chatJid: input.chatJid,
+      groupFolder: input.groupFolder,
+      runId: input.runId,
       processName,
       agentType: group.agentType || 'claude-code',
       isMain: input.isMain,
@@ -386,7 +429,12 @@ export async function runAgentProcess(
           stdout += chunk.slice(0, remaining);
           stdoutTruncated = true;
           logger.warn(
-            { group: group.name, size: stdout.length },
+            {
+              group: group.name,
+              chatJid: input.chatJid,
+              runId: input.runId,
+              size: stdout.length,
+            },
             'Agent stdout truncated due to size limit',
           );
         } else {
@@ -416,27 +464,16 @@ export async function runAgentProcess(
             outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
             logger.warn(
-              { group: group.name, error: err },
+              {
+                group: group.name,
+                chatJid: input.chatJid,
+                runId: input.runId,
+                error: err,
+              },
               'Failed to parse streamed output chunk',
             );
           }
         }
-      }
-    });
-
-    proc.stderr.on('data', (data) => {
-      const chunk = data.toString();
-      const lines = chunk.trim().split('\n');
-      for (const line of lines) {
-        if (line) logger.debug({ agent: group.folder }, line);
-      }
-      if (stderrTruncated) return;
-      const remaining = AGENT_MAX_OUTPUT_SIZE - stderr.length;
-      if (chunk.length > remaining) {
-        stderr += chunk.slice(0, remaining);
-        stderrTruncated = true;
-      } else {
-        stderr += chunk;
       }
     });
 
@@ -448,7 +485,12 @@ export async function runAgentProcess(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error(
-        { group: group.name, processName },
+        {
+          group: group.name,
+          chatJid: input.chatJid,
+          runId: input.runId,
+          processName,
+        },
         'Agent timeout, sending SIGTERM',
       );
       proc.kill('SIGTERM');
@@ -465,6 +507,35 @@ export async function runAgentProcess(
       timeout = setTimeout(killOnTimeout, timeoutMs);
     };
 
+    proc.stderr.on('data', (data) => {
+      const chunk = data.toString();
+      const lines = chunk.trim().split('\n');
+      for (const line of lines) {
+        if (!line) continue;
+        if (line.includes('Turn in progress')) {
+          logger.info(
+            { group: group.name, chatJid: input.chatJid, runId: input.runId },
+            line.replace(/^\[.*?\]\s*/, ''),
+          );
+        } else {
+          logger.debug(
+            { agent: group.folder, chatJid: input.chatJid, runId: input.runId },
+            line,
+          );
+        }
+      }
+      // Stderr activity means agent is alive — reset timeout
+      resetTimeout();
+      if (stderrTruncated) return;
+      const remaining = AGENT_MAX_OUTPUT_SIZE - stderr.length;
+      if (chunk.length > remaining) {
+        stderr += chunk.slice(0, remaining);
+        stderrTruncated = true;
+      } else {
+        stderr += chunk;
+      }
+    });
+
     proc.on('close', (code) => {
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
@@ -472,11 +543,13 @@ export async function runAgentProcess(
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         fs.writeFileSync(
-          path.join(logsDir, `agent-${ts}.log`),
+          path.join(logsDir, `agent-${input.runId || 'adhoc'}-${ts}.log`),
           [
             `=== Agent Run Log (TIMEOUT) ===`,
             `Timestamp: ${new Date().toISOString()}`,
             `Group: ${group.name}`,
+            `ChatJid: ${input.chatJid}`,
+            `RunId: ${input.runId || 'n/a'}`,
             `Process: ${processName}`,
             `Duration: ${duration}ms`,
             `Exit Code: ${code}`,
@@ -486,7 +559,14 @@ export async function runAgentProcess(
 
         if (hadStreamingOutput) {
           logger.info(
-            { group: group.name, processName, duration, code },
+            {
+              group: group.name,
+              chatJid: input.chatJid,
+              runId: input.runId,
+              processName,
+              duration,
+              code,
+            },
             'Agent timed out after output (idle cleanup)',
           );
           outputChain.then(() => {
@@ -504,7 +584,10 @@ export async function runAgentProcess(
       }
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const logFile = path.join(logsDir, `agent-${timestamp}.log`);
+      const logFile = path.join(
+        logsDir,
+        `agent-${input.runId || 'adhoc'}-${timestamp}.log`,
+      );
       const isVerbose =
         process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
 
@@ -512,6 +595,9 @@ export async function runAgentProcess(
         `=== Agent Run Log ===`,
         `Timestamp: ${new Date().toISOString()}`,
         `Group: ${group.name}`,
+        `ChatJid: ${input.chatJid}`,
+        `GroupFolder: ${input.groupFolder}`,
+        `RunId: ${input.runId || 'n/a'}`,
         `IsMain: ${input.isMain}`,
         `AgentType: ${group.agentType || 'claude-code'}`,
         `Duration: ${duration}ms`,
@@ -542,7 +628,14 @@ export async function runAgentProcess(
 
       if (code !== 0) {
         logger.error(
-          { group: group.name, code, duration, logFile },
+          {
+            group: group.name,
+            chatJid: input.chatJid,
+            runId: input.runId,
+            code,
+            duration,
+            logFile,
+          },
           'Agent exited with error',
         );
         resolve({
@@ -556,7 +649,13 @@ export async function runAgentProcess(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId },
+            {
+              group: group.name,
+              chatJid: input.chatJid,
+              runId: input.runId,
+              duration,
+              newSessionId,
+            },
             'Agent completed (streaming mode)',
           );
           resolve({ status: 'success', result: null, newSessionId });
@@ -579,13 +678,24 @@ export async function runAgentProcess(
         }
         const output: AgentOutput = JSON.parse(jsonLine);
         logger.info(
-          { group: group.name, duration, status: output.status },
+          {
+            group: group.name,
+            chatJid: input.chatJid,
+            runId: input.runId,
+            duration,
+            status: output.status,
+          },
           'Agent completed',
         );
         resolve(output);
       } catch (err) {
         logger.error(
-          { group: group.name, error: err },
+          {
+            group: group.name,
+            chatJid: input.chatJid,
+            runId: input.runId,
+            error: err,
+          },
           'Failed to parse agent output',
         );
         resolve({
@@ -599,7 +709,13 @@ export async function runAgentProcess(
     proc.on('error', (err) => {
       clearTimeout(timeout);
       logger.error(
-        { group: group.name, processName, error: err },
+        {
+          group: group.name,
+          chatJid: input.chatJid,
+          runId: input.runId,
+          processName,
+          error: err,
+        },
         'Agent spawn error',
       );
       resolve({
@@ -644,7 +760,7 @@ export function writeGroupsSnapshot(
   groupFolder: string,
   isMain: boolean,
   groups: AvailableGroup[],
-  registeredJids: Set<string>,
+  _registeredJids?: Set<string>,
 ): void {
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });

@@ -17,7 +17,7 @@ function createTestDb(): Database.Database {
     folder TEXT NOT NULL UNIQUE,
     trigger_pattern TEXT NOT NULL,
     added_at TEXT NOT NULL,
-    container_config TEXT,
+    agent_config TEXT,
     requires_trigger INTEGER DEFAULT 1,
     is_main INTEGER DEFAULT 0
   )`);
@@ -34,7 +34,7 @@ describe('parameterized SQL registration', () => {
   it('registers a group with parameterized query', () => {
     db.prepare(
       `INSERT OR REPLACE INTO registered_groups
-       (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+       (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger)
        VALUES (?, ?, ?, ?, ?, NULL, ?)`,
     ).run(
       '123@g.us',
@@ -67,7 +67,7 @@ describe('parameterized SQL registration', () => {
 
     db.prepare(
       `INSERT OR REPLACE INTO registered_groups
-       (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+       (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger)
        VALUES (?, ?, ?, ?, ?, NULL, ?)`,
     ).run(
       '456@g.us',
@@ -92,7 +92,7 @@ describe('parameterized SQL registration', () => {
 
     db.prepare(
       `INSERT OR REPLACE INTO registered_groups
-       (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+       (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger)
        VALUES (?, ?, ?, ?, ?, NULL, ?)`,
     ).run(maliciousJid, 'Evil', 'evil', '@Andy', '2024-01-01T00:00:00.000Z', 1);
 
@@ -113,10 +113,10 @@ describe('parameterized SQL registration', () => {
   it('handles requiresTrigger=false', () => {
     db.prepare(
       `INSERT OR REPLACE INTO registered_groups
-       (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+       (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger)
        VALUES (?, ?, ?, ?, ?, NULL, ?)`,
     ).run(
-      '789@s.whatsapp.net',
+      'dc:789',
       'Personal',
       'main',
       '@Andy',
@@ -126,7 +126,7 @@ describe('parameterized SQL registration', () => {
 
     const row = db
       .prepare('SELECT requires_trigger FROM registered_groups WHERE jid = ?')
-      .get('789@s.whatsapp.net') as { requires_trigger: number };
+      .get('dc:789') as { requires_trigger: number };
 
     expect(row.requires_trigger).toBe(0);
   });
@@ -134,12 +134,12 @@ describe('parameterized SQL registration', () => {
   it('stores is_main flag', () => {
     db.prepare(
       `INSERT OR REPLACE INTO registered_groups
-       (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
+       (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger, is_main)
        VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
     ).run(
-      '789@s.whatsapp.net',
+      'dc:789',
       'Personal',
-      'whatsapp_main',
+      'discord_main',
       '@Andy',
       '2024-01-01T00:00:00.000Z',
       0,
@@ -148,7 +148,7 @@ describe('parameterized SQL registration', () => {
 
     const row = db
       .prepare('SELECT is_main FROM registered_groups WHERE jid = ?')
-      .get('789@s.whatsapp.net') as { is_main: number };
+      .get('dc:789') as { is_main: number };
 
     expect(row.is_main).toBe(1);
   });
@@ -156,12 +156,12 @@ describe('parameterized SQL registration', () => {
   it('defaults is_main to 0', () => {
     db.prepare(
       `INSERT OR REPLACE INTO registered_groups
-       (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+       (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger)
        VALUES (?, ?, ?, ?, ?, NULL, ?)`,
     ).run(
       '123@g.us',
       'Some Group',
-      'whatsapp_some-group',
+      'discord_some-group',
       '@Andy',
       '2024-01-01T00:00:00.000Z',
       1,
@@ -177,7 +177,7 @@ describe('parameterized SQL registration', () => {
   it('upserts on conflict', () => {
     const stmt = db.prepare(
       `INSERT OR REPLACE INTO registered_groups
-       (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger)
+       (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger)
        VALUES (?, ?, ?, ?, ?, NULL, ?)`,
     );
 

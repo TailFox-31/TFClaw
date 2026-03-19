@@ -82,8 +82,10 @@ function makeDeps(
     setTyping: vi.fn().mockResolvedValue(undefined),
     runAgent: vi.fn().mockResolvedValue('success'),
     closeStdin: vi.fn(),
+    clearSession: vi.fn(),
     advanceCursor: vi.fn(),
     formatMessages: vi.fn().mockReturnValue('<formatted>'),
+    isAdminSender: vi.fn().mockReturnValue(false),
     canSenderInteract: vi.fn().mockReturnValue(true),
     ...overrides,
   };

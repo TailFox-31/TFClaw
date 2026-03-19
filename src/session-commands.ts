@@ -1,5 +1,14 @@
 import type { NewMessage } from './types.js';
 import { logger } from './logger.js';
+import { formatOutbound } from './router.js';
+
+const SESSION_COMMAND_CONTROL_PATTERNS = [
+  /^Current session cleared\. The next message will start a new conversation\.$/,
+  /^Session commands require admin access\.$/,
+  /^Failed to process messages before \/compact\. Try again\.$/,
+  /^\/compact failed\. The session is unchanged\.$/,
+  /^Conversation compacted\.$/,
+];
 
 /**
  * Extract a session slash command from a message, stripping the trigger prefix if present.
@@ -12,18 +21,27 @@ export function extractSessionCommand(
   let text = content.trim();
   text = text.replace(triggerPattern, '').trim();
   if (text === '/compact') return '/compact';
+  if (text === '/clear') return '/clear';
   return null;
 }
 
 /**
  * Check if a session command sender is authorized.
- * Allowed: main group (any sender), or trusted/admin sender (is_from_me) in any group.
+ * Allowed: main group (any sender), or trusted/admin sender in any group.
  */
 export function isSessionCommandAllowed(
   isMainGroup: boolean,
   isFromMe: boolean,
+  isAdminSender: boolean = false,
 ): boolean {
-  return isMainGroup || isFromMe;
+  return isMainGroup || isFromMe || isAdminSender;
+}
+
+export function isSessionCommandControlMessage(content: string): boolean {
+  const trimmed = content.trim();
+  return SESSION_COMMAND_CONTROL_PATTERNS.some((pattern) =>
+    pattern.test(trimmed),
+  );
 }
 
 /** Minimal agent result interface — matches the subset of AgentOutput used here. */
@@ -41,8 +59,10 @@ export interface SessionCommandDeps {
     onOutput: (result: AgentResult) => Promise<void>,
   ) => Promise<'success' | 'error'>;
   closeStdin: () => void;
+  clearSession: () => void;
   advanceCursor: (timestamp: string) => void;
   formatMessages: (msgs: NewMessage[], timezone: string) => string;
+  isAdminSender: (msg: NewMessage) => boolean;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
 }
@@ -50,7 +70,7 @@ export interface SessionCommandDeps {
 function resultToText(result: string | object | null | undefined): string {
   if (!result) return '';
   const raw = typeof result === 'string' ? result : JSON.stringify(result);
-  return raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+  return formatOutbound(raw);
 }
 
 /**
@@ -63,6 +83,7 @@ export async function handleSessionCommand(opts: {
   missedMessages: NewMessage[];
   isMainGroup: boolean;
   groupName: string;
+  runId?: string;
   triggerPattern: RegExp;
   timezone: string;
   deps: SessionCommandDeps;
@@ -71,6 +92,7 @@ export async function handleSessionCommand(opts: {
     missedMessages,
     isMainGroup,
     groupName,
+    runId,
     triggerPattern,
     timezone,
     deps,
@@ -85,7 +107,13 @@ export async function handleSessionCommand(opts: {
 
   if (!command || !cmdMsg) return { handled: false };
 
-  if (!isSessionCommandAllowed(isMainGroup, cmdMsg.is_from_me === true)) {
+  if (
+    !isSessionCommandAllowed(
+      isMainGroup,
+      cmdMsg.is_from_me === true,
+      deps.isAdminSender(cmdMsg),
+    )
+  ) {
     // DENIED: send denial if the sender would normally be allowed to interact,
     // then silently consume the command by advancing the cursor past it.
     // Trade-off: other messages in the same batch are also consumed (cursor is
@@ -98,7 +126,17 @@ export async function handleSessionCommand(opts: {
   }
 
   // AUTHORIZED: process pre-compact messages first, then run the command
-  logger.info({ group: groupName, command }, 'Session command');
+  logger.info({ group: groupName, runId, command }, 'Session command');
+
+  if (command === '/clear') {
+    deps.closeStdin();
+    deps.clearSession();
+    deps.advanceCursor(cmdMsg.timestamp);
+    await deps.sendMessage(
+      'Current session cleared. The next message will start a new conversation.',
+    );
+    return { handled: true, success: true };
+  }
 
   const cmdIndex = missedMessages.indexOf(cmdMsg);
   const preCompactMsgs = missedMessages.slice(0, cmdIndex);
@@ -125,7 +163,7 @@ export async function handleSessionCommand(opts: {
 
     if (preResult === 'error' || hadPreError) {
       logger.warn(
-        { group: groupName },
+        { group: groupName, runId },
         'Pre-compact processing failed, aborting session command',
       );
       await deps.sendMessage(

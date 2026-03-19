@@ -1,90 +1,60 @@
 ---
 name: add-voice-transcription
-description: Add voice message transcription to NanoClaw using Groq Whisper (fast, free) with OpenAI fallback. Works on Discord and WhatsApp.
+description: Enable Discord voice transcription using Groq Whisper with OpenAI fallback.
 ---
 
 # Add Voice Transcription
 
-This skill adds automatic voice message transcription to NanoClaw. When a voice note arrives, it is downloaded, transcribed, and delivered to the agent as `[Voice message transcription]: <text>`.
+디스코드 음성 첨부 전사는 이미 코드에 들어 있습니다. 현재 구현은 `src/channels/discord.ts`에 있고, 별도 브랜치 머지나 채널 추가 작업은 필요 없습니다.
 
-**Provider priority:** Groq Whisper (fast, free) > OpenAI Whisper (fallback).
+우선순위는 `Groq Whisper -> OpenAI Whisper fallback` 입니다.
 
-## Phase 1: Pre-flight
+## 1. 환경 변수 설정
 
-### Discord
-
-Voice transcription is built into `src/channels/discord.ts`. No code changes needed — just configure API keys (Phase 3).
-
-### WhatsApp
-
-Check if `src/transcription.ts` exists. If it does, skip to Phase 3 (Configure). The code changes are already in place.
-
-If not, merge the skill branch:
+`.env`에 아래 중 하나 이상을 넣습니다.
 
 ```bash
-git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git 2>/dev/null
-git fetch whatsapp skill/voice-transcription
-git merge whatsapp/skill/voice-transcription
-npm install --legacy-peer-deps
-npm run build
+GROQ_API_KEY=gsk_...          # 권장. 빠르고 무료 티어가 있음
+OPENAI_API_KEY=sk-...         # fallback
 ```
 
-## Phase 2: Configure
+Groq를 쓰면 `whisper-large-v3-turbo`, OpenAI를 쓰면 `whisper-1` 경로를 탑니다.
 
-### Get API key
-
-**Groq (recommended — fast + free):**
-
-> 1. Go to https://console.groq.com
-> 2. Sign up (no credit card needed)
-> 3. Create an API key (starts with `gsk_`)
->
-> Free tier: 2,000 requests/day, 8 hours of audio/day. Uses `whisper-large-v3-turbo` at ~200x real-time speed.
-
-**OpenAI (fallback):**
-
-> 1. Go to https://platform.openai.com/api-keys
-> 2. Create a key (starts with `sk-`)
->
-> Cost: ~$0.006 per minute of audio. Requires funded account.
-
-### Add to environment
-
-Add to `.env`:
-
-```bash
-GROQ_API_KEY=gsk_...          # Primary (fast, free)
-OPENAI_API_KEY=sk-...          # Fallback (optional if Groq is set)
-```
-
-### Build and restart
+## 2. 재시작
 
 ```bash
 npm run build
-systemctl --user restart nanoclaw nanoclaw-codex  # Linux
-# macOS: launchctl kickstart -k gui/$(id -u)/com.nanoclaw
+npm run setup -- --step service
 ```
 
-## Phase 3: Verify
+이미 서비스가 떠 있다면 플랫폼에 맞게 재시작만 해도 됩니다.
 
-Send a voice note in any registered chat. The agent should receive it as `[Voice message transcription]: <text>`.
+## 3. 검증
 
-### Check logs
+등록된 디스코드 채널에 음성 메시지나 오디오 첨부를 보냅니다. 정상이라면 에이전트 입력에 전사 텍스트가 포함됩니다.
 
 ```bash
-tail -f logs/nanoclaw.log | grep -iE "transcri|audio"
+tail -f logs/nanoclaw.log | grep -iE 'transcri|audio'
 ```
 
-Look for:
-- `Audio transcribed + cached` with `provider: "groq"` and `elapsed` — success
-- `Transcription cache hit` — second service read from cache (no duplicate API call)
-- `no transcription API key` — neither `GROQ_API_KEY` nor `OPENAI_API_KEY` set
-- `groq Whisper 4xx` — check key validity
+성공 신호:
+
+- `Audio transcribed + cached`
+- `provider: "groq"` 또는 `provider: "openai"`
+- 동일 첨부 재처리 시 cache hit
 
 ## Troubleshooting
 
-**No transcription:** Check `GROQ_API_KEY` (or `OPENAI_API_KEY`) is set in `.env`. Restart service after changes.
+**전사가 전혀 안 됨**
 
-**Slow transcription:** Verify `provider: "groq"` in logs. If it shows `openai`, the Groq key may be missing or invalid.
+- `.env`에 `GROQ_API_KEY`나 `OPENAI_API_KEY`가 없는 경우가 대부분입니다.
+- 서비스 재시작 전에는 새 키가 반영되지 않습니다.
 
-**Agent doesn't respond to voice notes:** Verify the chat is registered and the agent is running. Voice transcription only runs for registered groups.
+**너무 느림**
+
+- 로그에 `provider: "groq"`가 안 보이면 Groq 키가 빠졌거나 잘못된 상태입니다.
+
+**채널에서는 보이는데 에이전트가 못 읽음**
+
+- 채널 등록과 서비스 상태를 먼저 확인합니다.
+- `npm run setup -- --step verify` 결과에서 `REGISTERED_GROUPS`와 `SERVICE`를 같이 봅니다.

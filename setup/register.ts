@@ -1,7 +1,7 @@
 /**
  * Step: register — Write channel registration config, create group folders.
  *
- * Accepts --channel to specify the messaging platform (whatsapp, telegram, slack, discord).
+ * NanoClaw is Discord-only, so registrations must target Discord channel IDs.
  * Uses parameterized SQL queries to prevent injection.
  */
 import fs from 'fs';
@@ -9,7 +9,7 @@ import path from 'path';
 
 import Database from 'better-sqlite3';
 
-import { STORE_DIR } from '../src/config.js';
+import { SERVICE_AGENT_TYPE, STORE_DIR } from '../src/config.js';
 import { isValidGroupFolder } from '../src/group-folder.js';
 import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
@@ -31,7 +31,7 @@ function parseArgs(args: string[]): RegisterArgs {
     name: '',
     trigger: '',
     folder: '',
-    channel: 'whatsapp', // backward-compat: pre-refactor installs omit --channel
+    channel: 'discord',
     requiresTrigger: true,
     isMain: false,
     assistantName: 'Andy',
@@ -91,10 +91,18 @@ export async function run(args: string[]): Promise<void> {
     process.exit(4);
   }
 
+  if (parsed.channel !== 'discord') {
+    emitStatus('REGISTER_CHANNEL', {
+      STATUS: 'failed',
+      ERROR: 'unsupported_channel',
+      LOG: 'logs/setup.log',
+    });
+    process.exit(4);
+  }
+
   logger.info(parsed, 'Registering channel');
 
-  // Ensure data and store directories exist (store/ may not exist on
-  // fresh installs that skip WhatsApp auth, which normally creates it)
+  // Ensure data and store directories exist for fresh installs.
   fs.mkdirSync(path.join(projectRoot, 'data'), { recursive: true });
   fs.mkdirSync(STORE_DIR, { recursive: true });
 
@@ -106,22 +114,40 @@ export async function run(args: string[]): Promise<void> {
   const db = new Database(dbPath);
   // Ensure schema exists
   db.exec(`CREATE TABLE IF NOT EXISTS registered_groups (
-    jid TEXT PRIMARY KEY,
+    jid TEXT NOT NULL,
     name TEXT NOT NULL,
-    folder TEXT NOT NULL UNIQUE,
+    folder TEXT NOT NULL,
     trigger_pattern TEXT NOT NULL,
     added_at TEXT NOT NULL,
-    container_config TEXT,
+    agent_config TEXT,
     requires_trigger INTEGER DEFAULT 1,
-    is_main INTEGER DEFAULT 0
+    is_main INTEGER DEFAULT 0,
+    agent_type TEXT NOT NULL DEFAULT 'claude-code',
+    work_dir TEXT,
+    PRIMARY KEY (jid, agent_type),
+    UNIQUE (folder, agent_type)
   )`);
+
+  try {
+    db.exec(
+      `ALTER TABLE registered_groups ADD COLUMN agent_type TEXT DEFAULT 'claude-code'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    db.exec(`ALTER TABLE registered_groups ADD COLUMN work_dir TEXT`);
+  } catch {
+    /* column already exists */
+  }
 
   const isMainInt = parsed.isMain ? 1 : 0;
 
   db.prepare(
     `INSERT OR REPLACE INTO registered_groups
-     (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
+     (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger, is_main, agent_type, work_dir)
+     VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL)`,
   ).run(
     parsed.jid,
     parsed.name,
@@ -130,6 +156,7 @@ export async function run(args: string[]): Promise<void> {
     timestamp,
     requiresTriggerInt,
     isMainInt,
+    SERVICE_AGENT_TYPE,
   );
 
   db.close();

@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 /**
  * Tests for the environment check step.
  *
- * Verifies: config detection, Docker/AC detection, DB queries.
+ * Verifies: config detection, platform helpers, DB queries.
  */
 
 describe('environment detection', () => {
@@ -28,7 +28,7 @@ describe('registered groups DB query', () => {
       folder TEXT NOT NULL UNIQUE,
       trigger_pattern TEXT NOT NULL,
       added_at TEXT NOT NULL,
-      container_config TEXT,
+      agent_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     )`);
   });
@@ -96,26 +96,11 @@ describe('credentials detection', () => {
   });
 });
 
-describe('Docker detection logic', () => {
+describe('platform command detection', () => {
   it('commandExists returns boolean', async () => {
     const { commandExists } = await import('./platform.js');
     expect(typeof commandExists('docker')).toBe('boolean');
     expect(typeof commandExists('nonexistent_binary_xyz')).toBe('boolean');
-  });
-});
-
-describe('channel auth detection', () => {
-  it('detects non-empty auth directory', () => {
-    const hasAuth = (authDir: string) => {
-      try {
-        return fs.existsSync(authDir) && fs.readdirSync(authDir).length > 0;
-      } catch {
-        return false;
-      }
-    };
-
-    // Non-existent directory
-    expect(hasAuth('/tmp/nonexistent_auth_dir_xyz')).toBe(false);
   });
 });
 

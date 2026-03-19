@@ -4,7 +4,7 @@ Dual-agent AI assistant (Claude Code + Codex) over Discord. Based on [qwibitai/n
 
 ## Quick Context
 
-Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but run with separate stores, data, and groups. Agents run as direct host processes (no containers). Claude Code uses the Agent SDK; Codex uses `codex app-server` via JSON-RPC. Auth via `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (1-year token from `claude setup-token`).
+Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but run with separate stores, data, and groups (will be unified — DB supports shared access via WAL mode + service partitioning). Agents run as direct host processes (no containers). Claude Code uses the Agent SDK; Codex uses the Codex SDK (`codex exec`). Auth via `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (1-year token from `claude setup-token`).
 
 ## Key Files
 
@@ -18,8 +18,8 @@ Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but 
 | `src/config.ts` | Trigger pattern, paths, intervals |
 | `src/task-scheduler.ts` | Runs scheduled tasks |
 | `src/db.ts` | SQLite operations |
-| `container/agent-runner/` | Claude Code runner (Agent SDK) |
-| `container/codex-runner/` | Codex runner (app-server JSON-RPC, streaming, turn/steer) |
+| `runners/agent-runner/` | Claude Code runner (Agent SDK) |
+| `runners/codex-runner/` | Codex runner (SDK, `codex exec` wrapper) |
 | `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
 
 ## Skills
@@ -54,19 +54,39 @@ Deploy to server: `scp dist/*.js clone-ej@100.64.185.108:~/nanoclaw/dist/`
 
 ## Dual-Service Architecture
 
-- `nanoclaw.service` — Claude Code bot (`@claude`), uses `store/`, `data/`, `groups/`
-- `nanoclaw-codex.service` — Codex bot (`@codex`), uses `store-codex/`, `data-codex/`, `groups-codex/`
-- Both share the same codebase (`dist/index.js`), differentiated by env vars (`NANOCLAW_STORE_DIR`, etc.)
-- Channel registration is per-service DB (`registered_groups` table)
+- `nanoclaw.service` — Claude Code bot (`@claude`), `SERVICE_ID=claude`, `SERVICE_AGENT_TYPE=claude-code`
+- `nanoclaw-codex.service` — Codex bot (`@codex`), `SERVICE_ID=codex`, `SERVICE_AGENT_TYPE=codex`
+- Both share the same codebase (`dist/index.js`), differentiated by env vars
+- Unified dirs (`store/`, `groups/`, `data/` shared by both services):
+  - `router_state`: keys prefixed with `{SERVICE_ID}:` (e.g., `claude:last_timestamp`)
+  - `sessions`: composite PK `(group_folder, agent_type)`
+  - `registered_groups`: filtered by `agent_type` on load
+  - SQLite WAL mode + `busy_timeout=5000` for concurrent access
 
-## Codex App-Server
+## Debugging Paths (Server: clone-ej@100.64.185.108)
 
-Codex runner uses `codex app-server` JSON-RPC (not `codex exec`):
-- `thread/start` / `thread/resume` for session persistence (threadId-based)
-- `turn/start` for streaming responses (`item/agentMessage/delta`)
-- `turn/steer` for mid-execution message injection (IPC polling during turn)
-- `approvalPolicy: "never"` + `sandbox: "danger-full-access"` for bypass
+Unified DB + directories (both services share `store/`, `groups/`, `data/`):
+
+| 항목 | 경로 |
+|------|------|
+| **DB** | `store/messages.db` (공유, WAL 모드) |
+| 서비스 로그 (Claude) | `journalctl --user -u nanoclaw -f` 또는 `logs/nanoclaw.log` |
+| 서비스 로그 (Codex) | `journalctl --user -u nanoclaw-codex -f` 또는 `logs/nanoclaw-codex.log` |
+| 그룹별 로그 | `groups/{name}/logs/` (공유 채널은 양쪽 봇 로그가 같은 폴더) |
+| Claude 세션 | `data/sessions/{name}/.claude/` |
+| Codex 세션 | `data/sessions/{name}/.codex/` |
+| Claude 플랫폼 규칙 | `prompts/claude-platform.md` |
+| Codex 플랫폼 규칙 | `prompts/codex-platform.md` |
+| Claude 글로벌 메모리 | `groups/global/CLAUDE.md` |
+
+## Codex SDK
+
+Codex runner uses `@openai/codex-sdk` (wraps `codex exec`):
+- `codex.startThread()` / `codex.resumeThread()` for session persistence
+- `thread.run(input)` for single-shot turn execution (completes all work before returning)
+- `approvalPolicy: "never"` + `sandboxMode: "danger-full-access"` for bypass
 - Per-group: model (`CODEX_MODEL`), effort (`CODEX_EFFORT`), MCP servers via `config.toml`
+- `CODEX_HOME` set to per-group session dir, reads `AGENTS.md` from there + CWD
 
 ## Voice Transcription
 
