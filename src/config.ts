@@ -90,9 +90,11 @@ export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const SESSION_COMMAND_ALLOWED_SENDERS = new Set(
-  (process.env.SESSION_COMMAND_ALLOWED_SENDERS ||
+  (
+    process.env.SESSION_COMMAND_ALLOWED_SENDERS ||
     envConfig.SESSION_COMMAND_ALLOWED_SENDERS ||
-    '')
+    ''
+  )
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean),

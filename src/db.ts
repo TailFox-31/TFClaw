@@ -139,7 +139,9 @@ function createSchema(database: Database.Database): void {
     const hasAgentType = registeredGroupCols.some(
       (col) => col.name === 'agent_type',
     );
-    const hasWorkDir = registeredGroupCols.some((col) => col.name === 'work_dir');
+    const hasWorkDir = registeredGroupCols.some(
+      (col) => col.name === 'work_dir',
+    );
     const hasAgentConfig = registeredGroupCols.some(
       (col) => col.name === 'agent_config',
     );
@@ -660,15 +662,15 @@ export function getRegisteredGroup(
     .prepare('SELECT * FROM registered_groups WHERE jid = ?')
     .get(jid) as
     | {
-      jid: string;
-      name: string;
-      folder: string;
-      trigger_pattern: string;
-      added_at: string;
-      agent_config: string | null;
-      requires_trigger: number | null;
-      is_main: number | null;
-      agent_type: string | null;
+        jid: string;
+        name: string;
+        folder: string;
+        trigger_pattern: string;
+        added_at: string;
+        agent_config: string | null;
+        requires_trigger: number | null;
+        is_main: number | null;
+        agent_type: string | null;
         work_dir: string | null;
       }
     | undefined;
@@ -686,9 +688,7 @@ export function getRegisteredGroup(
     folder: row.folder,
     trigger: row.trigger_pattern,
     added_at: row.added_at,
-    agentConfig: row.agent_config
-      ? JSON.parse(row.agent_config)
-      : undefined,
+    agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
@@ -729,14 +729,14 @@ export function getAllRegisteredGroups(
       : db.prepare('SELECT * FROM registered_groups').all()
   ) as Array<{
     jid: string;
-      name: string;
-      folder: string;
-      trigger_pattern: string;
-      added_at: string;
-      agent_config: string | null;
-      requires_trigger: number | null;
-      is_main: number | null;
-      agent_type: string | null;
+    name: string;
+    folder: string;
+    trigger_pattern: string;
+    added_at: string;
+    agent_config: string | null;
+    requires_trigger: number | null;
+    is_main: number | null;
+    agent_type: string | null;
     work_dir: string | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
@@ -753,9 +753,7 @@ export function getAllRegisteredGroups(
       folder: row.folder,
       trigger: row.trigger_pattern,
       added_at: row.added_at,
-      agentConfig: row.agent_config
-        ? JSON.parse(row.agent_config)
-        : undefined,
+      agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
