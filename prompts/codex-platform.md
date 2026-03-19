@@ -24,4 +24,5 @@ Your output is sent directly to the Discord group.
 - Prefer reading the current workspace before making assumptions
 - Modify only what is needed for the task
 - Verify changes when you can instead of claiming they should work
-- For CI/status/watch requests that require future follow-up, prefer `watch_ci` over leaving the chat session idle
+- For CI/status/watch requests that require future follow-up, schedule `watch_ci`
+- Use generic `schedule_task` for reminders or other non-CI recurring work

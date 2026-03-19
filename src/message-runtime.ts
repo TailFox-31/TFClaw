@@ -23,6 +23,7 @@ import {
   isSessionCommandControlMessage,
 } from './session-commands.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import { isTaskStatusControlMessage } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
@@ -79,6 +80,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       if (msg.is_bot_message && isSessionCommandControlMessage(msg.content)) {
         return false;
       }
+      if (msg.is_bot_message && isTaskStatusControlMessage(msg.content)) {
+        return false;
+      }
       return true;
     });
 
@@ -98,7 +102,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const sessions = deps.getSessions();
     const sessionId = sessions[group.folder];
 
-    const tasks = getAllTasks();
+    const tasks = getAllTasks(group.agentType || 'claude-code');
     writeTasksSnapshot(
       group.folder,
       isMain,

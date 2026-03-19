@@ -107,6 +107,31 @@ describe('schedule_task authorization', () => {
     expect(allTasks[0].group_folder).toBe('other-group');
   });
 
+  it('stores the target group agent type on scheduled tasks', async () => {
+    groups['other@g.us'] = {
+      ...OTHER_GROUP,
+      agentType: 'codex',
+    };
+    setRegisteredGroup('other@g.us', groups['other@g.us']);
+
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'codex owned task',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const allTasks = getAllTasks();
+    expect(allTasks).toHaveLength(1);
+    expect(allTasks[0].agent_type).toBe('codex');
+  });
+
   it('non-main group cannot schedule for another group', async () => {
     await processTaskIpc(
       {

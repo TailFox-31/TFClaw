@@ -7,6 +7,7 @@ import {
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
+  getDueTasks,
   getRegisteredAgentTypesForJid,
   getMessagesSince,
   getNewMessages,
@@ -401,6 +402,43 @@ describe('task CRUD', () => {
 
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
+  });
+
+  it('returns due tasks only for the requested agent type', () => {
+    const dueAt = new Date(Date.now() - 1_000).toISOString();
+
+    createTask({
+      id: 'task-claude',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'claude task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+    createTask({
+      id: 'task-codex',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      agent_type: 'codex',
+      prompt: 'codex task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2024-01-01T00:00:01.000Z',
+    });
+
+    expect(getDueTasks('claude-code').map((task) => task.id)).toEqual([
+      'task-claude',
+    ]);
+    expect(getDueTasks('codex').map((task) => task.id)).toEqual([
+      'task-codex',
+    ]);
   });
 });
 

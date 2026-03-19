@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildCiWatchPrompt,
+  DEFAULT_WATCH_CI_CONTEXT_MODE,
   normalizeWatchCiIntervalSeconds,
 } from '../src/watch-ci.js';
 
@@ -18,6 +19,15 @@ describe('watch-ci helpers', () => {
     expect(prompt).toContain('cancel_task');
     expect(prompt).toContain('send_message');
     expect(prompt).toContain('gh pr checks 42');
+    expect(prompt).toContain('CI 완료: <target>');
+    expect(prompt).toContain('판정: <one-line conclusion>');
+    expect(prompt).toContain(
+      'Use the watch target and check instructions in this prompt as the source of truth',
+    );
+  });
+
+  it('defaults CI watchers to isolated context', () => {
+    expect(DEFAULT_WATCH_CI_CONTEXT_MODE).toBe('isolated');
   });
 
   it('normalizes valid poll intervals', () => {

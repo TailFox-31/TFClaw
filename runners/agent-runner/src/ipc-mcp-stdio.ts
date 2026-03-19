@@ -12,6 +12,7 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 import {
   buildCiWatchPrompt,
+  DEFAULT_WATCH_CI_CONTEXT_MODE,
   normalizeWatchCiIntervalSeconds,
 } from './watch-ci.js';
 
@@ -174,8 +175,8 @@ server.tool(
       .describe('How often to poll in seconds. Default 60, minimum 30.'),
     context_mode: z
       .enum(['group', 'isolated'])
-      .default('group')
-      .describe('group=runs with chat history and memory, isolated=fresh session (include all context in check_instructions)'),
+      .default(DEFAULT_WATCH_CI_CONTEXT_MODE)
+      .describe('group=runs with chat history and memory, isolated=fresh session (include all context in check_instructions). Default: isolated.'),
     target_group_jid: z
       .string()
       .optional()
@@ -211,7 +212,7 @@ server.tool(
       prompt,
       schedule_type: 'interval' as const,
       schedule_value: String(pollSeconds * 1000),
-      context_mode: args.context_mode || 'group',
+      context_mode: args.context_mode || DEFAULT_WATCH_CI_CONTEXT_MODE,
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),

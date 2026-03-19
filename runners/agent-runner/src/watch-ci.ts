@@ -1,6 +1,7 @@
 export const DEFAULT_WATCH_CI_INTERVAL_SECONDS = 60;
 export const MIN_WATCH_CI_INTERVAL_SECONDS = 30;
 export const MAX_WATCH_CI_INTERVAL_SECONDS = 3600;
+export const DEFAULT_WATCH_CI_CONTEXT_MODE = 'isolated';
 
 export interface BuildCiWatchPromptArgs {
   taskId: string;
@@ -49,12 +50,21 @@ Check instructions:
 ${checkInstructions}
 
 Rules:
+- Use the watch target and check instructions in this prompt as the source of truth for what to inspect.
 - On each run, check whether the target is still queued, pending, running, in progress, or otherwise non-terminal.
 - If it is still not finished, send no visible message and end this run quietly.
 - If it reached a terminal state such as success, failure, cancelled, timed out, neutral, skipped, or action required:
   1. Send exactly one concise completion message with \`send_message\`.
-  2. Include the final status and only the most important details.
-  3. Call \`cancel_task\` with task_id "${taskId}" so this watcher stops itself.
+  2. Format it as a short multiline summary when possible, not one long paragraph.
+  3. Preferred shape:
+     - First line: \`CI 완료: <target>\`
+     - Second line: \`판정: <one-line conclusion>\`
+     - Then 2-4 flat bullet points with only the most important metrics, errors, or comparisons.
+     - Optional final line: \`다음: <next action>\` if a concrete follow-up is needed.
+  4. Adapt the content to the specific CI. Do not invent fixed fields when they do not fit.
+  5. Avoid tables unless they are clearly the shortest readable format.
+  6. Keep the message compact and easy for other agents to parse.
+  7. Call \`cancel_task\` with task_id "${taskId}" so this watcher stops itself.
 - If you hit a transient problem such as a rate limit, network issue, or temporary auth failure, send no visible message and leave the task active for the next retry.
 - Prefer no normal final response. Use \`send_message\` for the completion message, and keep any non-user-facing notes inside \`<internal>\` tags if needed.
 - Do not claim continued monitoring after you cancel the task.

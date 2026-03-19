@@ -531,6 +531,18 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ...(process.env.MEMENTO_MCP_SSE_URL
+          ? {
+              'memento-mcp': {
+                command: process.env.MEMENTO_MCP_REMOTE_PATH || 'mcp-remote',
+                args: [
+                  process.env.MEMENTO_MCP_SSE_URL,
+                  '--header',
+                  `Authorization:Bearer ${process.env.MEMENTO_ACCESS_KEY || ''}`,
+                ],
+              },
+            }
+          : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

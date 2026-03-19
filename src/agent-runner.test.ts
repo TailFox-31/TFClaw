@@ -287,9 +287,7 @@ describe('agent-runner timeout behavior', () => {
 
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       '/tmp/ejclaw-test-data/sessions/eyejokerdb-4/.codex/config.toml',
-      expect.stringContaining(
-        'NANOCLAW_CHAT_JID = "dc:1481348008183595170"',
-      ),
+      expect.stringContaining('NANOCLAW_CHAT_JID = "dc:1481348008183595170"'),
     );
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       '/tmp/ejclaw-test-data/sessions/eyejokerdb-4/.codex/config.toml',

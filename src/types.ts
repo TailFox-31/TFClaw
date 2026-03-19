@@ -43,6 +43,9 @@ export interface ScheduledTask {
   id: string;
   group_folder: string;
   chat_jid: string;
+  agent_type: AgentType | null;
+  status_message_id: string | null;
+  status_started_at: string | null;
   prompt: string;
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;

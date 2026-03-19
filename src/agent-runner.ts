@@ -175,10 +175,17 @@ function prepareGroupEnvironment(
     'CODEX_OPENAI_API_KEY',
     'CODEX_MODEL',
     'CODEX_EFFORT',
+    'MEMENTO_MCP_SSE_URL',
+    'MEMENTO_ACCESS_KEY',
+    'MEMENTO_MCP_REMOTE_PATH',
   ]);
 
   // Build a clean env without Claude Code nesting detection variables
   const cleanEnv = { ...(process.env as Record<string, string>) };
+  // Merge .env file values (readEnvFile only reads file, doesn't set process.env)
+  for (const [k, v] of Object.entries(envVars)) {
+    if (v && !cleanEnv[k]) cleanEnv[k] = v;
+  }
   delete cleanEnv.CLAUDECODE;
   delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
 
@@ -327,7 +334,28 @@ NANOCLAW_CHAT_JID = ${JSON.stringify(chatJid)}
 NANOCLAW_GROUP_FOLDER = ${JSON.stringify(group.folder)}
 NANOCLAW_IS_MAIN = ${JSON.stringify(isMain ? '1' : '0')}
 `;
-      toml = toml.trimEnd() + '\n' + mcpSection;
+      // Inject memento-mcp if MEMENTO_MCP_SSE_URL is set
+      const mementoSseUrl =
+        envVars.MEMENTO_MCP_SSE_URL || process.env.MEMENTO_MCP_SSE_URL;
+      const mementoAccessKey =
+        envVars.MEMENTO_ACCESS_KEY || process.env.MEMENTO_ACCESS_KEY || '';
+      const mementoRemotePath =
+        envVars.MEMENTO_MCP_REMOTE_PATH ||
+        process.env.MEMENTO_MCP_REMOTE_PATH ||
+        'mcp-remote';
+      toml = toml.replace(
+        /\n?\[mcp_servers\.memento-mcp\][\s\S]*?(?=\n\[|$)/,
+        '',
+      );
+      const mementoSection = mementoSseUrl
+        ? `
+[mcp_servers.memento-mcp]
+command = ${JSON.stringify(mementoRemotePath)}
+args = [${JSON.stringify(mementoSseUrl)}, "--header", ${JSON.stringify(`Authorization:Bearer ${mementoAccessKey}`)}]
+`
+        : '';
+
+      toml = toml.trimEnd() + '\n' + mcpSection + mementoSection;
       fs.writeFileSync(configTomlPath, toml);
     }
 

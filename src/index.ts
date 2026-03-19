@@ -218,6 +218,7 @@ async function main(): Promise<void> {
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({
+    serviceAgentType: SERVICE_AGENT_TYPE,
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
     queue,
@@ -231,6 +232,28 @@ async function main(): Promise<void> {
       }
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
+    },
+    sendTrackedMessage: async (jid, rawText) => {
+      const channel = findChannel(channels, jid);
+      if (!channel?.sendAndTrack) {
+        return null;
+      }
+      const text = formatOutbound(rawText);
+      if (!text) {
+        return null;
+      }
+      return channel.sendAndTrack(jid, text);
+    },
+    editTrackedMessage: async (jid, messageId, rawText) => {
+      const channel = findChannel(channels, jid);
+      if (!channel?.editMessage) {
+        throw new Error(`Channel does not support message edits: ${jid}`);
+      }
+      const text = formatOutbound(rawText);
+      if (!text) {
+        throw new Error(`Cannot edit tracked message to empty text: ${jid}`);
+      }
+      await channel.editMessage(jid, messageId, text);
     },
   });
   startIpcWatcher({
