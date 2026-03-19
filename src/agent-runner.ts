@@ -300,7 +300,10 @@ function prepareGroupEnvironment(
         : '';
       // Remove existing nanoclaw/memento MCP sections if present (to refresh env vars)
       toml = toml.replace(/\n?\[mcp_servers\.nanoclaw\][\s\S]*?(?=\n\[|$)/, '');
-      toml = toml.replace(/\n?\[mcp_servers\.memento-mcp\][\s\S]*?(?=\n\[|$)/, '');
+      toml = toml.replace(
+        /\n?\[mcp_servers\.memento-mcp\][\s\S]*?(?=\n\[|$)/,
+        '',
+      );
       const mcpSection = `
 [mcp_servers.nanoclaw]
 command = "node"

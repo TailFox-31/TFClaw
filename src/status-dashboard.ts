@@ -49,7 +49,11 @@ export function readStatusSnapshots(maxAgeMs: number): StatusSnapshot[] {
     try {
       const raw = fs.readFileSync(snapshotPath, 'utf-8');
       const parsed = JSON.parse(raw) as StatusSnapshot;
-      if (!parsed.updatedAt || !parsed.agentType || !Array.isArray(parsed.entries))
+      if (
+        !parsed.updatedAt ||
+        !parsed.agentType ||
+        !Array.isArray(parsed.entries)
+      )
         continue;
 
       const ageMs = now - new Date(parsed.updatedAt).getTime();

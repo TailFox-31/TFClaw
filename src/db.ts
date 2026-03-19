@@ -379,7 +379,10 @@ export function storeMessage(msg: NewMessage): void {
 }
 
 function normalizeMessageRow(
-  row: NewMessage & { is_from_me?: boolean | number; is_bot_message?: boolean | number },
+  row: NewMessage & {
+    is_from_me?: boolean | number;
+    is_bot_message?: boolean | number;
+  },
 ): NewMessage {
   return {
     ...row,
@@ -415,7 +418,10 @@ export function getNewMessages(
   const rows = db
     .prepare(sql)
     .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as Array<
-    NewMessage & { is_from_me?: boolean | number; is_bot_message?: boolean | number }
+    NewMessage & {
+      is_from_me?: boolean | number;
+      is_bot_message?: boolean | number;
+    }
   >;
 
   let newTimestamp = lastTimestamp;
@@ -449,7 +455,10 @@ export function getMessagesSince(
   const rows = db
     .prepare(sql)
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as Array<
-    NewMessage & { is_from_me?: boolean | number; is_bot_message?: boolean | number }
+    NewMessage & {
+      is_from_me?: boolean | number;
+      is_bot_message?: boolean | number;
+    }
   >;
   return rows.map(normalizeMessageRow);
 }

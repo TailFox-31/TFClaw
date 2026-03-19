@@ -112,7 +112,10 @@ function loadState(): void {
   // claude-code and codex rows for the same Discord JID.
   registeredGroups = getAllRegisteredGroups(SERVICE_AGENT_TYPE);
   logger.info(
-    { groupCount: Object.keys(registeredGroups).length, agentType: SERVICE_AGENT_TYPE },
+    {
+      groupCount: Object.keys(registeredGroups).length,
+      agentType: SERVICE_AGENT_TYPE,
+    },
     'State loaded',
   );
 }
@@ -198,7 +201,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     sinceTimestamp,
     ASSISTANT_NAME,
   );
-  const missedMessages = getProcessableMessages(chatJid, rawMissedMessages, channel);
+  const missedMessages = getProcessableMessages(
+    chatJid,
+    rawMissedMessages,
+    channel,
+  );
 
   if (missedMessages.length === 0) {
     const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
@@ -262,7 +269,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  advanceLastAgentCursor(chatJid, missedMessages[missedMessages.length - 1].timestamp);
+  advanceLastAgentCursor(
+    chatJid,
+    missedMessages[missedMessages.length - 1].timestamp,
+  );
 
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
@@ -289,7 +299,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let finalOutputSentToUser = false;
   let progressOutputSentToUser = false;
   let poisonedSessionDetected = false;
-  const isClaudeCodeAgent = (group.agentType || 'claude-code') === 'claude-code';
+  const isClaudeCodeAgent =
+    (group.agentType || 'claude-code') === 'claude-code';
 
   const clearProgressTicker = () => {
     if (progressTicker) {
@@ -620,7 +631,9 @@ async function refreshChannelMeta(): Promise<void> {
   if (!ch?.getChannelMeta) return;
 
   // Include jids from both local registeredGroups and other service snapshots
-  const localJids = Object.keys(registeredGroups).filter((j) => j.startsWith('dc:'));
+  const localJids = Object.keys(registeredGroups).filter((j) =>
+    j.startsWith('dc:'),
+  );
   const snapshotJids = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS)
     .flatMap((s) => s.entries.map((e) => e.jid))
     .filter((j) => j.startsWith('dc:'));
@@ -729,7 +742,9 @@ function writeLocalStatusSnapshot(): void {
 
 function buildStatusContent(): string {
   const snapshots = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS);
-  const chatNameByJid = new Map(getAllChats().map((chat) => [chat.jid, chat.name]));
+  const chatNameByJid = new Map(
+    getAllChats().map((chat) => [chat.jid, chat.name]),
+  );
 
   // Collect all entries keyed by jid, with agent type info
   interface RoomEntry {
@@ -798,15 +813,17 @@ function buildStatusContent(): string {
 
   const sections: string[] = [];
   for (const [catName, rooms] of sortedCategories) {
-    rooms.sort(
-      (a, b) => (a.meta?.position ?? 999) - (b.meta?.position ?? 999),
-    );
+    rooms.sort((a, b) => (a.meta?.position ?? 999) - (b.meta?.position ?? 999));
 
     const roomLines: string[] = [];
     for (const room of rooms) {
       // Sort agents: claude-code first, codex second
       room.agents.sort((a, b) =>
-        a.agentType === b.agentType ? 0 : a.agentType === 'claude-code' ? -1 : 1,
+        a.agentType === b.agentType
+          ? 0
+          : a.agentType === 'claude-code'
+            ? -1
+            : 1,
       );
 
       const agentParts = room.agents.map((a) => {
@@ -880,7 +897,11 @@ async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
         // Back off for 10 minutes on rate limit
         usageApiBackoffUntil = Date.now() + 600_000;
         logger.warn(
-          { status: 429, retryAfter: res.headers.get('retry-after'), body: body.slice(0, 200) },
+          {
+            status: 429,
+            retryAfter: res.headers.get('retry-after'),
+            body: body.slice(0, 200),
+          },
           'Usage API rate limited (429), backing off 10min',
         );
       } else {
@@ -995,8 +1016,7 @@ async function buildUsageContent(): Promise<string> {
     (snapshot) =>
       snapshot.agentType === 'claude-code' &&
       snapshot.entries.some(
-        (entry) =>
-          entry.status === 'processing' || entry.status === 'waiting',
+        (entry) => entry.status === 'processing' || entry.status === 'waiting',
       ),
   );
 
@@ -1208,7 +1228,9 @@ async function startStatusDashboard(): Promise<void> {
 
   logger.info(
     { channelId: STATUS_CHANNEL_ID, isRenderer, agentType: SERVICE_AGENT_TYPE },
-    isRenderer ? 'Unified dashboard started' : 'Status snapshot updater started',
+    isRenderer
+      ? 'Unified dashboard started'
+      : 'Status snapshot updater started',
   );
 }
 
@@ -1350,7 +1372,11 @@ async function startMessageLoop(): Promise<void> {
             lastAgentTimestamp[chatJid] || '',
             ASSISTANT_NAME,
           );
-          const processablePending = getProcessableMessages(chatJid, allPending, channel);
+          const processablePending = getProcessableMessages(
+            chatJid,
+            allPending,
+            channel,
+          );
           const messagesToSend =
             processablePending.length > 0
               ? processablePending
@@ -1392,9 +1418,17 @@ async function startMessageLoop(): Promise<void> {
 function recoverPendingMessages(): void {
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
     const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-    const rawPending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+    const rawPending = getMessagesSince(
+      chatJid,
+      sinceTimestamp,
+      ASSISTANT_NAME,
+    );
     const recoveryChannel = findChannel(channels, chatJid);
-    const pending = getProcessableMessages(chatJid, rawPending, recoveryChannel ?? undefined);
+    const pending = getProcessableMessages(
+      chatJid,
+      rawPending,
+      recoveryChannel ?? undefined,
+    );
     if (pending.length > 0) {
       logger.info(
         { group: group.name, pendingCount: pending.length },
