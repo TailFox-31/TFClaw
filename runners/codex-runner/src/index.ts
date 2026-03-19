@@ -1,8 +1,7 @@
 /**
  * NanoClaw Codex Runner
  *
- * Default runtime is Codex app-server, with SDK fallback available via
- * CODEX_RUNTIME=sdk or automatic fallback when app-server startup fails.
+ * App-server only runtime.
  *
  * Input protocol:
  *   Stdin: Full ContainerInput JSON (read until EOF)
@@ -13,7 +12,6 @@
  *   Each result is wrapped in OUTPUT_START_MARKER / OUTPUT_END_MARKER pairs.
  */
 
-import { Codex, type Thread, type ThreadOptions, type UserInput } from '@openai/codex-sdk';
 import fs from 'fs';
 import path from 'path';
 
@@ -38,6 +36,7 @@ interface ContainerInput {
 interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
+  phase?: 'progress' | 'final';
   newSessionId?: string;
   error?: string;
 }
@@ -51,7 +50,6 @@ const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 const MAX_TURNS = 100;
-const CODEX_RUNTIME = (process.env.CODEX_RUNTIME || 'app-server').toLowerCase();
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -168,25 +166,6 @@ function extractImagePaths(text: string): { cleanText: string; imagePaths: strin
   };
 }
 
-function parseSdkInput(text: string): string | UserInput[] {
-  const { cleanText, imagePaths } = extractImagePaths(text);
-  if (imagePaths.length === 0) return text;
-
-  const input: UserInput[] = [];
-  if (cleanText) {
-    input.push({ type: 'text', text: cleanText });
-  }
-  for (const imgPath of imagePaths) {
-    if (fs.existsSync(imgPath)) {
-      input.push({ type: 'local_image', path: imgPath });
-      log(`Adding image input: ${imgPath}`);
-    } else {
-      log(`Image not found, skipping: ${imgPath}`);
-    }
-  }
-  return input.length > 0 ? input : text;
-}
-
 function parseAppServerInput(text: string): AppServerInputItem[] {
   const { cleanText, imagePaths } = extractImagePaths(text);
   const input: AppServerInputItem[] = [];
@@ -211,66 +190,43 @@ function parseAppServerInput(text: string): AppServerInputItem[] {
   return input;
 }
 
-function getThreadOptions(): ThreadOptions {
-  const threadOptions: ThreadOptions = {
-    workingDirectory: EFFECTIVE_CWD,
-    approvalPolicy: 'never',
-    sandboxMode: 'danger-full-access',
-    networkAccessEnabled: true,
-    webSearchMode: 'live',
-  };
-  if (CODEX_MODEL) threadOptions.model = CODEX_MODEL;
-  if (CODEX_EFFORT) {
-    threadOptions.modelReasoningEffort =
-      CODEX_EFFORT as ThreadOptions['modelReasoningEffort'];
-  }
-  return threadOptions;
-}
+function formatProgressElapsed(ms: number): string {
+  const elapsedSeconds = Math.floor(ms / 10_000) * 10;
+  const hours = Math.floor(elapsedSeconds / 3600);
+  const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+  const seconds = elapsedSeconds % 60;
+  const parts: string[] = [];
 
-async function executeSdkTurn(
-  thread: Thread,
-  input: string | UserInput[],
-): Promise<{ result: string; error?: string }> {
-  const ac = new AbortController();
+  if (hours > 0) parts.push(`${hours}시간`);
+  if (minutes > 0) parts.push(`${minutes}분`);
+  parts.push(`${seconds}초`);
 
-  let turnSeconds = 0;
-  const sentinel = setInterval(() => {
-    if (consumeCloseSentinel()) {
-      log('Close sentinel detected during SDK turn, aborting');
-      ac.abort();
-      return;
-    }
-    turnSeconds += 5;
-    if (turnSeconds % 60 === 0) {
-      log(`Turn in progress... (${Math.round(turnSeconds / 60)}min)`);
-    }
-  }, 5000);
-
-  try {
-    const turn = await thread.run(input, { signal: ac.signal });
-    return { result: turn.finalResponse };
-  } catch (err) {
-    if (ac.signal.aborted) {
-      return { result: '' };
-    }
-    return {
-      result: '',
-      error: err instanceof Error ? err.message : String(err),
-    };
-  } finally {
-    clearInterval(sentinel);
-  }
+  return parts.join(' ');
 }
 
 async function executeAppServerTurn(
   client: CodexAppServerClient,
   threadId: string,
   prompt: string,
-): Promise<{ result: string; error?: string }> {
+): Promise<{ result: string | null; error?: string }> {
+  let lastProgressMessage: string | null = null;
   const activeTurn = await client.startTurn(threadId, parseAppServerInput(prompt), {
     cwd: EFFECTIVE_CWD,
     model: CODEX_MODEL || undefined,
     effort: CODEX_EFFORT || undefined,
+    onProgress: (message) => {
+      const trimmed = message.trim();
+      if (!trimmed || trimmed === lastProgressMessage) {
+        return;
+      }
+      lastProgressMessage = trimmed;
+      writeOutput({
+        status: 'success',
+        phase: 'progress',
+        result: trimmed,
+        newSessionId: threadId,
+      });
+    },
   });
 
   let elapsedMs = 0;
@@ -308,7 +264,7 @@ async function executeAppServerTurn(
 
     elapsedMs += IPC_POLL_MS;
     if (elapsedMs > 0 && elapsedMs % 60000 === 0) {
-      log(`Turn in progress... (${Math.round(elapsedMs / 60000)}min)`);
+      log(`Turn in progress... (${formatProgressElapsed(elapsedMs)})`);
     }
     setTimeout(() => void pollDuringTurn(), IPC_POLL_MS);
   };
@@ -318,98 +274,17 @@ async function executeAppServerTurn(
   try {
     const { state, result } = await activeTurn.wait();
     if (state.status === 'completed') {
-      return { result: result || '' };
+      return { result };
     }
     if (state.status === 'interrupted' && consumeCloseSentinel()) {
-      return { result: result || '' };
+      return { result };
     }
     return {
-      result: result || '',
+      result,
       error: state.errorMessage || `Codex turn finished with status ${state.status}`,
     };
   } finally {
     polling = false;
-  }
-}
-
-async function runSdkSession(
-  containerInput: ContainerInput,
-  prompt: string,
-): Promise<void> {
-  const threadOptions = getThreadOptions();
-  const codex = new Codex();
-
-  let thread: Thread;
-  if (containerInput.sessionId) {
-    thread = codex.resumeThread(containerInput.sessionId, threadOptions);
-    log(`Thread resuming (session: ${containerInput.sessionId})`);
-  } else {
-    thread = codex.startThread(threadOptions);
-    log('Thread started (new session)');
-  }
-
-  let turnCount = 0;
-  while (true) {
-    turnCount++;
-    if (turnCount > MAX_TURNS) {
-      log(`Turn limit reached (${MAX_TURNS}), exiting`);
-      writeOutput({
-        status: 'success',
-        result: '[세션 턴 제한 도달. 새 메시지로 다시 시작됩니다.]',
-        newSessionId: thread.id || undefined,
-      });
-      break;
-    }
-
-    const input = parseSdkInput(prompt);
-    log(`Starting SDK turn ${turnCount}/${MAX_TURNS}...`);
-
-    let { result, error } = await executeSdkTurn(thread, input);
-
-    if (error && turnCount === 1 && containerInput.sessionId) {
-      log(`Resume may have failed, retrying with new thread: ${error}`);
-      thread = codex.startThread(threadOptions);
-      ({ result, error } = await executeSdkTurn(thread, input));
-    }
-
-    if (consumeCloseSentinel()) {
-      if (result) {
-        writeOutput({
-          status: 'success',
-          result,
-          newSessionId: thread.id || undefined,
-        });
-      }
-      log('Close sentinel detected, exiting SDK runtime');
-      break;
-    }
-
-    if (error) {
-      log(`SDK turn error: ${error}`);
-      writeOutput({
-        status: 'error',
-        result: result || null,
-        newSessionId: thread.id || undefined,
-        error,
-      });
-    } else {
-      writeOutput({
-        status: 'success',
-        result: result || null,
-        newSessionId: thread.id || undefined,
-      });
-    }
-
-    log('SDK turn done, waiting for next IPC message...');
-
-    const nextMessage = await waitForIpcMessage();
-    if (nextMessage === null) {
-      log('Close sentinel received, exiting SDK runtime');
-      break;
-    }
-
-    log(`Got new SDK message (${nextMessage.length} chars)`);
-    prompt = nextMessage;
   }
 }
 
@@ -529,6 +404,7 @@ async function runAppServerSession(
         writeOutput({
           status: 'success',
           result: result || null,
+          ...(result ? { phase: 'final' as const } : {}),
           newSessionId: threadId,
         });
       }
@@ -547,10 +423,6 @@ async function runAppServerSession(
   } finally {
     await client.close();
   }
-}
-
-function shouldUseAppServer(): boolean {
-  return CODEX_RUNTIME !== 'sdk';
 }
 
 // ── Main ──────────────────────────────────────────────────────────
@@ -595,28 +467,9 @@ async function main(): Promise<void> {
     prompt += '\n' + pending.join('\n');
   }
 
-  const preferAppServer = shouldUseAppServer();
   try {
-    if (preferAppServer) {
-      try {
-        log(`Runtime selected: app-server (${CODEX_RUNTIME})`);
-        await runAppServerSession(containerInput, prompt);
-        return;
-      } catch (err) {
-        if (CODEX_RUNTIME === 'app-server') {
-          log(
-            `App-server runtime failed, falling back to SDK: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        } else {
-          throw err;
-        }
-      }
-    }
-
-    log('Runtime selected: sdk');
-    await runSdkSession(containerInput, prompt);
+    log('Runtime selected: app-server');
+    await runAppServerSession(containerInput, prompt);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     log(`Runner error: ${errorMessage}`);

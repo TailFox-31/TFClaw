@@ -511,6 +511,18 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ...(process.env.MEMENTO_MCP_SSE_URL
+          ? {
+              'memento-mcp': {
+                command: process.env.MEMENTO_MCP_REMOTE_PATH || 'mcp-remote',
+                args: [
+                  process.env.MEMENTO_MCP_SSE_URL,
+                  '--header',
+                  `Authorization:Bearer ${process.env.MEMENTO_ACCESS_KEY || ''}`,
+                ],
+              },
+            }
+          : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
@@ -539,7 +551,22 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      const isError = message.subtype?.startsWith('error');
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      if (isError) {
+        // Log full error details for debugging
+        const msg = message as Record<string, unknown>;
+        const errorDetail = JSON.stringify({
+          subtype: message.subtype,
+          result: textResult?.slice(0, 500),
+          errors: msg.errors,
+          stop_reason: msg.stop_reason,
+          duration_ms: msg.duration_ms,
+          duration_api_ms: msg.duration_api_ms,
+          session_id: msg.session_id,
+        });
+        log(`Error result detail: ${errorDetail}`);
+      }
       writeOutput({
         status: 'success',
         result: textResult || null,
@@ -747,7 +774,11 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
+    const errorStack = err instanceof Error ? err.stack : undefined;
+    const errorCause = err instanceof Error && err.cause ? String(err.cause) : undefined;
     log(`Agent error: ${errorMessage}`);
+    if (errorStack) log(`Stack: ${errorStack}`);
+    if (errorCause) log(`Cause: ${errorCause}`);
     writeOutput({
       status: 'error',
       result: null,

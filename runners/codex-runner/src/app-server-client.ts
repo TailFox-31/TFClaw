@@ -34,6 +34,7 @@ export interface CodexAppServerTurnOptions {
   cwd: string;
   model?: string;
   effort?: string;
+  onProgress?: (message: string) => void;
 }
 
 export interface CodexAppServerTurnResult {
@@ -69,6 +70,7 @@ interface PendingRequest {
 interface ActiveTurn {
   threadId: string;
   state: AppServerTurnState;
+  onProgress?: (message: string) => void;
   resolve: (value: CodexAppServerTurnResult) => void;
   reject: (reason?: unknown) => void;
 }
@@ -215,6 +217,7 @@ export class CodexAppServerClient {
       this.activeTurn = {
         threadId,
         state: createInitialAppServerTurnState(),
+        onProgress: options.onProgress,
         resolve,
         reject,
       };
@@ -365,6 +368,20 @@ export class CodexAppServerClient {
 
   private handleNotification(message: JsonRpcNotification): void {
     if (!this.activeTurn) return;
+
+    if (message.method === 'item/completed') {
+      const item =
+        (message.params?.item as Record<string, unknown> | undefined) ||
+        undefined;
+      if (
+        item?.type === 'agentMessage' &&
+        item.phase !== 'final_answer' &&
+        typeof item.text === 'string' &&
+        item.text.trim().length > 0
+      ) {
+        this.activeTurn.onProgress?.(item.text);
+      }
+    }
 
     this.activeTurn.state = reduceAppServerTurnState(
       this.activeTurn.state,

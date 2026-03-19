@@ -26,6 +26,12 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
+const isPairedRoomJidMock = vi.hoisted(() => vi.fn(() => false));
+
+vi.mock('../db.js', () => ({
+  isPairedRoomJid: isPairedRoomJidMock,
+}));
+
 // --- discord.js mock ---
 
 type Handler = (...args: any[]) => any;
@@ -196,6 +202,7 @@ async function triggerMessage(message: any) {
 describe('DiscordChannel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    isPairedRoomJidMock.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -301,18 +308,54 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
 
-    it('delivers bot messages with is_bot_message flag', async () => {
+    it('ignores its own bot messages', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
 
-      const msg = createMessage({ isBot: true, content: 'I am a bot' });
+      const msg = createMessage({
+        authorId: '999888777',
+        isBot: true,
+        content: 'I am the connected bot',
+      });
+      await triggerMessage(msg);
+
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('ignores other bot messages in normal rooms', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const msg = createMessage({
+        authorId: '111222333',
+        isBot: true,
+        content: 'I am another bot',
+      });
+      await triggerMessage(msg);
+
+      expect(opts.onMessage).not.toHaveBeenCalled();
+    });
+
+    it('delivers other bot messages in paired rooms', async () => {
+      isPairedRoomJidMock.mockReturnValue(true);
+
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const msg = createMessage({
+        authorId: '111222333',
+        isBot: true,
+        content: 'I am another bot',
+      });
       await triggerMessage(msg);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        expect.any(String),
+        'dc:1234567890123456',
         expect.objectContaining({
-          content: 'I am a bot',
+          content: 'I am another bot',
           is_bot_message: true,
         }),
       );

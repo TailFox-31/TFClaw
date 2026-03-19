@@ -210,4 +210,46 @@ describe('agent-runner timeout behavior', () => {
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
   });
+
+  it('preserves streamed progress phase metadata', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runAgentProcess(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: '생각 중...',
+      phase: 'progress',
+      newSessionId: 'session-progress',
+    });
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: '최종 답변',
+      phase: 'final',
+      newSessionId: 'session-progress',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: '생각 중...',
+        phase: 'progress',
+      }),
+    );
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: '최종 답변',
+        phase: 'final',
+      }),
+    );
+  });
 });

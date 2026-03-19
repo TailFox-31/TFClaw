@@ -201,6 +201,7 @@ describe('getMessagesSince', () => {
     );
     const botMsgs = msgs.filter((m) => m.content === 'bot reply');
     expect(botMsgs).toHaveLength(1);
+    expect(botMsgs[0].is_bot_message).toBe(true);
   });
 
   it('returns all messages including bot when sinceTimestamp is empty', () => {
@@ -482,5 +483,30 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+
+  it('filters duplicate jid registrations by agent type', () => {
+    setRegisteredGroup('dc:shared', {
+      name: 'Shared Room Claude',
+      folder: 'shared-room',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    setRegisteredGroup('dc:shared', {
+      name: 'Shared Room Codex',
+      folder: 'shared-room',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+
+    const claudeGroups = getAllRegisteredGroups('claude-code');
+    const codexGroups = getAllRegisteredGroups('codex');
+
+    expect(claudeGroups['dc:shared']?.agentType).toBe('claude-code');
+    expect(claudeGroups['dc:shared']?.name).toBe('Shared Room Claude');
+    expect(codexGroups['dc:shared']?.agentType).toBe('codex');
+    expect(codexGroups['dc:shared']?.name).toBe('Shared Room Codex');
   });
 });

@@ -378,6 +378,16 @@ export function storeMessage(msg: NewMessage): void {
   );
 }
 
+function normalizeMessageRow(
+  row: NewMessage & { is_from_me?: boolean | number; is_bot_message?: boolean | number },
+): NewMessage {
+  return {
+    ...row,
+    is_from_me: !!row.is_from_me,
+    is_bot_message: !!row.is_bot_message,
+  };
+}
+
 export function getNewMessages(
   jids: string[],
   lastTimestamp: string,
@@ -404,14 +414,16 @@ export function getNewMessages(
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as Array<
+    NewMessage & { is_from_me?: boolean | number; is_bot_message?: boolean | number }
+  >;
 
   let newTimestamp = lastTimestamp;
   for (const row of rows) {
     if (row.timestamp > newTimestamp) newTimestamp = row.timestamp;
   }
 
-  return { messages: rows, newTimestamp };
+  return { messages: rows.map(normalizeMessageRow), newTimestamp };
 }
 
 export function getMessagesSince(
@@ -434,9 +446,12 @@ export function getMessagesSince(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  return db
+  const rows = db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as Array<
+    NewMessage & { is_from_me?: boolean | number; is_bot_message?: boolean | number }
+  >;
+  return rows.map(normalizeMessageRow);
 }
 
 export function getLastHumanMessageTimestamp(chatJid: string): string | null {
@@ -657,10 +672,17 @@ export function getAllSessions(): Record<string, string> {
 
 export function getRegisteredGroup(
   jid: string,
+  agentType?: string,
 ): (RegisteredGroup & { jid: string }) | undefined {
-  const row = db
-    .prepare('SELECT * FROM registered_groups WHERE jid = ?')
-    .get(jid) as
+  const row = (
+    agentType
+      ? db
+          .prepare(
+            'SELECT * FROM registered_groups WHERE jid = ? AND agent_type = ?',
+          )
+          .get(jid, agentType)
+      : db.prepare('SELECT * FROM registered_groups WHERE jid = ?').get(jid)
+  ) as
     | {
         jid: string;
         name: string;
@@ -715,6 +737,13 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.isMain ? 1 : 0,
     group.agentType || 'claude-code',
     group.workDir || null,
+  );
+}
+
+export function updateRegisteredGroupName(jid: string, name: string): void {
+  db.prepare('UPDATE registered_groups SET name = ? WHERE jid = ?').run(
+    name,
+    jid,
   );
 }
 

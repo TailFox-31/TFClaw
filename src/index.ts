@@ -7,6 +7,7 @@ import {
   ASSISTANT_NAME,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  SERVICE_AGENT_TYPE,
   isSessionCommandSenderAllowed,
   STATUS_CHANNEL_ID,
   STATUS_UPDATE_INTERVAL,
@@ -36,14 +37,18 @@ import {
   getRegisteredGroup,
   getRouterState,
   initDatabase,
+  isPairedRoomJid,
   setRegisteredGroup,
   setRouterState,
+  updateRegisteredGroupName,
   deleteSession,
   setSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import { filterProcessableMessages } from './bot-message-filter.js';
 import { GroupQueue } from './group-queue.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
@@ -58,6 +63,11 @@ import {
   handleSessionCommand,
   isSessionCommandAllowed,
 } from './session-commands.js';
+import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import {
+  readStatusSnapshots,
+  writeStatusSnapshot,
+} from './status-dashboard.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, ChannelMeta, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -74,6 +84,20 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
+function advanceLastAgentCursor(chatJid: string, timestamp: string): void {
+  lastAgentTimestamp[chatJid] = timestamp;
+  saveState();
+}
+
+function getProcessableMessages(
+  chatJid: string,
+  messages: NewMessage[],
+  channel?: import('./types.js').Channel,
+): NewMessage[] {
+  const isOwn = channel?.isOwnMessage?.bind(channel);
+  return filterProcessableMessages(messages, isPairedRoomJid(chatJid), isOwn);
+}
+
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
   const agentTs = getRouterState('last_agent_timestamp');
@@ -84,9 +108,11 @@ function loadState(): void {
     lastAgentTimestamp = {};
   }
   sessions = getAllSessions();
-  registeredGroups = getAllRegisteredGroups();
+  // Load only this service's registrations. The DB can hold both
+  // claude-code and codex rows for the same Discord JID.
+  registeredGroups = getAllRegisteredGroups(SERVICE_AGENT_TYPE);
   logger.info(
-    { groupCount: Object.keys(registeredGroups).length },
+    { groupCount: Object.keys(registeredGroups).length, agentType: SERVICE_AGENT_TYPE },
     'State loaded',
   );
 }
@@ -167,13 +193,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const isMainGroup = group.isMain === true;
 
   const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  const missedMessages = getMessagesSince(
+  const rawMissedMessages = getMessagesSince(
     chatJid,
     sinceTimestamp,
     ASSISTANT_NAME,
   );
+  const missedMessages = getProcessableMessages(chatJid, rawMissedMessages, channel);
 
-  if (missedMessages.length === 0) return true;
+  if (missedMessages.length === 0) {
+    const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
+    if (lastIgnored) {
+      advanceLastAgentCursor(chatJid, lastIgnored.timestamp);
+    }
+    return true;
+  }
 
   // --- Session command interception (before trigger check) ---
   const cmdResult = await handleSessionCommand({
@@ -191,8 +224,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       closeStdin: () => queue.closeStdin(chatJid),
       clearSession: () => clearSession(group.folder),
       advanceCursor: (ts) => {
-        lastAgentTimestamp[chatJid] = ts;
-        saveState();
+        advanceLastAgentCursor(chatJid, ts);
       },
       formatMessages,
       isAdminSender: (msg) => isSessionCommandSenderAllowed(msg.sender),
@@ -230,9 +262,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
-  saveState();
+  advanceLastAgentCursor(chatJid, missedMessages[missedMessages.length - 1].timestamp);
 
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
@@ -251,29 +281,150 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
 
   let hadError = false;
-  let outputSentToUser = false;
+  let latestProgressText: string | null = null;
+  let latestProgressRendered: string | null = null;
+  let progressMessageId: string | null = null;
+  let progressStartedAt: number | null = null;
+  let progressTicker: ReturnType<typeof setInterval> | null = null;
+  let finalOutputSentToUser = false;
+  let progressOutputSentToUser = false;
+  let poisonedSessionDetected = false;
+  const isClaudeCodeAgent = (group.agentType || 'claude-code') === 'claude-code';
+
+  const clearProgressTicker = () => {
+    if (progressTicker) {
+      clearInterval(progressTicker);
+      progressTicker = null;
+    }
+  };
+
+  const renderProgressMessage = (text: string) => {
+    const elapsedSeconds =
+      progressStartedAt === null
+        ? 0
+        : Math.floor((Date.now() - progressStartedAt) / 10_000) * 10;
+    const hours = Math.floor(elapsedSeconds / 3600);
+    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+    const seconds = elapsedSeconds % 60;
+    const elapsedParts: string[] = [];
+
+    if (hours > 0) elapsedParts.push(`${hours}시간`);
+    if (minutes > 0) elapsedParts.push(`${minutes}분`);
+    elapsedParts.push(`${seconds}초`);
+
+    return `${text}\n\n${elapsedParts.join(' ')}`;
+  };
+
+  const syncTrackedProgressMessage = async () => {
+    if (!progressMessageId || !channel.editMessage || !latestProgressText) {
+      return;
+    }
+
+    const rendered = renderProgressMessage(latestProgressText);
+    if (rendered === latestProgressRendered) {
+      return;
+    }
+
+    try {
+      await channel.editMessage(chatJid, progressMessageId, rendered);
+      latestProgressRendered = rendered;
+    } catch {
+      clearProgressTicker();
+      progressMessageId = null;
+    }
+  };
+
+  const ensureProgressTicker = () => {
+    if (!progressMessageId || !channel.editMessage || progressTicker) {
+      return;
+    }
+
+    progressTicker = setInterval(() => {
+      void syncTrackedProgressMessage();
+    }, 10_000);
+  };
+
+  const finalizeProgressMessage = async () => {
+    await syncTrackedProgressMessage();
+    clearProgressTicker();
+  };
+
+  const sendProgressMessage = async (text: string) => {
+    if (!text || text === latestProgressText) {
+      return;
+    }
+
+    latestProgressText = text;
+    if (progressStartedAt === null) {
+      progressStartedAt = Date.now();
+    }
+    const rendered = renderProgressMessage(text);
+
+    if (progressMessageId && channel.editMessage) {
+      await syncTrackedProgressMessage();
+      progressOutputSentToUser = true;
+      return;
+    }
+
+    if (!channel.sendAndTrack) {
+      return;
+    }
+
+    progressMessageId = await channel.sendAndTrack(chatJid, rendered);
+    if (progressMessageId) {
+      latestProgressRendered = rendered;
+      ensureProgressTicker();
+      progressOutputSentToUser = true;
+    }
+  };
 
   await channel.setTyping?.(chatJid, true);
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
+    if (
+      isClaudeCodeAgent &&
+      shouldResetSessionOnAgentFailure(result) &&
+      !poisonedSessionDetected
+    ) {
+      poisonedSessionDetected = true;
+      hadError = true;
+      clearSession(group.folder);
+      queue.closeStdin(chatJid);
+      logger.warn(
+        { group: group.name, chatJid },
+        'Detected poisoned Claude session from streamed output, forcing close',
+      );
+    }
+
     if (result.result) {
       const raw =
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      const text = formatOutbound(raw);
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
+      if (result.phase === 'progress') {
+        if (text) {
+          await sendProgressMessage(text);
+        }
+        return;
       }
+      if (text) {
+        await finalizeProgressMessage();
+        await channel.sendMessage(chatJid, text);
+        finalOutputSentToUser = true;
+      }
+    } else {
+      await finalizeProgressMessage();
     }
 
     // Always clear typing and reset idle timer on any output (including null results)
     await channel.setTyping?.(chatJid, false);
-    resetIdleTimer();
+    if (!poisonedSessionDetected) {
+      resetIdleTimer();
+    }
 
-    if (result.status === 'success') {
+    if (result.status === 'success' && !poisonedSessionDetected) {
       queue.notifyIdle(chatJid);
     }
 
@@ -288,10 +439,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     hadError = true;
   }
 
+  clearProgressTicker();
+
   if (idleTimer) clearTimeout(idleTimer);
 
   if (hadError) {
-    if (outputSentToUser) {
+    if (finalOutputSentToUser || progressOutputSentToUser) {
       logger.warn(
         { group: group.name },
         'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
@@ -446,12 +599,16 @@ const STATUS_ICONS: Record<string, string> = {
 };
 
 let statusMessageId: string | null = null;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept for compat
 let usageMessageId: string | null = null;
+let cachedUsageContent: string = '';
+let cachedClaudeUsageData: ClaudeUsageData | null = null;
 
 // Cache for Discord channel metadata (name, position, category)
 let channelMetaCache = new Map<string, ChannelMeta>();
 let channelMetaLastRefresh = 0;
 const CHANNEL_META_REFRESH_MS = 300000; // 5 minutes
+const STATUS_SNAPSHOT_MAX_AGE_MS = 60000;
 
 async function refreshChannelMeta(): Promise<void> {
   const now = Date.now();
@@ -462,16 +619,40 @@ async function refreshChannelMeta(): Promise<void> {
   );
   if (!ch?.getChannelMeta) return;
 
-  const jids = Object.keys(registeredGroups).filter((j) => j.startsWith('dc:'));
+  // Include jids from both local registeredGroups and other service snapshots
+  const localJids = Object.keys(registeredGroups).filter((j) => j.startsWith('dc:'));
+  const snapshotJids = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS)
+    .flatMap((s) => s.entries.map((e) => e.jid))
+    .filter((j) => j.startsWith('dc:'));
+  const jids = [...new Set([...localJids, ...snapshotJids])];
   try {
     channelMetaCache = await ch.getChannelMeta(jids);
     channelMetaLastRefresh = now;
+
+    // Auto-sync DB group names with Discord channel names
+    for (const [jid, meta] of channelMetaCache) {
+      if (!meta.name) continue;
+      const group = registeredGroups[jid];
+      if (group && group.name !== meta.name) {
+        logger.info(
+          { jid, oldName: group.name, newName: meta.name },
+          'Syncing group name to Discord channel name',
+        );
+        group.name = meta.name;
+        updateRegisteredGroupName(jid, meta.name);
+      }
+    }
   } catch (err) {
     logger.debug({ err }, 'Failed to refresh channel metadata');
   }
 }
 
-function getStatusLabel(s: import('./group-queue.js').GroupStatus): string {
+function getStatusLabel(s: {
+  status: 'processing' | 'idle' | 'waiting' | 'inactive';
+  elapsedMs: number | null;
+  pendingMessages: boolean;
+  pendingTasks: number;
+}): string {
   if (s.status === 'processing')
     return `처리 중 (${formatElapsed(s.elapsedMs || 0)})`;
   if (s.status === 'idle') return '대기 중';
@@ -482,27 +663,133 @@ function getStatusLabel(s: import('./group-queue.js').GroupStatus): string {
   return '비활성';
 }
 
-function buildStatusContent(): string {
+function getAgentDisplayName(agentType: 'claude-code' | 'codex'): string {
+  return agentType === 'codex' ? '코덱스' : '클코';
+}
+
+function formatRoomName(
+  jid: string,
+  meta: ChannelMeta | undefined,
+  fallbackName: string | undefined,
+  chatName: string | undefined,
+): string {
+  const base =
+    meta?.name ||
+    (chatName && chatName !== jid ? chatName : undefined) ||
+    (fallbackName && fallbackName !== jid ? fallbackName : undefined) ||
+    jid;
+
+  if (jid.startsWith('dc:') && base !== jid && !base.startsWith('#')) {
+    return `#${base}`;
+  }
+  return base;
+}
+
+function writeLocalStatusSnapshot(): void {
   const jids = Object.keys(registeredGroups);
   const statuses = queue.getStatuses(jids);
 
-  const entries = statuses
-    .map((s) => ({
-      status: s,
-      group: registeredGroups[s.jid],
-      meta: channelMetaCache.get(s.jid),
-    }))
-    .filter((e) => e.group);
+  writeStatusSnapshot({
+    agentType: SERVICE_AGENT_TYPE,
+    assistantName: ASSISTANT_NAME,
+    updatedAt: new Date().toISOString(),
+    entries: statuses
+      .map((status) => {
+        const group = registeredGroups[status.jid];
+        if (!group) return null;
+        return {
+          jid: status.jid,
+          name: group.name,
+          folder: group.folder,
+          agentType: (group.agentType || SERVICE_AGENT_TYPE) as
+            | 'claude-code'
+            | 'codex',
+          status: status.status,
+          elapsedMs: status.elapsedMs,
+          pendingMessages: status.pendingMessages,
+          pendingTasks: status.pendingTasks,
+        };
+      })
+      .filter(
+        (
+          entry,
+        ): entry is {
+          jid: string;
+          name: string;
+          folder: string;
+          agentType: 'claude-code' | 'codex';
+          status: 'processing' | 'idle' | 'waiting' | 'inactive';
+          elapsedMs: number | null;
+          pendingMessages: boolean;
+          pendingTasks: number;
+        } => Boolean(entry),
+      ),
+  });
+}
 
-  // Group by category
-  const categoryMap = new Map<string, typeof entries>();
-  for (const entry of entries) {
-    const cat = entry.meta?.category || '기타';
-    if (!categoryMap.has(cat)) categoryMap.set(cat, []);
-    categoryMap.get(cat)!.push(entry);
+function buildStatusContent(): string {
+  const snapshots = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS);
+  const chatNameByJid = new Map(getAllChats().map((chat) => [chat.jid, chat.name]));
+
+  // Collect all entries keyed by jid, with agent type info
+  interface RoomEntry {
+    agentType: 'claude-code' | 'codex';
+    status: 'processing' | 'idle' | 'waiting' | 'inactive';
+    elapsedMs: number | null;
+    pendingMessages: boolean;
+    pendingTasks: number;
+    name: string;
+    meta: ChannelMeta | undefined;
+  }
+  const byJid = new Map<string, RoomEntry[]>();
+
+  for (const snapshot of snapshots) {
+    const agentType = snapshot.agentType as 'claude-code' | 'codex';
+    for (const entry of snapshot.entries) {
+      const arr = byJid.get(entry.jid) || [];
+      arr.push({
+        agentType,
+        status: entry.status,
+        elapsedMs: entry.elapsedMs,
+        pendingMessages: entry.pendingMessages,
+        pendingTasks: entry.pendingTasks,
+        name: entry.name,
+        meta: channelMetaCache.get(entry.jid),
+      });
+      byJid.set(entry.jid, arr);
+    }
   }
 
-  // Sort categories by position
+  // Group by category, then render rooms
+  interface RoomInfo {
+    jid: string;
+    name: string;
+    meta: ChannelMeta | undefined;
+    agents: RoomEntry[];
+  }
+  const categoryMap = new Map<string, RoomInfo[]>();
+  let totalActive = 0;
+  let totalRooms = 0;
+
+  for (const [jid, agents] of byJid) {
+    const meta = agents[0]?.meta;
+    const cat = meta?.category || '기타';
+    if (!categoryMap.has(cat)) categoryMap.set(cat, []);
+    categoryMap.get(cat)!.push({
+      jid,
+      name: formatRoomName(
+        jid,
+        meta,
+        agents.find((agent) => agent.name && agent.name !== jid)?.name,
+        chatNameByJid.get(jid),
+      ),
+      meta,
+      agents,
+    });
+    totalRooms++;
+    if (agents.some((a) => a.status === 'processing')) totalActive++;
+  }
+
   const sortedCategories = [...categoryMap.entries()].sort((a, b) => {
     const posA = a[1][0]?.meta?.categoryPosition ?? 999;
     const posB = b[1][0]?.meta?.categoryPosition ?? 999;
@@ -510,38 +797,36 @@ function buildStatusContent(): string {
   });
 
   const sections: string[] = [];
-  let totalActive = 0;
-  let totalIdle = 0;
-  let total = 0;
-
-  for (const [catName, catEntries] of sortedCategories) {
-    catEntries.sort(
+  for (const [catName, rooms] of sortedCategories) {
+    rooms.sort(
       (a, b) => (a.meta?.position ?? 999) - (b.meta?.position ?? 999),
     );
 
-    const lines = catEntries.map((e) => {
-      const icon = STATUS_ICONS[e.status.status] || '⚪';
-      const label = getStatusLabel(e.status);
-      // Prefer actual Discord channel name over DB-stored name
-      const name = e.meta?.name ? `#${e.meta.name}` : e.group.name;
-      return `  ${icon} **${name}** — ${label}`;
-    });
+    const roomLines: string[] = [];
+    for (const room of rooms) {
+      // Sort agents: claude-code first, codex second
+      room.agents.sort((a, b) =>
+        a.agentType === b.agentType ? 0 : a.agentType === 'claude-code' ? -1 : 1,
+      );
 
-    if (channelMetaCache.size > 0 && catName !== '기타') {
-      sections.push(`📁 **${catName}**\n${lines.join('\n')}`);
-    } else {
-      sections.push(lines.join('\n'));
+      const agentParts = room.agents.map((a) => {
+        const icon = STATUS_ICONS[a.status] || '⚪';
+        const label = getStatusLabel(a);
+        const tag = getAgentDisplayName(a.agentType);
+        return `${tag} ${icon} ${label}`;
+      });
+      roomLines.push(`  **${room.name}** — ${agentParts.join(' | ')}`);
     }
 
-    totalActive += catEntries.filter(
-      (e) => e.status.status === 'processing',
-    ).length;
-    totalIdle += catEntries.filter((e) => e.status.status === 'idle').length;
-    total += catEntries.length;
+    if (channelMetaCache.size > 0 && catName !== '기타') {
+      sections.push(`📁 **${catName}**\n${roomLines.join('\n')}`);
+    } else {
+      sections.push(roomLines.join('\n'));
+    }
   }
 
-  const header = `**에이전트 상태** (${ASSISTANT_NAME}) — 활성 ${totalActive} | 대기 ${totalIdle} | 전체 ${total}`;
-  return `${header}\n\n${sections.join('\n\n')}\n\n_${new Date().toLocaleTimeString('ko-KR')}_`;
+  const header = `**📊 에이전트 상태** — 활성 ${totalActive} / ${totalRooms}`;
+  return `${header}\n\n${sections.join('\n\n')}`;
 }
 
 // ── API Usage Fetchers ──────────────────────────────────────────
@@ -558,15 +843,29 @@ interface CodexRateLimit {
   secondary: { usedPercent: number; resetsAt: string | number };
 }
 
-async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
-  try {
-    const configDir =
-      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-    const credsPath = path.join(configDir, '.credentials.json');
-    if (!fs.existsSync(credsPath)) return null;
+let usageApiBackoffUntil = 0;
 
-    const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
-    const token = creds?.claudeAiOauth?.accessToken;
+async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
+  // Skip if in backoff period (after 429)
+  if (Date.now() < usageApiBackoffUntil) {
+    logger.debug('Skipping usage API call (backoff active)');
+    return null;
+  }
+
+  try {
+    const envToken = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN']);
+    let token =
+      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+      envToken.CLAUDE_CODE_OAUTH_TOKEN ||
+      '';
+    if (!token) {
+      const configDir =
+        process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+      const credsPath = path.join(configDir, '.credentials.json');
+      if (!fs.existsSync(credsPath)) return null;
+      const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+      token = creds?.claudeAiOauth?.accessToken || '';
+    }
     if (!token) return null;
 
     const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
@@ -575,9 +874,26 @@ async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
         'anthropic-beta': 'oauth-2025-04-20',
       },
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      if (res.status === 429) {
+        // Back off for 10 minutes on rate limit
+        usageApiBackoffUntil = Date.now() + 600_000;
+        logger.warn(
+          { status: 429, retryAfter: res.headers.get('retry-after'), body: body.slice(0, 200) },
+          'Usage API rate limited (429), backing off 10min',
+        );
+      } else {
+        logger.warn(
+          { status: res.status, body: body.slice(0, 200) },
+          'Usage API returned non-OK status',
+        );
+      }
+      return null;
+    }
     return (await res.json()) as ClaudeUsageData;
-  } catch {
+  } catch (err) {
+    logger.debug({ err }, 'Usage API fetch failed');
     return null;
   }
 }
@@ -674,76 +990,117 @@ async function fetchCodexUsage(): Promise<CodexRateLimit[] | null> {
 
 async function buildUsageContent(): Promise<string> {
   const lines: string[] = [];
+  const activeSnapshots = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS);
+  const hasActiveClaudeWork = activeSnapshots.some(
+    (snapshot) =>
+      snapshot.agentType === 'claude-code' &&
+      snapshot.entries.some(
+        (entry) =>
+          entry.status === 'processing' || entry.status === 'waiting',
+      ),
+  );
 
-  // Fetch API usage in parallel
-  const [claudeUsage, codexUsage] = await Promise.all([
-    fetchClaudeUsage(),
+  const [liveClaudeUsage, codexUsage] = await Promise.all([
+    hasActiveClaudeWork ? Promise.resolve(null) : fetchClaudeUsage(),
     fetchCodexUsage(),
   ]);
+  const claudeUsage = liveClaudeUsage || cachedClaudeUsageData;
+  const claudeUsageIsCached = !liveClaudeUsage && !!cachedClaudeUsageData;
+  if (liveClaudeUsage) {
+    cachedClaudeUsageData = liveClaudeUsage;
+  }
 
-  // Claude Code usage
+  const bar = (pct: number) => {
+    const filled = Math.round(pct / 10);
+    return '█'.repeat(filled) + '░'.repeat(10 - filled);
+  };
+
+  lines.push('📊 *사용량*');
+
+  type UsageRow = {
+    name: string;
+    h5pct: number;
+    h5reset: string;
+    d7pct: number;
+    d7reset: string;
+  };
+  const rows: UsageRow[] = [];
+
   if (claudeUsage) {
-    lines.push('☁️ *Claude Code*');
-    if (claudeUsage.five_hour) {
-      // utilization may be fraction (0-1) or percentage (0-100)
-      const raw = claudeUsage.five_hour.utilization;
-      const pct = raw > 1 ? Math.round(raw) : Math.round(raw * 100);
-      lines.push(
-        `• 5시간: ${usageEmoji(pct)} ${pct}% (리셋: ${formatResetKST(claudeUsage.five_hour.resets_at)})`,
-      );
-    }
-    if (claudeUsage.seven_day) {
-      const raw = claudeUsage.seven_day.utilization;
-      const pct = raw > 1 ? Math.round(raw) : Math.round(raw * 100);
-      lines.push(
-        `• 7일: ${usageEmoji(pct)} ${pct}% (리셋: ${formatResetKST(claudeUsage.seven_day.resets_at)})`,
-      );
-    }
-    lines.push('');
+    const h5 = claudeUsage.five_hour;
+    const d7 = claudeUsage.seven_day;
+    rows.push({
+      name: claudeUsageIsCached ? 'Claude*' : 'Claude',
+      h5pct: h5
+        ? h5.utilization > 1
+          ? Math.round(h5.utilization)
+          : Math.round(h5.utilization * 100)
+        : -1,
+      h5reset: h5 ? formatResetKST(h5.resets_at) : '',
+      d7pct: d7
+        ? d7.utilization > 1
+          ? Math.round(d7.utilization)
+          : Math.round(d7.utilization * 100)
+        : -1,
+      d7reset: d7 ? formatResetKST(d7.resets_at) : '',
+    });
   }
 
-  // Codex usage
   if (codexUsage && Array.isArray(codexUsage)) {
-    lines.push('🤖 *Codex CLI*');
-    for (const limit of codexUsage) {
-      const p = Math.round(limit.primary.usedPercent);
-      const s = Math.round(limit.secondary.usedPercent);
-      const name = limit.limitName || limit.limitId || 'Codex';
-      lines.push(
-        `• ${name} 5시간: ${usageEmoji(p)} ${p}% (리셋: ${formatResetKST(limit.primary.resetsAt)})`,
-      );
-      lines.push(
-        `• ${name} 7일: ${usageEmoji(s)} ${s}% (리셋: ${formatResetKST(limit.secondary.resetsAt)})`,
-      );
+    const relevant = codexUsage.filter(
+      (limit) =>
+        limit.primary.usedPercent > 0 || limit.secondary.usedPercent > 0,
+    );
+    const display = relevant.length > 0 ? relevant : codexUsage.slice(0, 1);
+    for (const limit of display) {
+      rows.push({
+        name: 'Codex',
+        h5pct: Math.round(limit.primary.usedPercent),
+        h5reset: formatResetKST(limit.primary.resetsAt),
+        d7pct: Math.round(limit.secondary.usedPercent),
+        d7reset: formatResetKST(limit.secondary.resetsAt),
+      });
     }
-    lines.push('');
   }
 
-  if (!claudeUsage && !codexUsage) {
-    lines.push('_API 사용량 조회 불가_');
-    lines.push('');
+  if (rows.length > 0) {
+    lines.push('```');
+    lines.push('        5-Hour             7-Day');
+    for (const row of rows) {
+      const h5 =
+        row.h5pct >= 0
+          ? `${bar(row.h5pct)} ${String(row.h5pct).padStart(3)}%`
+          : '  —  ';
+      const d7 =
+        row.d7pct >= 0
+          ? `${bar(row.d7pct)} ${String(row.d7pct).padStart(3)}%`
+          : '  —  ';
+      lines.push(`${row.name.padEnd(8)}${h5}   ${d7}`);
+    }
+    lines.push('```');
+  } else {
+    lines.push('_조회 불가_');
   }
+  if (claudeUsageIsCached) {
+    lines.push('_* Claude 사용량은 작업 중일 때는 캐시값 유지_');
+  }
+  lines.push('');
 
-  // System resources
   lines.push('🖥️ *서버*');
 
   const loadAvg = os.loadavg();
   const cpuCount = os.cpus().length;
-  const cpuPct1 = Math.round((loadAvg[0] / cpuCount) * 100);
-  const cpuPct5 = Math.round((loadAvg[1] / cpuCount) * 100);
-  const cpuPct15 = Math.round((loadAvg[2] / cpuCount) * 100);
-  lines.push(
-    `• CPU: ${usageEmoji(cpuPct1)} ${cpuPct1}% (1m) | ${cpuPct5}% (5m) | ${cpuPct15}% (15m)`,
-  );
+  const cpuPct = Math.round((loadAvg[1] / cpuCount) * 100);
 
   const totalMem = os.totalmem();
   const usedMem = totalMem - os.freemem();
   const memPct = Math.round((usedMem / totalMem) * 100);
-  lines.push(
-    `• 메모리: ${usageEmoji(memPct)} ${memPct}% (${(usedMem / 1073741824).toFixed(1)}GB / ${(totalMem / 1073741824).toFixed(1)}GB)`,
-  );
+  const memUsedGB = (usedMem / 1073741824).toFixed(1);
+  const memTotalGB = (totalMem / 1073741824).toFixed(1);
 
-  let diskLine = '• 디스크: 확인 불가';
+  let diskPct = 0;
+  let diskUsedGB = '?';
+  let diskTotalGB = '?';
   try {
     const df = execSync('df -B1 / | tail -1', {
       encoding: 'utf-8',
@@ -752,38 +1109,81 @@ async function buildUsageContent(): Promise<string> {
     const parts = df.split(/\s+/);
     const diskUsed = parseInt(parts[2], 10);
     const diskTotal = parseInt(parts[1], 10);
-    const diskPct = Math.round((diskUsed / diskTotal) * 100);
-    diskLine = `• 디스크: ${usageEmoji(diskPct)} ${diskPct}% (${(diskUsed / 1073741824).toFixed(1)}GB / ${(diskTotal / 1073741824).toFixed(1)}GB)`;
+    diskPct = Math.round((diskUsed / diskTotal) * 100);
+    diskUsedGB = (diskUsed / 1073741824).toFixed(0);
+    diskTotalGB = (diskTotal / 1073741824).toFixed(0);
   } catch {
     /* ignore */
   }
-  lines.push(diskLine);
 
-  lines.push(`• 업타임: ${formatElapsed(os.uptime() * 1000)}`);
-
-  return (
-    lines.join('\n') +
-    `\n\n_${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}_`
+  lines.push('```');
+  lines.push(`${'CPU'.padEnd(8)}${bar(cpuPct)} ${String(cpuPct).padStart(3)}%`);
+  lines.push(
+    `${'Memory'.padEnd(8)}${bar(memPct)} ${String(memPct).padStart(3)}%  ${memUsedGB}/${memTotalGB}GB`,
   );
+  lines.push(
+    `${'Disk'.padEnd(8)}${bar(diskPct)} ${String(diskPct).padStart(3)}%  ${diskUsedGB}/${diskTotalGB}GB`,
+  );
+  lines.push(`${'Uptime'.padEnd(8)}${formatElapsed(os.uptime() * 1000)}`);
+  lines.push('```');
+
+  return lines.join('\n');
 }
 
-// ── Dashboard Lifecycle ─────────────────────────────────────────
+// ── Unified Dashboard Lifecycle ──────────────────────────────────
+
+let usageUpdateInProgress = false;
+
+async function refreshUsageCache(): Promise<void> {
+  if (usageUpdateInProgress) return;
+  usageUpdateInProgress = true;
+  try {
+    cachedUsageContent = await buildUsageContent();
+  } catch {
+    /* keep previous cache */
+  } finally {
+    usageUpdateInProgress = false;
+  }
+}
+
+function buildUnifiedDashboard(): string {
+  const status = buildStatusContent();
+  const parts = [status];
+
+  if (cachedUsageContent) {
+    parts.push(cachedUsageContent);
+  }
+
+  parts.push(
+    `_${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}_`,
+  );
+  return parts.join('\n\n');
+}
 
 async function startStatusDashboard(): Promise<void> {
   if (!STATUS_CHANNEL_ID) return;
+  const isRenderer = SERVICE_AGENT_TYPE === 'claude-code';
 
   const statusJid = `dc:${STATUS_CHANNEL_ID}`;
 
   const findDiscordChannel = () =>
     channels.find((c) => c.name.startsWith('discord') && c.isConnected());
 
+  // Initial usage fetch
+  if (isRenderer) {
+    await refreshUsageCache();
+  }
+
   const updateStatus = async () => {
+    writeLocalStatusSnapshot();
+    if (!isRenderer) return;
+
     const ch = findDiscordChannel();
     if (!ch) return;
 
     try {
       await refreshChannelMeta();
-      const content = buildStatusContent();
+      const content = buildUnifiedDashboard();
 
       if (statusMessageId && ch.editMessage) {
         await ch.editMessage(statusJid, statusMessageId, content);
@@ -792,58 +1192,29 @@ async function startStatusDashboard(): Promise<void> {
         if (id) statusMessageId = id;
       }
     } catch (err) {
-      logger.debug({ err }, 'Status dashboard update failed');
+      logger.debug({ err }, 'Dashboard update failed');
       statusMessageId = null;
     }
   };
 
+  // Status updates every 10s
   setInterval(updateStatus, STATUS_UPDATE_INTERVAL);
   await updateStatus();
-  logger.info({ channelId: STATUS_CHANNEL_ID }, 'Status dashboard started');
+
+  // Usage cache refreshes every 5min (only on renderer)
+  if (isRenderer) {
+    setInterval(refreshUsageCache, USAGE_UPDATE_INTERVAL);
+  }
+
+  logger.info(
+    { channelId: STATUS_CHANNEL_ID, isRenderer, agentType: SERVICE_AGENT_TYPE },
+    isRenderer ? 'Unified dashboard started' : 'Status snapshot updater started',
+  );
 }
 
-let usageUpdateInProgress = false;
-
+// Legacy compat — now handled inside startStatusDashboard
 async function startUsageDashboard(): Promise<void> {
-  if (!STATUS_CHANNEL_ID) return;
-  // Only one service should show usage (set USAGE_DASHBOARD=true on that service)
-  if (process.env.USAGE_DASHBOARD !== 'true') return;
-
-  const statusJid = `dc:${STATUS_CHANNEL_ID}`;
-
-  const findDiscordChannel = () =>
-    channels.find((c) => c.name.startsWith('discord') && c.isConnected());
-
-  const updateUsage = async () => {
-    if (usageUpdateInProgress) return;
-    usageUpdateInProgress = true;
-
-    const ch = findDiscordChannel();
-    if (!ch) {
-      usageUpdateInProgress = false;
-      return;
-    }
-
-    try {
-      const content = await buildUsageContent();
-
-      if (usageMessageId && ch.editMessage) {
-        await ch.editMessage(statusJid, usageMessageId, content);
-      } else if (ch.sendAndTrack) {
-        const id = await ch.sendAndTrack(statusJid, content);
-        if (id) usageMessageId = id;
-      }
-    } catch (err) {
-      logger.debug({ err }, 'Usage dashboard update failed');
-      usageMessageId = null;
-    } finally {
-      usageUpdateInProgress = false;
-    }
-  };
-
-  setInterval(updateUsage, USAGE_UPDATE_INTERVAL);
-  await updateUsage();
-  logger.info('Usage dashboard started');
+  // Usage is now integrated into the unified dashboard
 }
 
 async function startMessageLoop(): Promise<void> {
@@ -893,12 +1264,25 @@ async function startMessageLoop(): Promise<void> {
           }
 
           const isMainGroup = group.isMain === true;
+          const processableGroupMessages = getProcessableMessages(
+            chatJid,
+            groupMessages,
+            channel,
+          );
+
+          if (processableGroupMessages.length === 0) {
+            const lastIgnored = groupMessages[groupMessages.length - 1];
+            if (lastIgnored) {
+              advanceLastAgentCursor(chatJid, lastIgnored.timestamp);
+            }
+            continue;
+          }
 
           // --- Bot-collaboration timeout ---
           // If all new messages are from bots, only process if a human
           // sent a message within the last 12 hours.
           const BOT_COLLAB_TIMEOUT_MS = 12 * 60 * 60 * 1000;
-          const allFromBots = groupMessages.every(
+          const allFromBots = processableGroupMessages.every(
             (m) => m.is_from_me || !!m.is_bot_message,
           );
           if (allFromBots) {
@@ -918,7 +1302,7 @@ async function startMessageLoop(): Promise<void> {
 
           // --- Session command interception (message loop) ---
           // Scan ALL messages in the batch for a session command.
-          const loopCmdMsg = groupMessages.find(
+          const loopCmdMsg = processableGroupMessages.find(
             (m) => extractSessionCommand(m.content, TRIGGER_PATTERN) !== null,
           );
 
@@ -950,7 +1334,7 @@ async function startMessageLoop(): Promise<void> {
           // context when a trigger eventually arrives.
           if (needsTrigger) {
             const allowlistCfg = loadSenderAllowlist();
-            const hasTrigger = groupMessages.some(
+            const hasTrigger = processableGroupMessages.some(
               (m) =>
                 TRIGGER_PATTERN.test(m.content.trim()) &&
                 (m.is_from_me ||
@@ -966,8 +1350,11 @@ async function startMessageLoop(): Promise<void> {
             lastAgentTimestamp[chatJid] || '',
             ASSISTANT_NAME,
           );
+          const processablePending = getProcessableMessages(chatJid, allPending, channel);
           const messagesToSend =
-            allPending.length > 0 ? allPending : groupMessages;
+            processablePending.length > 0
+              ? processablePending
+              : processableGroupMessages;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
@@ -975,9 +1362,10 @@ async function startMessageLoop(): Promise<void> {
               { chatJid, count: messagesToSend.length },
               'Piped messages to active agent',
             );
-            lastAgentTimestamp[chatJid] =
-              messagesToSend[messagesToSend.length - 1].timestamp;
-            saveState();
+            advanceLastAgentCursor(
+              chatJid,
+              messagesToSend[messagesToSend.length - 1].timestamp,
+            );
             // Show typing indicator while the agent processes the piped message
             channel
               .setTyping?.(chatJid, true)
@@ -1004,13 +1392,20 @@ async function startMessageLoop(): Promise<void> {
 function recoverPendingMessages(): void {
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
     const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-    const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+    const rawPending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+    const recoveryChannel = findChannel(channels, chatJid);
+    const pending = getProcessableMessages(chatJid, rawPending, recoveryChannel ?? undefined);
     if (pending.length > 0) {
       logger.info(
         { group: group.name, pendingCount: pending.length },
         'Recovery: found unprocessed messages',
       );
       queue.enqueueMessageCheck(chatJid, group.folder);
+    } else if (rawPending.length > 0) {
+      advanceLastAgentCursor(
+        chatJid,
+        rawPending[rawPending.length - 1].timestamp,
+      );
     }
   }
 }
@@ -1121,7 +1516,7 @@ async function main(): Promise<void> {
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
   // Purge old messages in status channel before creating fresh dashboards
-  if (STATUS_CHANNEL_ID) {
+  if (STATUS_CHANNEL_ID && SERVICE_AGENT_TYPE === 'claude-code') {
     const statusJid = `dc:${STATUS_CHANNEL_ID}`;
     const ch = channels.find(
       (c) => c.name.startsWith('discord') && c.isConnected() && c.purgeChannel,

@@ -10,6 +10,11 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import {
+  buildCiWatchPrompt,
+  DEFAULT_WATCH_CI_CONTEXT_MODE,
+  normalizeWatchCiIntervalSeconds,
+} from './watch-ci.js';
 
 const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -148,6 +153,90 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
     return {
       content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
+    };
+  },
+);
+
+server.tool(
+  'watch_ci',
+  'Schedule a background CI watcher that checks until a run or check reaches a terminal state, then sends one message and cancels itself.',
+  {
+    target: z
+      .string()
+      .describe(
+        'What to watch, for example "PR #123 checks" or "GitHub Actions run 987654321".',
+      ),
+    check_instructions: z
+      .string()
+      .describe(
+        'Exact steps or commands to check status and what details matter when it finishes.',
+      ),
+    poll_interval_seconds: z
+      .number()
+      .int()
+      .min(30)
+      .max(3600)
+      .default(60)
+      .describe('How often to poll in seconds. Default 60, minimum 30.'),
+    context_mode: z
+      .enum(['group', 'isolated'])
+      .default(DEFAULT_WATCH_CI_CONTEXT_MODE)
+      .describe(
+        'group=runs with chat history and memory, isolated=fresh session (include all context in check_instructions). Default: isolated.',
+      ),
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe(
+        '(Main group only) JID of the group to schedule the watcher for. Defaults to the current group.',
+      ),
+  },
+  async (args) => {
+    let pollSeconds: number;
+    try {
+      pollSeconds = normalizeWatchCiIntervalSeconds(args.poll_interval_seconds);
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: error instanceof Error ? error.message : String(error),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const targetJid =
+      isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const prompt = buildCiWatchPrompt({
+      taskId,
+      target: args.target,
+      checkInstructions: args.check_instructions,
+    });
+
+    const data = {
+      type: 'schedule_task',
+      taskId,
+      prompt,
+      schedule_type: 'interval' as const,
+      schedule_value: String(pollSeconds * 1000),
+      context_mode: args.context_mode || DEFAULT_WATCH_CI_CONTEXT_MODE,
+      targetJid,
+      createdBy: groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `CI watcher scheduled: ${taskId} (${pollSeconds}s)`,
+        },
+      ],
     };
   },
 );

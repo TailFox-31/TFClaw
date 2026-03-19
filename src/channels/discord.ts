@@ -17,6 +17,7 @@ import {
   DATA_DIR,
   TRIGGER_PATTERN,
 } from '../config.js';
+import { isPairedRoomJid } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 
@@ -158,6 +159,7 @@ import {
   AgentType,
   Channel,
   ChannelMeta,
+  NewMessage,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
@@ -202,11 +204,12 @@ export class DiscordChannel implements Channel {
     });
 
     this.client.on(Events.MessageCreate, async (message: Message) => {
-      // Ignore own messages only
-      if (message.author.id === this.client?.user?.id) return;
-
       const channelId = message.channelId;
       const chatJid = `dc:${channelId}`;
+      const isOwnBotMessage = message.author.id === this.client?.user?.id;
+      if (isOwnBotMessage) return;
+      if (message.author.bot && !isPairedRoomJid(chatJid)) return;
+
       let content = message.content;
       const timestamp = message.createdAt.toISOString();
       const senderName =
@@ -479,6 +482,10 @@ export class DiscordChannel implements Channel {
 
   isConnected(): boolean {
     return this.client !== null && this.client.isReady();
+  }
+
+  isOwnMessage(msg: NewMessage): boolean {
+    return !!msg.is_bot_message && msg.sender === this.client?.user?.id;
   }
 
   ownsJid(jid: string): boolean {

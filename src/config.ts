@@ -10,6 +10,7 @@ const envConfig = readEnvFile([
   'SERVICE_ID',
   'SERVICE_AGENT_TYPE',
   'SESSION_COMMAND_ALLOWED_SENDERS',
+  'SESSION_COMMAND_USER_IDS',
   'USAGE_DASHBOARD',
 ]);
 
@@ -89,12 +90,15 @@ export const USAGE_DASHBOARD_ENABLED =
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+const rawSessionCommandAllowedSenders =
+  process.env.SESSION_COMMAND_ALLOWED_SENDERS ||
+  process.env.SESSION_COMMAND_USER_IDS ||
+  envConfig.SESSION_COMMAND_ALLOWED_SENDERS ||
+  envConfig.SESSION_COMMAND_USER_IDS ||
+  '';
+
 const SESSION_COMMAND_ALLOWED_SENDERS = new Set(
-  (
-    process.env.SESSION_COMMAND_ALLOWED_SENDERS ||
-    envConfig.SESSION_COMMAND_ALLOWED_SENDERS ||
-    ''
-  )
+  rawSessionCommandAllowedSenders
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean),
