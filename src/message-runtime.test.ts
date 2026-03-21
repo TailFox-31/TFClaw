@@ -858,7 +858,9 @@ describe('createMessageRuntime', () => {
       },
     ]);
 
-    vi.mocked(channel.sendAndTrack!).mockResolvedValueOnce('progress-follow-up');
+    vi.mocked(channel.sendAndTrack!).mockResolvedValueOnce(
+      'progress-follow-up',
+    );
 
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {

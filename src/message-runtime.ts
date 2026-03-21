@@ -625,7 +625,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         },
         'Promoting last progress output to final message after agent completion',
       );
-      await channel.sendMessage(chatJid, latestModelProgressTextForFinalFallback);
+      await channel.sendMessage(
+        chatJid,
+        latestModelProgressTextForFinalFallback,
+      );
       finalOutputSentToUser = true;
       latestModelProgressTextForFinalFallback = null;
     }
