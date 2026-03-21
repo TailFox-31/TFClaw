@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
+import fs from 'fs';
+import { spawn } from 'child_process';
 
 // Sentinel markers must match agent-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -250,6 +252,50 @@ describe('agent-runner timeout behavior', () => {
         result: '최종 답변',
         phase: 'final',
       }),
+    );
+  });
+
+  it('passes the actual chat JID into codex runner MCP env', async () => {
+    vi.useRealTimers();
+    fakeProc = createFakeProcess();
+
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const str = String(p);
+      return (
+        str.includes('dist/index.js') ||
+        str.includes('dist/ipc-mcp-stdio.js') ||
+        str.endsWith('/.codex/config.toml')
+      );
+    });
+
+    const codexGroup: RegisteredGroup = {
+      ...testGroup,
+      agentType: 'codex',
+    };
+
+    const resultPromise = runAgentProcess(
+      codexGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+
+    const spawnEnv = vi.mocked(spawn).mock.calls[0]?.[2]?.env as
+      | Record<string, string>
+      | undefined;
+    expect(spawnEnv?.NANOCLAW_CHAT_JID).toBe(testInput.chatJid);
+
+    const tomlWrite = vi
+      .mocked(fs.writeFileSync)
+      .mock.calls.find((call) =>
+        String(call[0]).endsWith('/.codex/config.toml'),
+      );
+    expect(String(tomlWrite?.[1])).toContain(
+      `NANOCLAW_CHAT_JID = ${JSON.stringify(testInput.chatJid)}`,
     );
   });
 

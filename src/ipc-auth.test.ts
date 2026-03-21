@@ -167,6 +167,26 @@ describe('schedule_task authorization', () => {
     const allTasks = getAllTasks();
     expect(allTasks.length).toBe(0);
   });
+
+  it('accepts a target folder name and resolves it to the registered JID', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'folder-based target',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00',
+        targetJid: 'other-group',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    const allTasks = getAllTasks();
+    expect(allTasks).toHaveLength(1);
+    expect(allTasks[0].group_folder).toBe('other-group');
+    expect(allTasks[0].chat_jid).toBe('other@g.us');
+  });
 });
 
 // --- pause_task authorization ---

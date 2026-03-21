@@ -192,7 +192,11 @@ export async function processTaskIpc(
       ) {
         // Resolve the target group from JID
         const targetJid = data.targetJid as string;
-        const targetGroupEntry = registeredGroups[targetJid];
+        const targetGroupEntry =
+          registeredGroups[targetJid] ||
+          Object.values(registeredGroups).find(
+            (group) => group.folder === targetJid,
+          );
 
         if (!targetGroupEntry) {
           logger.warn(
@@ -203,6 +207,20 @@ export async function processTaskIpc(
         }
 
         const targetFolder = targetGroupEntry.folder;
+        const resolvedTargetJid =
+          registeredGroups[targetJid] !== undefined
+            ? targetJid
+            : Object.entries(registeredGroups).find(
+                ([, group]) => group.folder === targetFolder,
+              )?.[0];
+
+        if (!resolvedTargetJid) {
+          logger.warn(
+            { targetJid, targetFolder },
+            'Cannot resolve scheduled task target JID from folder',
+          );
+          break;
+        }
 
         // Authorization: non-main groups can only schedule for themselves
         if (!isMain && targetFolder !== sourceGroup) {
@@ -261,7 +279,7 @@ export async function processTaskIpc(
         createTask({
           id: taskId,
           group_folder: targetFolder,
-          chat_jid: targetJid,
+          chat_jid: resolvedTargetJid,
           agent_type: targetGroupEntry.agentType || SERVICE_AGENT_TYPE,
           prompt: data.prompt,
           schedule_type: scheduleType,

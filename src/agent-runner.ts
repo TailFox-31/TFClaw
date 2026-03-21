@@ -203,7 +203,7 @@ function prepareGroupEnvironment(
     // Working directory override (agent uses this as cwd instead of group dir)
     ...(group.workDir ? { NANOCLAW_WORK_DIR: group.workDir } : {}),
     // MCP server context
-    NANOCLAW_CHAT_JID: group.folder,
+    NANOCLAW_CHAT_JID: chatJid,
     NANOCLAW_GROUP_FOLDER: group.folder,
     NANOCLAW_IS_MAIN: isMain ? '1' : '0',
     NANOCLAW_AGENT_TYPE: agentType,
@@ -312,7 +312,7 @@ args = [${JSON.stringify(mcpServerPath)}]
 
 [mcp_servers.nanoclaw.env]
 NANOCLAW_IPC_DIR = ${JSON.stringify(env.NANOCLAW_IPC_DIR)}
-NANOCLAW_CHAT_JID = ${JSON.stringify(group.folder)}
+NANOCLAW_CHAT_JID = ${JSON.stringify(chatJid)}
 NANOCLAW_GROUP_FOLDER = ${JSON.stringify(group.folder)}
 NANOCLAW_IS_MAIN = ${JSON.stringify(isMain ? '1' : '0')}
 NANOCLAW_AGENT_TYPE = ${JSON.stringify(env.NANOCLAW_AGENT_TYPE)}
