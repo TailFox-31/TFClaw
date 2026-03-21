@@ -252,4 +252,54 @@ describe('agent-runner timeout behavior', () => {
       }),
     );
   });
+
+  it('waits for queued streamed output before resolving an error exit', async () => {
+    let releaseOutputs: (() => void) | undefined;
+    const outputsFlushed = new Promise<void>((resolve) => {
+      releaseOutputs = resolve;
+    });
+    const onOutput = vi.fn(async () => {
+      await outputsFlushed;
+    });
+    const resultPromise = runAgentProcess(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'error',
+      result: null,
+      error: 'No conversation found with session ID: stale',
+    });
+    emitOutputMarker(fakeProc, {
+      status: 'error',
+      result: null,
+      error: 'Claude Code process exited with code 1',
+      newSessionId: 'stale-session',
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 1);
+
+    let settled = false;
+    resultPromise.then(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(settled).toBe(false);
+
+    releaseOutputs?.();
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+    expect(onOutput).toHaveBeenCalledTimes(2);
+    expect(onOutput).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ newSessionId: 'stale-session' }),
+    );
+  });
 });

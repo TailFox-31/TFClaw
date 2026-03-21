@@ -298,6 +298,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let progressTicker: ReturnType<typeof setInterval> | null = null;
   let finalOutputSentToUser = false;
   let progressOutputSentToUser = false;
+  let latestModelProgressTextForFinalFallback: string | null = null;
+  let sawNonProgressOutput = false;
   let poisonedSessionDetected = false;
   const isClaudeCodeAgent =
     (group.agentType || 'claude-code') === 'claude-code';
@@ -307,6 +309,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       clearInterval(progressTicker);
       progressTicker = null;
     }
+  };
+
+  const resetProgressState = () => {
+    clearProgressTicker();
+    latestProgressText = null;
+    latestProgressRendered = null;
+    progressMessageId = null;
+    progressStartedAt = null;
   };
 
   const renderProgressMessage = (text: string) => {
@@ -356,8 +366,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
 
   const finalizeProgressMessage = async () => {
+    logger.info(
+      { group: group.name, chatJid, progressMessageId, latestProgressText },
+      'Finalizing tracked progress message',
+    );
     await syncTrackedProgressMessage();
-    clearProgressTicker();
+    resetProgressState();
   };
 
   const sendProgressMessage = async (text: string) => {
@@ -365,6 +379,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return;
     }
 
+    latestModelProgressTextForFinalFallback = text;
     latestProgressText = text;
     if (progressStartedAt === null) {
       progressStartedAt = Date.now();
@@ -372,6 +387,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const rendered = renderProgressMessage(text);
 
     if (progressMessageId && channel.editMessage) {
+      logger.info(
+        { group: group.name, chatJid, progressMessageId, text },
+        'Updating tracked progress message',
+      );
       await syncTrackedProgressMessage();
       progressOutputSentToUser = true;
       return;
@@ -383,6 +402,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     progressMessageId = await channel.sendAndTrack(chatJid, rendered);
     if (progressMessageId) {
+      logger.info(
+        { group: group.name, chatJid, progressMessageId, text },
+        'Created tracked progress message',
+      );
       latestProgressRendered = rendered;
       ensureProgressTicker();
       progressOutputSentToUser = true;
@@ -413,17 +436,41 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ? result.result
           : JSON.stringify(result.result);
       const text = formatOutbound(raw);
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
+      logger.info(
+        {
+          group: group.name,
+          chatJid,
+          resultStatus: result.status,
+          resultPhase: result.phase,
+          progressMessageId,
+        },
+        `Agent output: ${raw.slice(0, 200)}`,
+      );
       if (result.phase === 'progress') {
         if (text) {
           await sendProgressMessage(text);
         }
         return;
       }
+      sawNonProgressOutput = true;
       if (text) {
         await finalizeProgressMessage();
         await channel.sendMessage(chatJid, text);
         finalOutputSentToUser = true;
+        latestModelProgressTextForFinalFallback = null;
+      } else {
+        logger.info(
+          {
+            group: group.name,
+            chatJid,
+            resultStatus: result.status,
+            resultPhase: result.phase,
+            progressMessageId,
+          },
+          'Agent output became empty after formatting; resetting tracked progress state',
+        );
+        await finalizeProgressMessage();
+        latestModelProgressTextForFinalFallback = null;
       }
     } else {
       await finalizeProgressMessage();
@@ -448,6 +495,22 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (output === 'error') {
     hadError = true;
+  }
+
+  if (
+    output === 'success' &&
+    !hadError &&
+    !finalOutputSentToUser &&
+    !sawNonProgressOutput &&
+    latestModelProgressTextForFinalFallback
+  ) {
+    logger.info(
+      { group: group.name, chatJid },
+      'Promoting last progress output to final message after agent completion',
+    );
+    await channel.sendMessage(chatJid, latestModelProgressTextForFinalFallback);
+    finalOutputSentToUser = true;
+    latestModelProgressTextForFinalFallback = null;
   }
 
   clearProgressTicker();

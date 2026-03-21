@@ -337,6 +337,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     let hadError = false;
     let finalOutputSentToUser = false;
     let progressOutputSentToUser = false;
+    let latestModelProgressTextForFinalFallback: string | null = null;
+    let sawNonProgressOutput = false;
     let poisonedSessionDetected = false;
     const isClaudeCodeAgent =
       (group.agentType || 'claude-code') === 'claude-code';
@@ -346,6 +348,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         clearInterval(progressTicker);
         progressTicker = null;
       }
+    };
+
+    const resetTurnOutputState = () => {
+      finalOutputSentToUser = false;
+      progressOutputSentToUser = false;
+      latestModelProgressTextForFinalFallback = null;
+      sawNonProgressOutput = false;
     };
 
     const resetProgressState = () => {
@@ -404,6 +413,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     };
 
     const finalizeProgressMessage = async () => {
+      logger.info(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          progressMessageId,
+          latestProgressText,
+        },
+        'Finalizing tracked progress message',
+      );
       await syncTrackedProgressMessage();
       resetProgressState();
     };
@@ -414,12 +434,29 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       }
 
       if (progressStartedAt === null) {
+        // A fresh progress cycle after a prior final in the same active agent
+        // session represents a new logical turn (follow-up IPC message). Reset
+        // turn-scoped output flags so progress-only completion can still be
+        // promoted to a final message.
+        resetTurnOutputState();
         progressStartedAt = Date.now();
       }
+      latestModelProgressTextForFinalFallback = text;
       latestProgressText = text;
       const rendered = renderProgressMessage(text);
 
       if (progressMessageId && channel.editMessage) {
+        logger.info(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            progressMessageId,
+            text,
+          },
+          'Updating tracked progress message',
+        );
         await syncTrackedProgressMessage();
         progressOutputSentToUser = true;
         return;
@@ -428,6 +465,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       if (channel.sendAndTrack) {
         progressMessageId = await channel.sendAndTrack(chatJid, rendered);
         if (progressMessageId) {
+          logger.info(
+            {
+              chatJid,
+              group: group.name,
+              groupFolder: group.folder,
+              runId,
+              progressMessageId,
+              text,
+            },
+            'Created tracked progress message',
+          );
           latestProgressRendered = rendered;
           ensureProgressTicker();
           progressOutputSentToUser = true;
@@ -479,20 +527,61 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               groupFolder: group.folder,
               runId,
               resultStatus: result.status,
+              resultPhase: result.phase,
+              progressMessageId,
             },
             `Agent output: ${raw.slice(0, 200)}`,
           );
           if (result.phase === 'progress') {
+            // Detect new logical turn (follow-up IPC): if a final was already
+            // sent in this run, a new progress output means a follow-up turn
+            // has started.  Reset turn-level state so the promotion logic at
+            // end-of-run works correctly for the new turn.
+            if (finalOutputSentToUser || sawNonProgressOutput) {
+              logger.info(
+                {
+                  chatJid,
+                  group: group.name,
+                  groupFolder: group.folder,
+                  runId,
+                },
+                'New logical turn detected (follow-up), resetting turn state',
+              );
+              finalOutputSentToUser = false;
+              sawNonProgressOutput = false;
+              progressOutputSentToUser = false;
+              latestModelProgressTextForFinalFallback = null;
+              resetProgressState();
+              await channel.setTyping?.(chatJid, true);
+            }
             if (text) {
               await sendProgressMessage(text);
             }
             return;
           }
 
+          sawNonProgressOutput = true;
+
           if (text) {
             await finalizeProgressMessage();
             await channel.sendMessage(chatJid, text);
             finalOutputSentToUser = true;
+            latestModelProgressTextForFinalFallback = null;
+          } else {
+            logger.info(
+              {
+                chatJid,
+                group: group.name,
+                groupFolder: group.folder,
+                runId,
+                resultStatus: result.status,
+                resultPhase: result.phase,
+                progressMessageId,
+              },
+              'Agent output became empty after formatting; resetting tracked progress state',
+            );
+            await finalizeProgressMessage();
+            latestModelProgressTextForFinalFallback = null;
           }
         } else {
           await finalizeProgressMessage();
@@ -518,6 +607,27 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     if (output === 'error') {
       hadError = true;
+    }
+
+    if (
+      output === 'success' &&
+      !hadError &&
+      !finalOutputSentToUser &&
+      !sawNonProgressOutput &&
+      latestModelProgressTextForFinalFallback
+    ) {
+      logger.info(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+        },
+        'Promoting last progress output to final message after agent completion',
+      );
+      await channel.sendMessage(chatJid, latestModelProgressTextForFinalFallback);
+      finalOutputSentToUser = true;
+      latestModelProgressTextForFinalFallback = null;
     }
 
     clearProgressTicker();

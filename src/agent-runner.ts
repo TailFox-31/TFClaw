@@ -681,10 +681,15 @@ export async function runAgentProcess(
           },
           'Agent exited with error',
         );
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Agent exited with code ${code}: ${stderr.slice(-200)}`,
+        // Wait for any queued streamed-output handlers to finish so a late
+        // newSessionId cannot be persisted after the caller clears a poisoned
+        // session.
+        outputChain.then(() => {
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Agent exited with code ${code}: ${stderr.slice(-200)}`,
+          });
         });
         return;
       }
