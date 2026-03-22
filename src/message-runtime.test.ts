@@ -31,76 +31,78 @@ vi.mock('./db.js', () => {
   const withSeqs = (messages: Array<Record<string, unknown>>) =>
     messages.map((message, index) => ({
       ...message,
-      seq:
-        typeof message.seq === 'number'
-          ? message.seq
-          : index + 1,
+      seq: typeof message.seq === 'number' ? message.seq : index + 1,
     }));
 
   return {
-  getAllChats: vi.fn(() => []),
-  getAllTasks: vi.fn(() => []),
-  getLastHumanMessageTimestamp: vi.fn(() => null),
-  getMessagesSince,
-  getNewMessages,
-  getLatestMessageSeqAtOrBefore: vi.fn(() => 0),
-  getMessagesSinceSeq: vi.fn(
-    (
-      chatJid: string,
-      sinceSeqCursor: string,
-      botPrefix: string,
-      limit?: number,
-    ) => withSeqs(getMessagesSince(chatJid, sinceSeqCursor, botPrefix, limit)),
-  ),
-  getNewMessagesBySeq: vi.fn(
-    (
-      jids: string[],
-      lastSeqCursor: string,
-      botPrefix: string,
-      limit?: number,
-    ) => {
-      const result:
-        | {
-            messages?: Array<Record<string, unknown>>;
-            newSeqCursor?: string;
-            newTimestamp?: string;
-          }
-        | undefined =
-        getNewMessages(jids, lastSeqCursor, botPrefix, limit) || {
-        messages: [],
-        newSeqCursor: '0',
-      };
-      const messages = withSeqs(result.messages || []);
-      const lastSeq =
-        messages.length > 0
-          ? String(messages[messages.length - 1].seq)
-          : String(lastSeqCursor || '0');
-      return {
-        messages,
-        newSeqCursor: result.newSeqCursor || result.newTimestamp || lastSeq,
-      };
-    },
-  ),
-  getOpenWorkItem: vi.fn(() => undefined),
-  createProducedWorkItem: vi.fn((input) => ({
-    id: 1,
-    group_folder: input.group_folder,
-    chat_jid: input.chat_jid,
-    agent_type: input.agent_type || 'claude-code',
-    status: 'produced',
-    start_seq: input.start_seq,
-    end_seq: input.end_seq,
-    result_payload: input.result_payload,
-    delivery_attempts: 0,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    delivered_at: null,
-    delivery_message_id: null,
-    last_error: null,
-  })),
-  markWorkItemDelivered: vi.fn(),
-  markWorkItemDeliveryRetry: vi.fn(),
-  isPairedRoomJid: vi.fn(() => false),
+    getAllChats: vi.fn(() => []),
+    getAllTasks: vi.fn(() => []),
+    getLastHumanMessageTimestamp: vi.fn(() => null),
+    getMessagesSince,
+    getNewMessages,
+    getLatestMessageSeqAtOrBefore: vi.fn(() => 0),
+    getMessagesSinceSeq: vi.fn(
+      (
+        chatJid: string,
+        sinceSeqCursor: string,
+        botPrefix: string,
+        limit?: number,
+      ) =>
+        withSeqs(getMessagesSince(chatJid, sinceSeqCursor, botPrefix, limit)),
+    ),
+    getNewMessagesBySeq: vi.fn(
+      (
+        jids: string[],
+        lastSeqCursor: string,
+        botPrefix: string,
+        limit?: number,
+      ) => {
+        const result:
+          | {
+              messages?: Array<Record<string, unknown>>;
+              newSeqCursor?: string;
+              newTimestamp?: string;
+            }
+          | undefined = getNewMessages(
+          jids,
+          lastSeqCursor,
+          botPrefix,
+          limit,
+        ) || {
+          messages: [],
+          newSeqCursor: '0',
+        };
+        const messages = withSeqs(result.messages || []);
+        const lastSeq =
+          messages.length > 0
+            ? String(messages[messages.length - 1].seq)
+            : String(lastSeqCursor || '0');
+        return {
+          messages,
+          newSeqCursor: result.newSeqCursor || result.newTimestamp || lastSeq,
+        };
+      },
+    ),
+    getOpenWorkItem: vi.fn(() => undefined),
+    createProducedWorkItem: vi.fn((input) => ({
+      id: 1,
+      group_folder: input.group_folder,
+      chat_jid: input.chat_jid,
+      agent_type: input.agent_type || 'claude-code',
+      status: 'produced',
+      start_seq: input.start_seq,
+      end_seq: input.end_seq,
+      result_payload: input.result_payload,
+      delivery_attempts: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: null,
+    })),
+    markWorkItemDelivered: vi.fn(),
+    markWorkItemDeliveryRetry: vi.fn(),
+    isPairedRoomJid: vi.fn(() => false),
   };
 });
 

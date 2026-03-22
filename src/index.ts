@@ -22,9 +22,7 @@ import {
   getChannelFactory,
   getRegisteredChannelNames,
 } from './channels/registry.js';
-import {
-  writeGroupsSnapshot,
-} from './agent-runner.js';
+import { writeGroupsSnapshot } from './agent-runner.js';
 import {
   getAllChats,
   getAllRegisteredGroups,

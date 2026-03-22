@@ -1096,7 +1096,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     if (idleTimer) clearTimeout(idleTimer);
     clearPendingFollowUpDiagnostics();
-      deps.queue.setActivityTouch?.(chatJid, null);
+    deps.queue.setActivityTouch?.(chatJid, null);
 
     if (hadError) {
       if (
