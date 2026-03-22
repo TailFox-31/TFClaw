@@ -364,8 +364,7 @@ describe('agent-runner timeout behavior', () => {
   it('merges a per-group codex config overlay before injecting managed MCP servers', async () => {
     vi.useRealTimers();
     fakeProc = createFakeProcess();
-    const overlayPath =
-      '/tmp/ejclaw-test-groups/test-group/.codex/config.toml';
+    const overlayPath = '/tmp/ejclaw-test-groups/test-group/.codex/config.toml';
     const sessionConfigPath =
       '/tmp/ejclaw-test-data/sessions/test-group/.codex/config.toml';
     let sessionToml = `model = "gpt-5.4"\n`;
