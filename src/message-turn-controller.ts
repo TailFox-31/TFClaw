@@ -1,0 +1,428 @@
+import { type AgentOutput } from './agent-runner.js';
+import { logger } from './logger.js';
+import { formatOutbound } from './router.js';
+import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import { type Channel, type RegisteredGroup } from './types.js';
+
+export type VisiblePhase = 'silent' | 'progress' | 'final';
+
+interface MessageTurnControllerOptions {
+  chatJid: string;
+  group: RegisteredGroup;
+  runId: string;
+  channel: Channel;
+  idleTimeout: number;
+  failureFinalText: string;
+  isClaudeCodeAgent: boolean;
+  clearSession: () => void;
+  requestClose: (reason: string) => void;
+  deliverFinalText: (text: string) => Promise<boolean>;
+}
+
+export class MessageTurnController {
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private visiblePhase: VisiblePhase = 'silent';
+  private hadError = false;
+  private producedDeliverySucceeded = true;
+  private latestProgressText: string | null = null;
+  private latestProgressRendered: string | null = null;
+  private progressMessageId: string | null = null;
+  private progressStartedAt: number | null = null;
+  private progressTicker: ReturnType<typeof setInterval> | null = null;
+  private progressEditFailCount = 0;
+  private latestProgressTextForFinal: string | null = null;
+  private poisonedSessionDetected = false;
+  private closeRequested = false;
+
+  constructor(private readonly options: MessageTurnControllerOptions) {}
+
+  async start(): Promise<void> {
+    this.resetIdleTimer();
+    await this.options.channel.setTyping?.(this.options.chatJid, true);
+  }
+
+  async handleOutput(result: AgentOutput): Promise<void> {
+    if (this.terminalObserved()) {
+      logger.info(
+        {
+          chatJid: this.options.chatJid,
+          group: this.options.group.name,
+          groupFolder: this.options.group.folder,
+          runId: this.options.runId,
+          resultStatus: result.status,
+          resultPhase: result.phase,
+        },
+        'Discarding late agent output after terminal final',
+      );
+      return;
+    }
+
+    if (
+      this.options.isClaudeCodeAgent &&
+      shouldResetSessionOnAgentFailure(result) &&
+      !this.poisonedSessionDetected
+    ) {
+      this.poisonedSessionDetected = true;
+      this.hadError = true;
+      this.options.clearSession();
+      this.requestAgentClose('poisoned-session-detected');
+      logger.warn(
+        {
+          chatJid: this.options.chatJid,
+          group: this.options.group.name,
+          groupFolder: this.options.group.folder,
+          runId: this.options.runId,
+        },
+        'Detected poisoned Claude session from streamed output, forcing close',
+      );
+    }
+
+    const raw =
+      result.result === null || result.result === undefined
+        ? null
+        : typeof result.result === 'string'
+          ? result.result
+          : JSON.stringify(result.result);
+    const text = raw ? formatOutbound(raw) : null;
+
+    if (raw) {
+      logger.info(
+        {
+          chatJid: this.options.chatJid,
+          group: this.options.group.name,
+          groupFolder: this.options.group.folder,
+          runId: this.options.runId,
+          resultStatus: result.status,
+          resultPhase: result.phase,
+          progressMessageId: this.progressMessageId,
+        },
+        `Agent output: ${raw.slice(0, 200)}`,
+      );
+    }
+
+    if (result.phase === 'progress') {
+      if (text) {
+        await this.sendProgressMessage(text);
+      }
+      if (!this.poisonedSessionDetected) {
+        this.resetIdleTimer();
+      }
+      if (result.status === 'error') {
+        this.hadError = true;
+      }
+      return;
+    }
+
+    if (text) {
+      await this.finalizeProgressMessage();
+      await this.deliverFinalText(text);
+    } else if (raw) {
+      logger.info(
+        {
+          chatJid: this.options.chatJid,
+          group: this.options.group.name,
+          groupFolder: this.options.group.folder,
+          runId: this.options.runId,
+          resultStatus: result.status,
+          resultPhase: result.phase,
+          progressMessageId: this.progressMessageId,
+        },
+        'Agent output became empty after formatting; resetting tracked progress state',
+      );
+      await this.finalizeProgressMessage();
+      this.latestProgressTextForFinal = null;
+    } else {
+      await this.finalizeProgressMessage();
+    }
+
+    await this.options.channel.setTyping?.(this.options.chatJid, false);
+    if (result.status === 'success' && !this.poisonedSessionDetected) {
+      this.requestAgentClose('output-delivered-close');
+    }
+
+    if (result.status === 'error') {
+      this.hadError = true;
+    }
+  }
+
+  async finish(outputStatus: 'success' | 'error'): Promise<{
+    deliverySucceeded: boolean;
+    visiblePhase: VisiblePhase;
+  }> {
+    await this.options.channel.setTyping?.(this.options.chatJid, false);
+
+    if (outputStatus === 'error') {
+      this.hadError = true;
+    }
+
+    if (
+      outputStatus === 'success' &&
+      this.visiblePhase === 'progress' &&
+      !this.hadError &&
+      this.latestProgressTextForFinal
+    ) {
+      logger.info(
+        {
+          chatJid: this.options.chatJid,
+          group: this.options.group.name,
+          groupFolder: this.options.group.folder,
+          runId: this.options.runId,
+        },
+        'Sending a separate final message from the last progress output after agent completion',
+      );
+      await this.finalizeProgressMessage();
+      await this.deliverFinalText(this.latestProgressTextForFinal);
+    } else if (
+      this.visiblePhase === 'progress' &&
+      !this.terminalObserved() &&
+      this.hadError
+    ) {
+      await this.publishFailureFinal();
+    }
+
+    this.clearProgressTicker();
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+
+    return {
+      deliverySucceeded: this.producedDeliverySucceeded,
+      visiblePhase: this.visiblePhase,
+    };
+  }
+
+  private hasVisibleOutput(): boolean {
+    return this.visiblePhase !== 'silent';
+  }
+
+  private terminalObserved(): boolean {
+    return this.visiblePhase === 'final';
+  }
+
+  private renderProgressMessage(text: string): string {
+    const elapsedSeconds =
+      this.progressStartedAt === null
+        ? 0
+        : Math.floor((Date.now() - this.progressStartedAt) / 10_000) * 10;
+    const hours = Math.floor(elapsedSeconds / 3600);
+    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+    const seconds = elapsedSeconds % 60;
+    const elapsedParts: string[] = [];
+
+    if (hours > 0) elapsedParts.push(`${hours}시간`);
+    if (minutes > 0) elapsedParts.push(`${minutes}분`);
+    elapsedParts.push(`${seconds}초`);
+
+    return `${text}\n\n${elapsedParts.join(' ')}`;
+  }
+
+  private clearProgressTicker(): void {
+    if (!this.progressTicker) return;
+    clearInterval(this.progressTicker);
+    this.progressTicker = null;
+  }
+
+  private resetProgressState(): void {
+    this.clearProgressTicker();
+    this.latestProgressText = null;
+    this.latestProgressRendered = null;
+    this.progressMessageId = null;
+    this.progressStartedAt = null;
+    this.progressEditFailCount = 0;
+  }
+
+  private async syncTrackedProgressMessage(): Promise<void> {
+    if (
+      !this.progressMessageId ||
+      !this.options.channel.editMessage ||
+      !this.latestProgressText
+    ) {
+      return;
+    }
+
+    const rendered = this.renderProgressMessage(this.latestProgressText);
+    if (rendered === this.latestProgressRendered) {
+      return;
+    }
+
+    try {
+      await this.options.channel.editMessage(
+        this.options.chatJid,
+        this.progressMessageId,
+        rendered,
+      );
+      this.latestProgressRendered = rendered;
+      this.progressEditFailCount = 0;
+    } catch (err) {
+      this.progressEditFailCount++;
+      logger.warn(
+        {
+          chatJid: this.options.chatJid,
+          group: this.options.group.name,
+          groupFolder: this.options.group.folder,
+          runId: this.options.runId,
+          progressMessageId: this.progressMessageId,
+          progressEditFailCount: this.progressEditFailCount,
+          err,
+        },
+        'Failed to edit tracked progress message; will retry before recreating',
+      );
+      this.latestProgressRendered = null;
+      if (this.progressEditFailCount >= 3) {
+        this.clearProgressTicker();
+      }
+    }
+  }
+
+  private ensureProgressTicker(): void {
+    if (
+      !this.progressMessageId ||
+      !this.options.channel.editMessage ||
+      this.progressTicker
+    ) {
+      return;
+    }
+
+    this.progressTicker = setInterval(() => {
+      void this.syncTrackedProgressMessage();
+    }, 10_000);
+  }
+
+  private async finalizeProgressMessage(): Promise<void> {
+    logger.info(
+      {
+        chatJid: this.options.chatJid,
+        group: this.options.group.name,
+        groupFolder: this.options.group.folder,
+        runId: this.options.runId,
+        progressMessageId: this.progressMessageId,
+        latestProgressText: this.latestProgressText,
+      },
+      'Finalizing tracked progress message',
+    );
+    await this.syncTrackedProgressMessage();
+    this.resetProgressState();
+  }
+
+  private async deliverFinalText(text: string): Promise<void> {
+    this.visiblePhase = 'final';
+    const delivered = await this.options.deliverFinalText(text);
+    if (!delivered) {
+      this.producedDeliverySucceeded = false;
+    }
+    this.latestProgressTextForFinal = null;
+  }
+
+  private async publishFailureFinal(): Promise<void> {
+    if (this.terminalObserved()) {
+      return;
+    }
+    await this.finalizeProgressMessage();
+    await this.deliverFinalText(this.options.failureFinalText);
+  }
+
+  private requestAgentClose(reason: string): void {
+    if (this.closeRequested) return;
+    this.closeRequested = true;
+    this.options.requestClose(reason);
+  }
+
+  private async sendProgressMessage(text: string): Promise<void> {
+    if (!text || (text === this.latestProgressText && this.progressMessageId)) {
+      return;
+    }
+
+    if (this.progressStartedAt === null) {
+      this.progressStartedAt = Date.now();
+    }
+    this.latestProgressTextForFinal = text;
+    this.latestProgressText = text;
+    const rendered = this.renderProgressMessage(text);
+
+    if (this.progressMessageId && this.options.channel.editMessage) {
+      logger.info(
+        {
+          chatJid: this.options.chatJid,
+          group: this.options.group.name,
+          groupFolder: this.options.group.folder,
+          runId: this.options.runId,
+          progressMessageId: this.progressMessageId,
+          text,
+        },
+        'Updating tracked progress message',
+      );
+      await this.syncTrackedProgressMessage();
+      this.visiblePhase = 'progress';
+      return;
+    }
+
+    if (!this.options.channel.sendAndTrack) {
+      this.latestProgressRendered = rendered;
+      await this.options.channel.sendMessage(this.options.chatJid, rendered);
+      this.visiblePhase = 'progress';
+      return;
+    }
+
+    try {
+      this.progressMessageId = await this.options.channel.sendAndTrack(
+        this.options.chatJid,
+        rendered,
+      );
+    } catch (err) {
+      logger.warn(
+        {
+          chatJid: this.options.chatJid,
+          group: this.options.group.name,
+          groupFolder: this.options.group.folder,
+          runId: this.options.runId,
+          err,
+        },
+        'Failed to send tracked progress message',
+      );
+      this.latestProgressRendered = rendered;
+      await this.options.channel.sendMessage(this.options.chatJid, rendered);
+      this.visiblePhase = 'progress';
+      return;
+    }
+
+    if (this.progressMessageId) {
+      logger.info(
+        {
+          chatJid: this.options.chatJid,
+          group: this.options.group.name,
+          groupFolder: this.options.group.folder,
+          runId: this.options.runId,
+          progressMessageId: this.progressMessageId,
+          text,
+        },
+        'Created tracked progress message',
+      );
+      this.latestProgressRendered = rendered;
+      this.ensureProgressTicker();
+      this.visiblePhase = 'progress';
+      return;
+    }
+
+    this.latestProgressRendered = rendered;
+    await this.options.channel.sendMessage(this.options.chatJid, rendered);
+    this.visiblePhase = 'progress';
+  }
+
+  private resetIdleTimer(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    if (this.hasVisibleOutput()) {
+      this.idleTimer = null;
+      return;
+    }
+
+    this.idleTimer = setTimeout(() => {
+      logger.debug(
+        {
+          group: this.options.group.name,
+          chatJid: this.options.chatJid,
+          runId: this.options.runId,
+        },
+        'Idle timeout, closing agent stdin',
+      );
+      this.requestAgentClose('idle-timeout');
+    }, this.options.idleTimeout);
+  }
+}

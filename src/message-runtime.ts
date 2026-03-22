@@ -8,20 +8,16 @@ import {
 import {
   getAllChats,
   getAllTasks,
-  getLastHumanMessageTimestamp,
-  getLatestMessageSeqAtOrBefore,
   getMessagesSinceSeq,
   getNewMessagesBySeq,
   getOpenWorkItem,
   createProducedWorkItem,
   markWorkItemDelivered,
   markWorkItemDeliveryRetry,
-  isPairedRoomJid,
   type WorkItem,
 } from './db.js';
 import { DATA_DIR, isSessionCommandSenderAllowed } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
-import { filterProcessableMessages } from './bot-message-filter.js';
 import {
   detectFallbackTrigger,
   getActiveProvider,
@@ -31,8 +27,17 @@ import {
   isFallbackEnabled,
   markPrimaryCooldown,
 } from './provider-fallback.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { findChannel, formatMessages } from './router.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
+import {
+  advanceLastAgentCursor,
+  createImplicitContinuationTracker,
+  filterLoopingPairedBotMessages,
+  getProcessableMessages,
+  hasAllowedTrigger,
+  shouldSkipBotOnlyCollaboration,
+} from './message-runtime-rules.js';
+import { MessageTurnController } from './message-turn-controller.js';
 import {
   extractSessionCommand,
   handleSessionCommand,
@@ -87,116 +92,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   startMessageLoop: () => Promise<void>;
 } {
   let messageLoopRunning = false;
-  const implicitContinuationUntil = new Map<string, number>();
-  const BOT_COLLABORATION_WINDOW_MS = 12 * 60 * 60 * 1000;
   const FAILURE_FINAL_TEXT = '요청을 완료하지 못했습니다. 다시 시도해 주세요.';
+  const continuationTracker = createImplicitContinuationTracker(
+    deps.idleTimeout,
+  );
 
   const getCurrentAvailableGroups = (): AvailableGroup[] =>
     getAvailableGroups(deps.getRegisteredGroups());
-
-  const normalizeStoredSeqCursor = (
-    cursor: string | undefined,
-    chatJid?: string,
-  ): string => {
-    if (!cursor) return '0';
-    if (/^\d+$/.test(cursor.trim())) return cursor.trim();
-    return String(getLatestMessageSeqAtOrBefore(cursor, chatJid));
-  };
-
-  const advanceLastAgentCursor = (
-    chatJid: string,
-    cursorOrTimestamp: string | number,
-  ): void => {
-    const lastAgentTimestamps = deps.getLastAgentTimestamps();
-    if (typeof cursorOrTimestamp === 'number') {
-      lastAgentTimestamps[chatJid] = String(cursorOrTimestamp);
-    } else {
-      lastAgentTimestamps[chatJid] = normalizeStoredSeqCursor(
-        cursorOrTimestamp,
-        chatJid,
-      );
-    }
-    deps.saveState();
-  };
-
-  const openImplicitContinuationWindow = (chatJid: string): void => {
-    if (deps.idleTimeout <= 0) return;
-    implicitContinuationUntil.set(chatJid, Date.now() + deps.idleTimeout);
-  };
-
-  const hasImplicitContinuationWindow = (
-    chatJid: string,
-    messages: NewMessage[],
-  ): boolean => {
-    const until = implicitContinuationUntil.get(chatJid);
-    if (!until) return false;
-    if (Date.now() > until) {
-      implicitContinuationUntil.delete(chatJid);
-      return false;
-    }
-    return messages.some((message) => message.is_from_me !== true);
-  };
-
-  const shouldSkipBotOnlyCollaboration = (
-    chatJid: string,
-    messages: NewMessage[],
-  ): boolean => {
-    if (isPairedRoomJid(chatJid)) return false;
-    const allFromBots = messages.every(
-      (message) => message.is_from_me || !!message.is_bot_message,
-    );
-    if (!allFromBots) return false;
-    const lastHuman = getLastHumanMessageTimestamp(chatJid);
-    if (!lastHuman) return true;
-    return (
-      Date.now() - new Date(lastHuman).getTime() > BOT_COLLABORATION_WINDOW_MS
-    );
-  };
-
-  const hasAllowedTrigger = (
-    chatJid: string,
-    messages: NewMessage[],
-    group: RegisteredGroup,
-  ): boolean => {
-    if (group.isMain === true || group.requiresTrigger === false) {
-      return true;
-    }
-    const allowlistCfg = loadSenderAllowlist();
-    const hasTrigger = messages.some(
-      (message) =>
-        deps.triggerPattern.test(message.content.trim()) &&
-        (message.is_from_me ||
-          isTriggerAllowed(chatJid, message.sender, allowlistCfg)),
-    );
-    return hasTrigger || hasImplicitContinuationWindow(chatJid, messages);
-  };
-
-  const getProcessableMessages = (
-    chatJid: string,
-    messages: Parameters<typeof filterProcessableMessages>[0],
-    channel?: Channel,
-  ) =>
-    filterProcessableMessages(
-      messages,
-      isPairedRoomJid(chatJid),
-      channel?.isOwnMessage?.bind(channel),
-    );
-
-  const filterLoopingPairedBotMessages = (
-    chatJid: string,
-    messages: Parameters<typeof filterProcessableMessages>[0],
-    failureText: string,
-  ) => {
-    if (!isPairedRoomJid(chatJid)) return messages;
-
-    // Keep mentionless paired-room collaboration intact, but drop the generic
-    // failure boilerplate from other bots so paired agents do not amplify it
-    // into a reply loop.
-    return messages.filter(
-      (message) =>
-        !(message.is_bot_message && message.content.trim() === failureText),
-    );
-  };
 
   const deliverOpenWorkItem = async (
     channel: Channel,
@@ -214,7 +116,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           item.result_payload,
         );
         markWorkItemDelivered(item.id, replaceMessageId);
-        openImplicitContinuationWindow(item.chat_jid);
+        continuationTracker.open(item.chat_jid);
         logger.info(
           {
             chatJid: item.chat_jid,
@@ -242,7 +144,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     try {
       await channel.sendMessage(item.chat_jid, item.result_payload);
       markWorkItemDelivered(item.id);
-      openImplicitContinuationWindow(item.chat_jid);
+      continuationTracker.open(item.chat_jid);
       logger.info(
         {
           chatJid: item.chat_jid,
@@ -655,7 +557,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       if (missedMessages.length === 0) {
         const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
         if (lastIgnored) {
-          advanceLastAgentCursor(chatJid, lastIgnored.timestamp);
+          advanceLastAgentCursor(
+            deps.getLastAgentTimestamps(),
+            deps.saveState,
+            chatJid,
+            lastIgnored.timestamp,
+          );
         }
         return true;
       }
@@ -663,7 +570,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       if (shouldSkipBotOnlyCollaboration(chatJid, missedMessages)) {
         const lastMessage = missedMessages[missedMessages.length - 1];
         if (lastMessage?.seq != null) {
-          advanceLastAgentCursor(chatJid, lastMessage.seq);
+          advanceLastAgentCursor(
+            deps.getLastAgentTimestamps(),
+            deps.saveState,
+            chatJid,
+            lastMessage.seq,
+          );
         }
         logger.info(
           { chatJid, group: group.name, groupFolder: group.folder, runId },
@@ -691,7 +603,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             }),
           clearSession: () => deps.clearSession(group.folder),
           advanceCursor: (cursorOrTimestamp) => {
-            advanceLastAgentCursor(chatJid, cursorOrTimestamp);
+            advanceLastAgentCursor(
+              deps.getLastAgentTimestamps(),
+              deps.saveState,
+              chatJid,
+              cursorOrTimestamp,
+            );
           },
           formatMessages,
           isAdminSender: (msg) => isSessionCommandSenderAllowed(msg.sender),
@@ -711,7 +628,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       });
       if (cmdResult.handled) return cmdResult.success;
 
-      if (!hasAllowedTrigger(chatJid, missedMessages, group)) {
+      if (
+        !hasAllowedTrigger({
+          chatJid,
+          messages: missedMessages,
+          group,
+          triggerPattern: deps.triggerPattern,
+          hasImplicitContinuationWindow: continuationTracker.has,
+        })
+      ) {
         logger.info(
           { chatJid, group: group.name, groupFolder: group.folder, runId },
           'Skipping queued run because no allowed trigger was found',
@@ -723,7 +648,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const startSeq = missedMessages[0].seq ?? null;
       const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
       if (endSeq !== null) {
-        advanceLastAgentCursor(chatJid, endSeq);
+        advanceLastAgentCursor(
+          deps.getLastAgentTimestamps(),
+          deps.saveState,
+          chatJid,
+          endSeq,
+        );
       }
 
       logger.info(
@@ -736,411 +666,53 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         },
         'Dispatching queued messages to agent',
       );
-
-      type VisiblePhase = 'silent' | 'progress' | 'final';
-      let idleTimer: ReturnType<typeof setTimeout> | null = null;
-      let hadError = false;
-      let producedDeliverySucceeded = true;
-      let visiblePhase: VisiblePhase = 'silent';
-      let latestProgressText: string | null = null;
-      let latestProgressRendered: string | null = null;
-      let progressMessageId: string | null = null;
-      let progressStartedAt: number | null = null;
-      let progressTicker: ReturnType<typeof setInterval> | null = null;
-      let progressEditFailCount = 0;
-      let latestProgressTextForFinal: string | null = null;
-      let poisonedSessionDetected = false;
-      let closeRequested = false;
-
-      const hasVisibleOutput = () => visiblePhase !== 'silent';
-      const terminalObserved = () => visiblePhase === 'final';
-
-      const clearProgressTicker = () => {
-        if (progressTicker) {
-          clearInterval(progressTicker);
-          progressTicker = null;
-        }
-      };
-
-      const resetProgressState = () => {
-        clearProgressTicker();
-        latestProgressText = null;
-        latestProgressRendered = null;
-        progressMessageId = null;
-        progressStartedAt = null;
-        progressEditFailCount = 0;
-      };
-
-      const renderProgressMessage = (text: string) => {
-        const elapsedSeconds =
-          progressStartedAt === null
-            ? 0
-            : Math.floor((Date.now() - progressStartedAt) / 10_000) * 10;
-        const hours = Math.floor(elapsedSeconds / 3600);
-        const minutes = Math.floor((elapsedSeconds % 3600) / 60);
-        const seconds = elapsedSeconds % 60;
-        const elapsedParts: string[] = [];
-
-        if (hours > 0) elapsedParts.push(`${hours}시간`);
-        if (minutes > 0) elapsedParts.push(`${minutes}분`);
-        elapsedParts.push(`${seconds}초`);
-
-        return `${text}\n\n${elapsedParts.join(' ')}`;
-      };
-
-      const syncTrackedProgressMessage = async () => {
-        if (!progressMessageId || !channel.editMessage || !latestProgressText) {
-          return;
-        }
-
-        const rendered = renderProgressMessage(latestProgressText);
-        if (rendered === latestProgressRendered) {
-          return;
-        }
-
-        try {
-          await channel.editMessage(chatJid, progressMessageId, rendered);
-          latestProgressRendered = rendered;
-          progressEditFailCount = 0;
-        } catch (err) {
-          progressEditFailCount++;
-          logger.warn(
-            {
-              chatJid,
-              group: group.name,
-              groupFolder: group.folder,
-              runId,
-              progressMessageId,
-              progressEditFailCount,
-              err,
-            },
-            'Failed to edit tracked progress message; will retry before recreating',
-          );
-          latestProgressRendered = null;
-          if (progressEditFailCount >= 3) {
-            clearProgressTicker();
+      const turnController = new MessageTurnController({
+        chatJid,
+        group,
+        runId,
+        channel,
+        idleTimeout: deps.idleTimeout,
+        failureFinalText: FAILURE_FINAL_TEXT,
+        isClaudeCodeAgent,
+        clearSession: () => deps.clearSession(group.folder),
+        requestClose: (reason) =>
+          deps.queue.closeStdin(chatJid, { runId, reason }),
+        deliverFinalText: async (text) => {
+          try {
+            const workItem = createProducedWorkItem({
+              group_folder: group.folder,
+              chat_jid: chatJid,
+              agent_type: group.agentType || 'claude-code',
+              start_seq: startSeq,
+              end_seq: endSeq,
+              result_payload: text,
+            });
+            return deliverOpenWorkItem(channel, workItem);
+          } catch (err) {
+            logger.warn(
+              { group: group.name, chatJid, runId, err },
+              'Failed to persist produced output for delivery',
+            );
+            return false;
           }
-        }
-      };
+        },
+      });
 
-      const ensureProgressTicker = () => {
-        if (!progressMessageId || !channel.editMessage || progressTicker) {
-          return;
-        }
-
-        progressTicker = setInterval(() => {
-          void syncTrackedProgressMessage();
-        }, 10_000);
-      };
-
-      const finalizeProgressMessage = async (options?: {
-        preserveTrackedMessage?: boolean;
-      }): Promise<string | null> => {
-        logger.info(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            progressMessageId,
-            latestProgressText,
-          },
-          'Finalizing tracked progress message',
-        );
-        const trackedMessageId = progressMessageId;
-        if (!options?.preserveTrackedMessage) {
-          await syncTrackedProgressMessage();
-        }
-        resetProgressState();
-        return trackedMessageId;
-      };
-
-      const deliverFinalText = async (
-        text: string,
-        replaceMessageId?: string | null,
-      ) => {
-        visiblePhase = 'final';
-        try {
-          const workItem = createProducedWorkItem({
-            group_folder: group.folder,
-            chat_jid: chatJid,
-            agent_type: group.agentType || 'claude-code',
-            start_seq: startSeq,
-            end_seq: endSeq,
-            result_payload: text,
-          });
-          const delivered = await deliverOpenWorkItem(channel, workItem, {
-            replaceMessageId,
-          });
-          if (!delivered) {
-            producedDeliverySucceeded = false;
-          }
-        } catch (err) {
-          producedDeliverySucceeded = false;
-          logger.warn(
-            { group: group.name, chatJid, runId, err },
-            'Failed to persist produced output for delivery',
-          );
-        } finally {
-          latestProgressTextForFinal = null;
-        }
-      };
-
-      const publishFailureFinal = async () => {
-        if (terminalObserved()) {
-          return;
-        }
-        await finalizeProgressMessage();
-        await deliverFinalText(FAILURE_FINAL_TEXT);
-      };
-
-      const requestAgentClose = (reason: string) => {
-        if (closeRequested) return;
-        closeRequested = true;
-        deps.queue.closeStdin(chatJid, { runId, reason });
-      };
-
-      const sendProgressMessage = async (text: string) => {
-        if (!text || (text === latestProgressText && progressMessageId)) {
-          return;
-        }
-
-        if (progressStartedAt === null) {
-          progressStartedAt = Date.now();
-        }
-        latestProgressTextForFinal = text;
-        latestProgressText = text;
-        const rendered = renderProgressMessage(text);
-
-        if (progressMessageId && channel.editMessage) {
-          logger.info(
-            {
-              chatJid,
-              group: group.name,
-              groupFolder: group.folder,
-              runId,
-              progressMessageId,
-              text,
-            },
-            'Updating tracked progress message',
-          );
-          await syncTrackedProgressMessage();
-          visiblePhase = 'progress';
-          return;
-        }
-
-        if (!channel.sendAndTrack) {
-          latestProgressRendered = rendered;
-          await channel.sendMessage(chatJid, rendered);
-          visiblePhase = 'progress';
-          return;
-        }
-
-        try {
-          progressMessageId = await channel.sendAndTrack(chatJid, rendered);
-        } catch (err) {
-          logger.warn(
-            {
-              chatJid,
-              group: group.name,
-              groupFolder: group.folder,
-              runId,
-              err,
-            },
-            'Failed to send tracked progress message',
-          );
-          latestProgressRendered = rendered;
-          await channel.sendMessage(chatJid, rendered);
-          visiblePhase = 'progress';
-          return;
-        }
-
-        if (progressMessageId) {
-          logger.info(
-            {
-              chatJid,
-              group: group.name,
-              groupFolder: group.folder,
-              runId,
-              progressMessageId,
-              text,
-            },
-            'Created tracked progress message',
-          );
-          latestProgressRendered = rendered;
-          ensureProgressTicker();
-          visiblePhase = 'progress';
-          return;
-        }
-
-        latestProgressRendered = rendered;
-        await channel.sendMessage(chatJid, rendered);
-        visiblePhase = 'progress';
-      };
-
-      const resetIdleTimer = () => {
-        if (idleTimer) clearTimeout(idleTimer);
-        if (hasVisibleOutput()) {
-          idleTimer = null;
-          return;
-        }
-        idleTimer = setTimeout(() => {
-          logger.debug(
-            { group: group.name, chatJid, runId },
-            'Idle timeout, closing agent stdin',
-          );
-          requestAgentClose('idle-timeout');
-        }, deps.idleTimeout);
-      };
-
-      resetIdleTimer();
-      await channel.setTyping?.(chatJid, true);
+      await turnController.start();
 
       const output = await runAgent(
         group,
         prompt,
         chatJid,
         runId,
-        async (result) => {
-          if (terminalObserved()) {
-            logger.info(
-              {
-                chatJid,
-                group: group.name,
-                groupFolder: group.folder,
-                runId,
-                resultStatus: result.status,
-                resultPhase: result.phase,
-              },
-              'Discarding late agent output after terminal final',
-            );
-            return;
-          }
-
-          if (
-            isClaudeCodeAgent &&
-            shouldResetSessionOnAgentFailure(result) &&
-            !poisonedSessionDetected
-          ) {
-            poisonedSessionDetected = true;
-            hadError = true;
-            deps.clearSession(group.folder);
-            deps.queue.closeStdin(chatJid, {
-              runId,
-              reason: 'poisoned-session-detected',
-            });
-            logger.warn(
-              { chatJid, group: group.name, groupFolder: group.folder, runId },
-              'Detected poisoned Claude session from streamed output, forcing close',
-            );
-          }
-
-          const raw =
-            result.result === null || result.result === undefined
-              ? null
-              : typeof result.result === 'string'
-                ? result.result
-                : JSON.stringify(result.result);
-          const text = raw ? formatOutbound(raw) : null;
-
-          if (raw) {
-            logger.info(
-              {
-                chatJid,
-                group: group.name,
-                groupFolder: group.folder,
-                runId,
-                resultStatus: result.status,
-                resultPhase: result.phase,
-                progressMessageId,
-              },
-              `Agent output: ${raw.slice(0, 200)}`,
-            );
-          }
-
-          if (result.phase === 'progress') {
-            if (text) {
-              await sendProgressMessage(text);
-            }
-            if (!poisonedSessionDetected) {
-              resetIdleTimer();
-            }
-            if (result.status === 'error') {
-              hadError = true;
-            }
-            return;
-          }
-
-          if (text) {
-            await finalizeProgressMessage();
-            await deliverFinalText(text);
-          } else if (raw) {
-            logger.info(
-              {
-                chatJid,
-                group: group.name,
-                groupFolder: group.folder,
-                runId,
-                resultStatus: result.status,
-                resultPhase: result.phase,
-                progressMessageId,
-              },
-              'Agent output became empty after formatting; resetting tracked progress state',
-            );
-            await finalizeProgressMessage();
-            latestProgressTextForFinal = null;
-          } else {
-            await finalizeProgressMessage();
-          }
-
-          await channel.setTyping?.(chatJid, false);
-          if (result.status === 'success' && !poisonedSessionDetected) {
-            requestAgentClose('output-delivered-close');
-          }
-
-          if (result.status === 'error') {
-            hadError = true;
-          }
-        },
+        (result) => turnController.handleOutput(result),
       );
 
-      await channel.setTyping?.(chatJid, false);
+      const { deliverySucceeded, visiblePhase } = await turnController.finish(
+        output,
+      );
 
-      if (output === 'error') {
-        hadError = true;
-      }
-
-      const settledVisiblePhase = visiblePhase as VisiblePhase;
-
-      if (
-        output === 'success' &&
-        settledVisiblePhase === 'progress' &&
-        !hadError &&
-        latestProgressTextForFinal
-      ) {
-        logger.info(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-          },
-          'Sending a separate final message from the last progress output after agent completion',
-        );
-        await finalizeProgressMessage();
-        await deliverFinalText(latestProgressTextForFinal);
-      } else if (
-        settledVisiblePhase === 'progress' &&
-        !terminalObserved() &&
-        hadError
-      ) {
-        await publishFailureFinal();
-      }
-
-      clearProgressTicker();
-      if (idleTimer) clearTimeout(idleTimer);
-
-      if (!producedDeliverySucceeded) {
+      if (!deliverySucceeded) {
         logger.warn(
           { chatJid, group: group.name, groupFolder: group.folder, runId },
           'Persisted produced output for delivery retry without rerunning agent',
@@ -1154,7 +726,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           group: group.name,
           groupFolder: group.folder,
           runId,
-          visiblePhase: settledVisiblePhase,
+          visiblePhase,
         },
         'Queued run completed successfully',
       );
@@ -1221,7 +793,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             if (processableGroupMessages.length === 0) {
               const lastIgnored = groupMessages[groupMessages.length - 1];
               if (lastIgnored?.seq != null) {
-                advanceLastAgentCursor(chatJid, lastIgnored.seq);
+                advanceLastAgentCursor(
+                  deps.getLastAgentTimestamps(),
+                  deps.saveState,
+                  chatJid,
+                  lastIgnored.seq,
+                );
               }
               continue;
             }
@@ -1232,7 +809,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               const lastIgnored =
                 processableGroupMessages[processableGroupMessages.length - 1];
               if (lastIgnored?.seq != null) {
-                advanceLastAgentCursor(chatJid, lastIgnored.seq);
+                advanceLastAgentCursor(
+                  deps.getLastAgentTimestamps(),
+                  deps.saveState,
+                  chatJid,
+                  lastIgnored.seq,
+                );
               }
               logger.info(
                 { chatJid, group: group.name, groupFolder: group.folder },
@@ -1263,7 +845,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               continue;
             }
 
-            if (!hasAllowedTrigger(chatJid, processableGroupMessages, group)) {
+            if (
+              !hasAllowedTrigger({
+                chatJid,
+                messages: processableGroupMessages,
+                group,
+                triggerPattern: deps.triggerPattern,
+                hasImplicitContinuationWindow: continuationTracker.has,
+              })
+            ) {
               continue;
             }
 
@@ -1286,7 +876,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             if (deps.queue.sendMessage(chatJid, formatted)) {
               const endSeq = messagesToSend[messagesToSend.length - 1]?.seq;
               if (endSeq != null) {
-                advanceLastAgentCursor(chatJid, endSeq);
+                advanceLastAgentCursor(
+                  deps.getLastAgentTimestamps(),
+                  deps.saveState,
+                  chatJid,
+                  endSeq,
+                );
               }
               channel
                 .setTyping?.(chatJid, true)
@@ -1346,7 +941,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       } else if (rawPending.length > 0) {
         const endSeq = rawPending[rawPending.length - 1].seq;
         if (endSeq != null) {
-          advanceLastAgentCursor(chatJid, endSeq);
+          advanceLastAgentCursor(
+            deps.getLastAgentTimestamps(),
+            deps.saveState,
+            chatJid,
+            endSeq,
+          );
         }
       }
     }
