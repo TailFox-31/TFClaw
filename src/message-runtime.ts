@@ -126,21 +126,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       channel?.isOwnMessage?.bind(channel),
     );
 
-  const filterTriggeredPairedBotMessages = (
-    chatJid: string,
-    messages: Parameters<typeof filterProcessableMessages>[0],
-  ) => {
-    if (!isPairedRoomJid(chatJid)) return messages;
-
-    // In paired rooms, require an explicit trigger before reacting to another
-    // bot's message. This keeps the room usable without reintroducing bot loops.
-    return messages.filter(
-      (message) =>
-        !message.is_bot_message ||
-        deps.triggerPattern.test(message.content.trim()),
-    );
-  };
-
   const deliverOpenWorkItem = async (
     channel: Channel,
     item: WorkItem,
@@ -590,9 +575,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         sinceSeqCursor,
         deps.assistantName,
       );
-      const missedMessages = filterTriggeredPairedBotMessages(
+      const missedMessages = getProcessableMessages(
         chatJid,
-        getProcessableMessages(chatJid, rawMissedMessages, channel),
+        rawMissedMessages,
+        channel,
       );
 
       if (missedMessages.length === 0) {
