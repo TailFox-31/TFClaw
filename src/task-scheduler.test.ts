@@ -1,5 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { runAgentProcessMock, writeTasksSnapshotMock } = vi.hoisted(() => ({
+  runAgentProcessMock: vi.fn(async () => ({
+    status: 'success' as const,
+    result: 'done',
+  })),
+  writeTasksSnapshotMock: vi.fn(),
+}));
+
+vi.mock('./agent-runner.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('./agent-runner.js')>('./agent-runner.js');
+  return {
+    ...actual,
+    runAgentProcess: runAgentProcessMock,
+    writeTasksSnapshot: writeTasksSnapshotMock,
+  };
+});
+
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
@@ -16,6 +34,8 @@ describe('task scheduler', () => {
   beforeEach(() => {
     _initTestDatabase();
     _resetSchedulerLoopForTests();
+    runAgentProcessMock.mockClear();
+    writeTasksSnapshotMock.mockClear();
     vi.useFakeTimers();
   });
 
@@ -207,6 +227,135 @@ Check the run.
       'shared@g.us::task:task-watch-group',
     );
     expect(enqueueTask.mock.calls[0][1]).toBe('task-watch-group');
+  });
+
+  it('uses dedicated IPC but shared session state for group-context CI watchers', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-watch-runtime',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 123456
+
+Task ID:
+task-watch-runtime
+
+Check instructions:
+Check the run.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'group',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({ 'shared-group': 'session-123' }),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runAgentProcessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        runtimeTaskId: 'task-watch-runtime',
+        useTaskScopedSession: false,
+        sessionId: 'session-123',
+      }),
+      expect.any(Function),
+      expect.any(Function),
+    );
+    expect(writeTasksSnapshotMock).toHaveBeenCalledWith(
+      'shared-group',
+      false,
+      expect.any(Array),
+      'task-watch-runtime',
+    );
+  });
+
+  it('isolates both IPC and session state for isolated tasks', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-isolated-runtime',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'claude-code',
+      prompt: 'run isolated task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+
+    startSchedulerLoop({
+      serviceAgentType: 'claude-code',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Claude',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'claude-code',
+        },
+      }),
+      getSessions: () => ({ 'shared-group': 'session-123' }),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runAgentProcessMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        runtimeTaskId: 'task-isolated-runtime',
+        useTaskScopedSession: true,
+        sessionId: undefined,
+      }),
+      expect.any(Function),
+      expect.any(Function),
+    );
+    expect(writeTasksSnapshotMock).toHaveBeenCalledWith(
+      'shared-group',
+      false,
+      expect.any(Array),
+      'task-isolated-runtime',
+    );
   });
 
   it('renders watcher heartbeat messages with target and timing', () => {

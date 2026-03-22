@@ -126,3 +126,17 @@ export function getTaskQueueJid(
     ? `${task.chat_jid}::task:${task.id}`
     : task.chat_jid;
 }
+
+export function getTaskRuntimeTaskId(
+  task: Pick<ScheduledTask, 'context_mode' | 'id' | 'prompt'>,
+): string | undefined {
+  return task.context_mode === 'isolated' || isWatchCiTask(task)
+    ? task.id
+    : undefined;
+}
+
+export function shouldUseTaskScopedSession(
+  task: Pick<ScheduledTask, 'context_mode'>,
+): boolean {
+  return task.context_mode === 'isolated';
+}

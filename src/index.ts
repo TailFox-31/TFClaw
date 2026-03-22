@@ -394,8 +394,8 @@ async function main(): Promise<void> {
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
     queue,
-    onProcess: (groupJid, proc, processName, groupFolder) =>
-      queue.registerProcess(groupJid, proc, processName, groupFolder),
+    onProcess: (groupJid, proc, processName, ipcDir) =>
+      queue.registerProcess(groupJid, proc, processName, ipcDir),
     sendMessage: (jid, rawText) =>
       sendFormattedChannelMessage(channels, jid, rawText),
     sendTrackedMessage: (jid, rawText) =>

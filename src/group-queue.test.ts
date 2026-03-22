@@ -64,6 +64,7 @@ describe('GroupQueue', () => {
   });
 
   it('pipes follow-up messages to an active non-task process', async () => {
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
     let releaseRun!: (value: boolean) => void;
     const blocker = new Promise<boolean>((resolve) => {
       releaseRun = resolve;
@@ -72,12 +73,12 @@ describe('GroupQueue', () => {
     const processMessages = vi.fn(async () => await blocker);
 
     queue.setProcessMessagesFn(processMessages);
-    queue.enqueueMessageCheck('group1@g.us', 'group-folder');
+    queue.enqueueMessageCheck('group1@g.us', ipcDir);
     await vi.advanceTimersByTimeAsync(10);
 
     expect(queue.sendMessage('group1@g.us', '후속 메시지')).toBe(true);
     expect(fs.mkdirSync).toHaveBeenCalledWith(
-      '/tmp/ejclaw-test-data/ipc/group-folder/input',
+      `${ipcDir}/input`,
       { recursive: true },
     );
     expect(fs.writeFileSync).toHaveBeenCalled();

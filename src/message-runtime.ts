@@ -30,6 +30,7 @@ import {
 } from './session-commands.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { resolveGroupIpcPath } from './group-folder.js';
 
 export interface MessageRuntimeDeps {
   assistantName: string;
@@ -532,7 +533,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               continue;
             }
 
-            deps.queue.enqueueMessageCheck(chatJid, group.folder);
+            deps.queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(group.folder));
           }
         }
       } catch (err) {
@@ -554,7 +555,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           { chatJid, group: group.name, workItemId: openWorkItem.id },
           'Recovery: found open work item awaiting delivery',
         );
-        deps.queue.enqueueMessageCheck(chatJid, group.folder);
+        deps.queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(group.folder));
         continue;
       }
 
@@ -575,7 +576,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           { group: group.name, pendingCount: pending.length },
           'Recovery: found unprocessed messages',
         );
-        deps.queue.enqueueMessageCheck(chatJid, group.folder);
+        deps.queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(group.folder));
       } else if (rawPending.length > 0) {
         const endSeq = rawPending[rawPending.length - 1].seq;
         if (endSeq != null) {

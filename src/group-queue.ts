@@ -28,7 +28,7 @@ interface GroupState {
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
   processName: string | null;
-  groupFolder: string | null;
+  ipcDir: string | null;
   retryCount: number;
   retryTimer: ReturnType<typeof setTimeout> | null;
   retryScheduledAt: number | null;
@@ -65,7 +65,7 @@ export class GroupQueue {
         pendingTasks: [],
         process: null,
         processName: null,
-        groupFolder: null,
+        ipcDir: null,
         retryCount: 0,
         retryTimer: null,
         retryScheduledAt: null,
@@ -86,14 +86,14 @@ export class GroupQueue {
     return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  enqueueMessageCheck(groupJid: string, groupFolder?: string): void {
+  enqueueMessageCheck(groupJid: string, ipcDir?: string): void {
     if (this.shuttingDown) return;
 
     const state = this.getGroup(groupJid);
 
-    // Pre-set groupFolder so sendMessage can pipe IPC while agent process starts
-    if (groupFolder && !state.groupFolder) {
-      state.groupFolder = groupFolder;
+    // Pre-set IPC dir so sendMessage can pipe follow-ups while agent process starts
+    if (ipcDir && !state.ipcDir) {
+      state.ipcDir = ipcDir;
     }
 
     if (state.active) {
@@ -178,18 +178,18 @@ export class GroupQueue {
     groupJid: string,
     proc: ChildProcess,
     processName: string,
-    groupFolder?: string,
+    ipcDir?: string,
   ): void {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.processName = processName;
-    if (groupFolder) state.groupFolder = groupFolder;
+    if (ipcDir) state.ipcDir = ipcDir;
     logger.info(
       {
         groupJid,
         runId: state.currentRunId,
         processName,
-        groupFolder: state.groupFolder,
+        ipcDir: state.ipcDir,
         isTaskProcess: state.isTaskProcess,
       },
       'Registered active process for group',
@@ -198,13 +198,13 @@ export class GroupQueue {
 
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || state.isTaskProcess) {
+    if (!state.active || !state.ipcDir || state.isTaskProcess) {
       logger.debug(
         {
           groupJid,
           runId: state.currentRunId,
           active: state.active,
-          groupFolder: state.groupFolder,
+          ipcDir: state.ipcDir,
           isTaskProcess: state.isTaskProcess,
         },
         'Cannot pipe follow-up message to active agent',
@@ -213,12 +213,12 @@ export class GroupQueue {
     }
 
     try {
-      const filename = queueFollowUpMessage(state.groupFolder, text);
+      const filename = queueFollowUpMessage(state.ipcDir, text);
       logger.info(
         {
           groupJid,
           runId: state.currentRunId,
-          groupFolder: state.groupFolder,
+          ipcDir: state.ipcDir,
           textLength: text.length,
           filename,
         },
@@ -230,7 +230,7 @@ export class GroupQueue {
         {
           groupJid,
           runId: state.currentRunId,
-          groupFolder: state.groupFolder,
+          ipcDir: state.ipcDir,
           err,
         },
         'Failed to queue follow-up message for active agent',
@@ -247,16 +247,16 @@ export class GroupQueue {
     metadata?: { runId?: string; reason?: string },
   ): void {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder) return;
+    if (!state.active || !state.ipcDir) return;
     state.closingStdin = true;
 
     try {
-      writeCloseSentinel(state.groupFolder);
+      writeCloseSentinel(state.ipcDir);
       logger.info(
         {
           groupJid,
           runId: metadata?.runId ?? state.currentRunId,
-          groupFolder: state.groupFolder,
+          ipcDir: state.ipcDir,
           reason: metadata?.reason ?? 'unspecified',
         },
         'Signaled active agent to close stdin',
@@ -266,7 +266,7 @@ export class GroupQueue {
         {
           groupJid,
           runId: metadata?.runId ?? state.currentRunId,
-          groupFolder: state.groupFolder,
+          ipcDir: state.ipcDir,
           reason: metadata?.reason ?? 'unspecified',
           err,
         },
@@ -335,7 +335,7 @@ export class GroupQueue {
       state.closingStdin = false;
       state.process = null;
       state.processName = null;
-      state.groupFolder = null;
+      state.ipcDir = null;
       state.currentRunId = null;
       this.activeCount--;
       this.drainGroup(groupJid);
@@ -368,7 +368,7 @@ export class GroupQueue {
       state.closingStdin = false;
       state.process = null;
       state.processName = null;
-      state.groupFolder = null;
+      state.ipcDir = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }

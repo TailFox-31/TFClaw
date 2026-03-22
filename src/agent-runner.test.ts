@@ -299,6 +299,68 @@ describe('agent-runner timeout behavior', () => {
     );
   });
 
+  it('isolates IPC and session directories for isolated scheduled tasks', async () => {
+    vi.useRealTimers();
+    fakeProc = createFakeProcess();
+
+    const resultPromise = runAgentProcess(
+      testGroup,
+      {
+        ...testInput,
+        isScheduledTask: true,
+        runtimeTaskId: 'task-123',
+        useTaskScopedSession: true,
+      },
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+
+    const spawnEnv = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as
+      | Record<string, string>
+      | undefined;
+    expect(spawnEnv?.NANOCLAW_IPC_DIR).toBe(
+      '/tmp/nanoclaw-test-data/ipc/test-group/tasks/task-123',
+    );
+    expect(spawnEnv?.CLAUDE_CONFIG_DIR).toBe(
+      '/tmp/nanoclaw-test-data/sessions/test-group/tasks/task-123/.claude',
+    );
+  });
+
+  it('keeps shared session history for group-context task runtimes while isolating IPC', async () => {
+    vi.useRealTimers();
+    fakeProc = createFakeProcess();
+
+    const resultPromise = runAgentProcess(
+      testGroup,
+      {
+        ...testInput,
+        isScheduledTask: true,
+        runtimeTaskId: 'task-watch-group',
+        useTaskScopedSession: false,
+      },
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+
+    const spawnEnv = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as
+      | Record<string, string>
+      | undefined;
+    expect(spawnEnv?.NANOCLAW_IPC_DIR).toBe(
+      '/tmp/nanoclaw-test-data/ipc/test-group/tasks/task-watch-group',
+    );
+    expect(spawnEnv?.CLAUDE_CONFIG_DIR).toBe(
+      '/tmp/nanoclaw-test-data/sessions/test-group/.claude',
+    );
+  });
+
   it('merges a per-group codex config overlay before injecting managed MCP servers', async () => {
     vi.useRealTimers();
     fakeProc = createFakeProcess();

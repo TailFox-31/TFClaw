@@ -10,12 +10,17 @@ import path from 'path';
 import {
   AGENT_MAX_OUTPUT_SIZE,
   AGENT_TIMEOUT,
-  DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
-import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
+import {
+  resolveGroupFolderPath,
+  resolveGroupIpcPath,
+  resolveGroupSessionsPath,
+  resolveTaskRuntimeIpcPath,
+  resolveTaskSessionsPath,
+} from './group-folder.js';
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
 import { isPairedRoomJid } from './db.js';
@@ -37,6 +42,8 @@ export interface AgentInput {
   runId?: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  runtimeTaskId?: string;
+  useTaskScopedSession?: boolean;
   assistantName?: string;
   agentType?: 'claude-code' | 'codex';
 }
@@ -182,6 +189,7 @@ function prepareCodexSessionEnvironment(args: {
   projectRoot: string;
   group: RegisteredGroup;
   groupDir: string;
+  sessionRootDir: string;
   chatJid: string;
   isMain: boolean;
   isPairedRoom: boolean;
@@ -206,12 +214,7 @@ function prepareCodexSessionEnvironment(args: {
   if (codexEffort) args.env.CODEX_EFFORT = codexEffort;
 
   const hostCodexDir = path.join(os.homedir(), '.codex');
-  const sessionCodexDir = path.join(
-    DATA_DIR,
-    'sessions',
-    args.group.folder,
-    '.codex',
-  );
+  const sessionCodexDir = path.join(args.sessionRootDir, '.codex');
   fs.mkdirSync(sessionCodexDir, { recursive: true });
 
   const authSrc = path.join(hostCodexDir, 'auth.json');
@@ -328,18 +331,25 @@ function prepareGroupEnvironment(
   group: RegisteredGroup,
   isMain: boolean,
   chatJid: string,
+  options?: {
+    runtimeTaskId?: string;
+    useTaskScopedSession?: boolean;
+  },
 ): { env: Record<string, string>; groupDir: string; runnerDir: string } {
   const projectRoot = process.cwd();
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  // Per-group Claude sessions directory
-  const groupSessionsDir = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    '.claude',
-  );
+  const runtimeTaskId = options?.runtimeTaskId;
+  const useTaskScopedSession =
+    options?.useTaskScopedSession === true && Boolean(runtimeTaskId);
+  const sessionRootDir =
+    runtimeTaskId && useTaskScopedSession
+      ? resolveTaskSessionsPath(group.folder, runtimeTaskId)
+      : resolveGroupSessionsPath(group.folder);
+
+  // Per-runtime Claude sessions directory
+  const groupSessionsDir = path.join(sessionRootDir, '.claude');
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   ensureClaudeSessionSettings(groupSessionsDir);
 
@@ -356,7 +366,9 @@ function prepareGroupEnvironment(
   syncDirectoryEntries(skillSources, path.join(groupSessionsDir, 'skills'));
 
   // Per-group IPC namespace
-  const groupIpcDir = resolveGroupIpcPath(group.folder);
+  const groupIpcDir = runtimeTaskId
+    ? resolveTaskRuntimeIpcPath(group.folder, runtimeTaskId)
+    : resolveGroupIpcPath(group.folder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
@@ -433,6 +445,7 @@ function prepareGroupEnvironment(
       projectRoot,
       group,
       groupDir,
+      sessionRootDir,
       chatJid,
       isMain,
       isPairedRoom,
@@ -447,7 +460,11 @@ function prepareGroupEnvironment(
 export async function runAgentProcess(
   group: RegisteredGroup,
   input: AgentInput,
-  onProcess: (proc: ChildProcess, processName: string) => void,
+  onProcess: (
+    proc: ChildProcess,
+    processName: string,
+    runtimeIpcDir: string,
+  ) => void,
   onOutput?: (output: AgentOutput) => Promise<void>,
   envOverrides?: Record<string, string>,
 ): Promise<AgentOutput> {
@@ -456,6 +473,10 @@ export async function runAgentProcess(
     group,
     input.isMain,
     input.chatJid,
+    {
+      runtimeTaskId: input.runtimeTaskId,
+      useTaskScopedSession: input.useTaskScopedSession,
+    },
   );
 
   // Apply provider fallback overrides (e.g. Kimi env vars when Claude is in cooldown)
@@ -509,7 +530,7 @@ export async function runAgentProcess(
       env,
     });
 
-    onProcess(proc, processName);
+    onProcess(proc, processName, env.NANOCLAW_IPC_DIR);
 
     let stdout = '';
     let stderr = '';
@@ -860,8 +881,11 @@ export function writeTasksSnapshot(
     status: string;
     next_run: string | null;
   }>,
+  runtimeTaskId?: string,
 ): void {
-  const groupIpcDir = resolveGroupIpcPath(groupFolder);
+  const groupIpcDir = runtimeTaskId
+    ? resolveTaskRuntimeIpcPath(groupFolder, runtimeTaskId)
+    : resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
   const filteredTasks = isMain
     ? tasks

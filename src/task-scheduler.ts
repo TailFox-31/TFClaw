@@ -22,17 +22,27 @@ import {
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
-import { resolveGroupFolderPath } from './group-folder.js';
+import {
+  resolveGroupFolderPath,
+  resolveGroupIpcPath,
+  resolveTaskRuntimeIpcPath,
+} from './group-folder.js';
 import { logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
-import { getTaskQueueJid } from './task-watch-status.js';
+import {
+  getTaskQueueJid,
+  getTaskRuntimeTaskId,
+  shouldUseTaskScopedSession,
+} from './task-watch-status.js';
 import { AgentType, RegisteredGroup, ScheduledTask } from './types.js';
 export {
   extractWatchCiTarget,
   getTaskQueueJid,
+  getTaskRuntimeTaskId,
   isTaskStatusControlMessage,
   isWatchCiTask,
   renderWatchCiStatusMessage,
+  shouldUseTaskScopedSession,
 } from './task-watch-status.js';
 
 /**
@@ -85,7 +95,7 @@ export interface SchedulerDependencies {
     groupJid: string,
     proc: ChildProcess,
     processName: string,
-    groupFolder: string,
+    ipcDir: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
   sendTrackedMessage?: (jid: string, text: string) => Promise<string | null>;
@@ -101,7 +111,10 @@ interface TaskExecutionContext {
   groupDir: string;
   isMain: boolean;
   queueJid: string;
+  runtimeIpcDir: string;
+  runtimeTaskId?: string;
   sessionId?: string;
+  useTaskScopedSession: boolean;
   taskAgentType: AgentType;
 }
 
@@ -124,14 +137,22 @@ function resolveTaskExecutionContext(
   const taskAgentType =
     task.agent_type || deps.serviceAgentType || SERVICE_AGENT_TYPE;
   const sessions = deps.getSessions();
+  const runtimeTaskId = getTaskRuntimeTaskId(task);
+  const useTaskScopedSession = shouldUseTaskScopedSession(task);
+  const runtimeIpcDir = runtimeTaskId
+    ? resolveTaskRuntimeIpcPath(task.group_folder, runtimeTaskId)
+    : resolveGroupIpcPath(task.group_folder);
 
   return {
     group,
     groupDir,
     isMain,
     queueJid: getTaskQueueJid(task),
+    runtimeIpcDir,
+    runtimeTaskId,
     sessionId:
       task.context_mode === 'group' ? sessions[task.group_folder] : undefined,
+    useTaskScopedSession,
     taskAgentType,
   };
 }
@@ -140,6 +161,7 @@ function writeTaskSnapshotForGroup(
   taskAgentType: AgentType,
   groupFolder: string,
   isMain: boolean,
+  runtimeTaskId?: string,
 ): void {
   const tasks = getAllTasks(taskAgentType);
   writeTasksSnapshot(
@@ -154,6 +176,7 @@ function writeTaskSnapshotForGroup(
       status: task.status,
       next_run: task.next_run,
     })),
+    runtimeTaskId,
   );
 }
 
@@ -201,6 +224,7 @@ async function runTask(
     context.taskAgentType,
     task.group_folder,
     context.isMain,
+    context.runtimeTaskId,
   );
 
   let result: string | null = null;
@@ -222,10 +246,17 @@ async function runTask(
         chatJid: task.chat_jid,
         isMain: context.isMain,
         isScheduledTask: true,
+        runtimeTaskId: context.runtimeTaskId,
+        useTaskScopedSession: context.useTaskScopedSession,
         assistantName: ASSISTANT_NAME,
       },
       (proc, processName) =>
-        deps.onProcess(context.queueJid, proc, processName, task.group_folder),
+        deps.onProcess(
+          context.queueJid,
+          proc,
+          processName,
+          context.runtimeIpcDir,
+        ),
       async (streamedOutput: AgentOutput) => {
         if (streamedOutput.phase === 'progress') {
           return;

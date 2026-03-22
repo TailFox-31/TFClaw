@@ -1,13 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR } from './config.js';
+function resolveInputDir(ipcDir: string): string {
+  return path.join(ipcDir, 'input');
+}
 
-export function queueFollowUpMessage(
-  groupFolder: string,
-  text: string,
-): string {
-  const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
+export function queueFollowUpMessage(ipcDir: string, text: string): string {
+  const inputDir = resolveInputDir(ipcDir);
   fs.mkdirSync(inputDir, { recursive: true });
   const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
   const filepath = path.join(inputDir, filename);
@@ -17,8 +16,8 @@ export function queueFollowUpMessage(
   return filename;
 }
 
-export function writeCloseSentinel(groupFolder: string): void {
-  const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
+export function writeCloseSentinel(ipcDir: string): void {
+  const inputDir = resolveInputDir(ipcDir);
   fs.mkdirSync(inputDir, { recursive: true });
   fs.writeFileSync(path.join(inputDir, '_close'), '');
 }

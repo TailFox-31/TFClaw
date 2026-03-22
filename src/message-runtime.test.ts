@@ -143,6 +143,7 @@ vi.mock('./session-commands.js', () => ({
 
 import * as agentRunner from './agent-runner.js';
 import * as db from './db.js';
+import { resolveGroupIpcPath } from './group-folder.js';
 import { createMessageRuntime } from './message-runtime.js';
 import * as providerFallback from './provider-fallback.js';
 import type { Channel, RegisteredGroup } from './types.js';
@@ -1989,7 +1990,10 @@ describe('createMessageRuntime', () => {
 
     runtime.recoverPendingMessages();
 
-    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid, group.folder);
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(
+      chatJid,
+      resolveGroupIpcPath(group.folder),
+    );
     expect(db.getMessagesSinceSeq).not.toHaveBeenCalled();
   });
 });

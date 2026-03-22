@@ -7,6 +7,9 @@ import {
   isValidGroupFolder,
   resolveGroupFolderPath,
   resolveGroupIpcPath,
+  resolveGroupSessionsPath,
+  resolveTaskRuntimeIpcPath,
+  resolveTaskSessionsPath,
 } from './group-folder.js';
 
 describe('group folder validation', () => {
@@ -33,8 +36,24 @@ describe('group folder validation', () => {
     expect(resolved).toBe(path.resolve(DATA_DIR, 'ipc', 'family-chat'));
   });
 
+  it('resolves safe paths under data sessions directory', () => {
+    const resolved = resolveGroupSessionsPath('family-chat');
+    expect(resolved).toBe(path.resolve(DATA_DIR, 'sessions', 'family-chat'));
+  });
+
+  it('resolves task-scoped IPC and session paths under the group namespace', () => {
+    expect(resolveTaskRuntimeIpcPath('family-chat', 'task-123')).toBe(
+      path.resolve(DATA_DIR, 'ipc', 'family-chat', 'tasks', 'task-123'),
+    );
+    expect(resolveTaskSessionsPath('family-chat', 'task-123')).toBe(
+      path.resolve(DATA_DIR, 'sessions', 'family-chat', 'tasks', 'task-123'),
+    );
+  });
+
   it('throws for unsafe folder names', () => {
     expect(() => resolveGroupFolderPath('../../etc')).toThrow();
     expect(() => resolveGroupIpcPath('/tmp')).toThrow();
+    expect(() => resolveTaskRuntimeIpcPath('family-chat', '../../etc')).toThrow();
+    expect(() => resolveTaskSessionsPath('family-chat', '/tmp')).toThrow();
   });
 });

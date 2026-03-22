@@ -187,8 +187,8 @@ export async function runAgentForGroup(
           ...agentInput,
           sessionId: persistSessionIds ? sessionId : undefined,
         },
-        (proc, processName) =>
-          deps.queue.registerProcess(chatJid, proc, processName, group.folder),
+        (proc, processName, ipcDir) =>
+          deps.queue.registerProcess(chatJid, proc, processName, ipcDir),
         wrappedOnOutput,
         provider === 'claude' ? undefined : getFallbackEnvOverrides(),
       );
