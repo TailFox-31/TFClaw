@@ -140,7 +140,10 @@ function formatWatchIntervalLabel(
   return minutes > 0 ? `${hours}시간 ${minutes}분` : `${hours}시간`;
 }
 
-function formatElapsedLabel(startedAtIso: string, checkedAtIso: string): string {
+function formatElapsedLabel(
+  startedAtIso: string,
+  checkedAtIso: string,
+): string {
   const elapsedMs = Math.max(
     0,
     new Date(checkedAtIso).getTime() - new Date(startedAtIso).getTime(),
