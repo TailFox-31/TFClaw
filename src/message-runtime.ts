@@ -129,7 +129,43 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const deliverOpenWorkItem = async (
     channel: Channel,
     item: WorkItem,
+    options?: {
+      replaceMessageId?: string | null;
+    },
   ): Promise<boolean> => {
+    const replaceMessageId = options?.replaceMessageId ?? null;
+    try {
+      if (replaceMessageId && channel.editMessage) {
+        await channel.editMessage(
+          item.chat_jid,
+          replaceMessageId,
+          item.result_payload,
+        );
+        markWorkItemDelivered(item.id, replaceMessageId);
+        logger.info(
+          {
+            chatJid: item.chat_jid,
+            workItemId: item.id,
+            deliveryAttempts: item.delivery_attempts + 1,
+            replacedMessageId: replaceMessageId,
+          },
+          'Delivered produced work item by replacing tracked progress message',
+        );
+        return true;
+      }
+    } catch (err) {
+      logger.warn(
+        {
+          chatJid: item.chat_jid,
+          workItemId: item.id,
+          deliveryAttempts: item.delivery_attempts + 1,
+          replacedMessageId: replaceMessageId,
+          err,
+        },
+        'Failed to replace tracked progress message; falling back to a new message',
+      );
+    }
+
     try {
       await channel.sendMessage(item.chat_jid, item.result_payload);
       markWorkItemDelivered(item.id);
@@ -637,6 +673,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     let progressMessageId: string | null = null;
     let progressStartedAt: number | null = null;
     let progressTicker: ReturnType<typeof setInterval> | null = null;
+    let progressEditFailCount = 0;
+    let promotableTrackedProgressMessageId: string | null = null;
     let finalOutputSentToUser = false;
     let progressOutputSentToUser = false;
     let latestModelProgressTextForFinalFallback: string | null = null;
@@ -644,6 +682,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     let producedDeliverySucceeded = true;
     let isFirstLogicalTurn = true;
     let poisonedSessionDetected = false;
+    let canPipeFollowUps = true;
     const isClaudeCodeAgent =
       (group.agentType || 'claude-code') === 'claude-code';
     const FOLLOW_UP_NO_OUTPUT_WARN_MS = 10_000;
@@ -801,6 +840,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       noteFollowUpQueued(meta);
       resetIdleTimer();
     });
+    deps.queue.setFollowUpPipeAllowed?.(chatJid, () => canPipeFollowUps);
 
     const clearProgressTicker = () => {
       if (progressTicker) {
@@ -817,7 +857,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       producedFinalText = null;
     };
 
-    const flushProducedFinalText = async () => {
+    const flushProducedFinalText = async (
+      replaceMessageId?: string | null,
+    ) => {
       if (!producedFinalText) {
         return;
       }
@@ -831,7 +873,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           end_seq: isFirstLogicalTurn ? endSeq : null,
           result_payload: producedFinalText,
         });
-        const delivered = await deliverOpenWorkItem(channel, workItem);
+        const delivered = await deliverOpenWorkItem(channel, workItem, {
+          replaceMessageId,
+        });
         if (delivered) {
           finalOutputSentToUser = true;
         } else {
@@ -846,6 +890,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       } finally {
         producedFinalText = null;
         latestModelProgressTextForFinalFallback = null;
+        promotableTrackedProgressMessageId = null;
         isFirstLogicalTurn = false;
       }
     };
@@ -856,6 +901,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       latestProgressRendered = null;
       progressMessageId = null;
       progressStartedAt = null;
+      progressEditFailCount = 0;
     };
 
     const renderProgressMessage = (text: string) => {
@@ -888,7 +934,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       try {
         await channel.editMessage(chatJid, progressMessageId, rendered);
         latestProgressRendered = rendered;
+        progressEditFailCount = 0;
       } catch (err) {
+        progressEditFailCount++;
         logger.warn(
           {
             chatJid,
@@ -896,13 +944,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             groupFolder: group.folder,
             runId,
             progressMessageId,
+            progressEditFailCount,
             err,
           },
-          'Failed to edit tracked progress message; will recreate it on the next progress update',
+          'Failed to edit tracked progress message; will retry before recreating',
         );
-        clearProgressTicker();
-        progressMessageId = null;
         latestProgressRendered = null;
+        if (progressEditFailCount >= 3) {
+          clearProgressTicker();
+          progressMessageId = null;
+        }
       }
     };
 
@@ -916,7 +967,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       }, 10_000);
     };
 
-    const finalizeProgressMessage = async () => {
+    const finalizeProgressMessage = async (options?: {
+      preserveTrackedMessage?: boolean;
+    }): Promise<string | null> => {
       logger.info(
         {
           chatJid,
@@ -928,8 +981,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         },
         'Finalizing tracked progress message',
       );
-      await syncTrackedProgressMessage();
+      const trackedMessageId = progressMessageId;
+      if (!options?.preserveTrackedMessage) {
+        await syncTrackedProgressMessage();
+      }
       resetProgressState();
+      return trackedMessageId;
     };
 
     const sendProgressMessage = async (text: string) => {
@@ -963,6 +1020,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       }
 
       if (!channel.sendAndTrack) {
+        latestProgressRendered = rendered;
+        await channel.sendMessage(chatJid, rendered);
+        progressOutputSentToUser = true;
         return;
       }
 
@@ -979,6 +1039,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           },
           'Failed to send tracked progress message',
         );
+        latestProgressRendered = rendered;
+        await channel.sendMessage(chatJid, rendered);
+        progressOutputSentToUser = true;
         return;
       }
 
@@ -997,7 +1060,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         latestProgressRendered = rendered;
         ensureProgressTicker();
         progressOutputSentToUser = true;
+        return;
       }
+
+      latestProgressRendered = rendered;
+      await channel.sendMessage(chatJid, rendered);
+      progressOutputSentToUser = true;
     };
 
     await channel.setTyping?.(chatJid, true);
@@ -1032,6 +1100,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               ? result.result
               : JSON.stringify(result.result);
           const text = formatOutbound(raw);
+          if (text) {
+            canPipeFollowUps = false;
+          }
           logger.info(
             {
               chatJid,
@@ -1073,9 +1144,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           sawNonProgressOutput = true;
 
           if (text) {
-            await finalizeProgressMessage();
+            const trackedProgressMessageId = await finalizeProgressMessage({
+              preserveTrackedMessage: !!(
+                progressMessageId && channel.editMessage
+              ),
+            });
             producedFinalText = text;
-            await flushProducedFinalText();
+            await flushProducedFinalText(trackedProgressMessageId);
           } else {
             logger.info(
               {
@@ -1096,7 +1171,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           if (result.status === 'success') {
             warnFollowUpEndedWithoutOutput('success-null-result');
           }
-          await finalizeProgressMessage();
+          promotableTrackedProgressMessageId = await finalizeProgressMessage({
+            preserveTrackedMessage: !!(
+              !sawNonProgressOutput &&
+              latestModelProgressTextForFinalFallback &&
+              progressMessageId &&
+              channel.editMessage
+            ),
+          });
         }
 
         await channel.setTyping?.(chatJid, false);
@@ -1106,6 +1188,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
         if (result.status === 'success' && !poisonedSessionDetected) {
           deps.queue.notifyIdle(chatJid, runId);
+          if (finalOutputSentToUser || progressOutputSentToUser) {
+            deps.queue.closeStdin(chatJid, {
+              runId,
+              reason: 'output-delivered-close',
+            });
+          }
         }
 
         if (result.status === 'error') {
@@ -1136,14 +1224,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         },
         'Promoting last progress output to final message after agent completion',
       );
+      const trackedProgressMessageId = await finalizeProgressMessage({
+        preserveTrackedMessage: !!(progressMessageId && channel.editMessage),
+      });
       producedFinalText = latestModelProgressTextForFinalFallback;
-      await flushProducedFinalText();
+      await flushProducedFinalText(
+        trackedProgressMessageId || promotableTrackedProgressMessageId,
+      );
     }
 
     clearProgressTicker();
 
     if (idleTimer) clearTimeout(idleTimer);
     deps.queue.setActivityTouch?.(chatJid, null);
+    deps.queue.setFollowUpPipeAllowed?.(chatJid, null);
 
     const finalFollowUpRequeueReason =
       followUpEndedWithoutOutputReason ||

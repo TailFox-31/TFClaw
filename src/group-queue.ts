@@ -42,6 +42,7 @@ interface GroupState {
   retryScheduledAt: number | null;
   startedAt: number | null;
   activityTouch: ((meta?: GroupActivityTouchMeta) => void) | null;
+  followUpPipeAllowed: (() => boolean) | null;
 }
 
 export interface GroupStatus {
@@ -81,6 +82,7 @@ export class GroupQueue {
         retryScheduledAt: null,
         startedAt: null,
         activityTouch: null,
+        followUpPipeAllowed: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -101,6 +103,14 @@ export class GroupQueue {
     state.activityTouch = touch;
   }
 
+  setFollowUpPipeAllowed(
+    groupJid: string,
+    allowed: (() => boolean) | null,
+  ): void {
+    const state = this.getGroup(groupJid);
+    state.followUpPipeAllowed = allowed;
+  }
+
   private createRunId(): string {
     return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -117,6 +127,12 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
+      if (state.idleWaiting) {
+        this.closeStdin(groupJid, {
+          runId: state.currentRunId ?? undefined,
+          reason: 'pending-message-preemption',
+        });
+      }
       logger.debug({ groupJid }, 'Agent active, message queued');
       return;
     }
@@ -268,6 +284,13 @@ export class GroupQueue {
       );
       return false;
     }
+    if (state.followUpPipeAllowed && !state.followUpPipeAllowed()) {
+      logger.info(
+        { groupJid, runId: state.currentRunId, groupFolder: state.groupFolder },
+        'Skipping follow-up IPC because active agent requires a fresh logical run',
+      );
+      return false;
+    }
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
@@ -412,6 +435,7 @@ export class GroupQueue {
       state.groupFolder = null;
       state.currentRunId = null;
       state.activityTouch = null;
+      state.followUpPipeAllowed = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
@@ -447,6 +471,7 @@ export class GroupQueue {
       state.processName = null;
       state.groupFolder = null;
       state.activityTouch = null;
+      state.followUpPipeAllowed = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
