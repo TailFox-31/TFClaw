@@ -627,6 +627,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     let followUpQueuedAt: number | null = null;
     let followUpQueuedTextLength: number | null = null;
     let followUpQueuedFilename: string | null = null;
+    let followUpRollbackCursor: string | null = null;
+    let followUpRestartRequested = false;
+    let followUpEndedWithoutOutputReason: string | null = null;
     let followUpNoOutputWarnTimer: ReturnType<typeof setTimeout> | null = null;
     let hadError = false;
     let latestProgressText: string | null = null;
@@ -665,6 +668,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             },
             'Idle timeout reached while a queued follow-up still had no agent output',
           );
+          followUpRestartRequested = true;
         }
         deps.queue.closeStdin(chatJid, { reason: 'idle-timeout' });
       }, deps.idleTimeout);
@@ -682,6 +686,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       followUpQueuedAt = null;
       followUpQueuedTextLength = null;
       followUpQueuedFilename = null;
+      followUpRollbackCursor = null;
+      followUpRestartRequested = false;
+      followUpEndedWithoutOutputReason = null;
     };
 
     const scheduleFollowUpNoOutputWarning = () => {
@@ -700,6 +707,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           },
           'No agent output observed within 10s of queuing a follow-up message',
         );
+        followUpRestartRequested = true;
+        deps.queue.closeStdin(chatJid, {
+          runId,
+          reason: 'follow-up-no-output-preemption',
+        });
       }, FOLLOW_UP_NO_OUTPUT_WARN_MS);
     };
 
@@ -709,6 +721,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       filename: string;
     }) => {
       if (meta?.source !== 'follow-up') return;
+      if (followUpRollbackCursor === null) {
+        followUpRollbackCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
+      }
       followUpQueuedAt = Date.now();
       followUpQueuedTextLength = meta.textLength;
       followUpQueuedFilename = meta.filename;
@@ -745,6 +760,22 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     const warnFollowUpEndedWithoutOutput = (reasonText: string) => {
       if (followUpQueuedAt === null) return;
+      followUpEndedWithoutOutputReason = reasonText;
+    };
+
+    const requeuePendingFollowUp = (reasonText: string): boolean => {
+      if (followUpQueuedAt === null || followUpRollbackCursor === null) {
+        return false;
+      }
+
+      const lastAgentTimestamps = deps.getLastAgentTimestamps();
+      const currentCursor = lastAgentTimestamps[chatJid] || '0';
+      lastAgentTimestamps[chatJid] = normalizeStoredSeqCursor(
+        followUpRollbackCursor,
+        chatJid,
+      );
+      deps.saveState();
+
       logger.warn(
         {
           group: group.name,
@@ -755,10 +786,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           followUpQueuedFilename,
           followUpWaitMs: Date.now() - followUpQueuedAt,
           reason: reasonText,
+          rollbackCursor: followUpRollbackCursor,
+          currentCursor,
         },
-        'Active agent ended a turn without any output after a queued follow-up',
+        'Re-queueing queued follow-up after active agent ended without output',
       );
+
       clearPendingFollowUpDiagnostics();
+      deps.queue.enqueueMessageCheck(chatJid, group.folder);
+      return true;
     };
 
     deps.queue.setActivityTouch?.(chatJid, (meta) => {
@@ -852,9 +888,21 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       try {
         await channel.editMessage(chatJid, progressMessageId, rendered);
         latestProgressRendered = rendered;
-      } catch {
+      } catch (err) {
+        logger.warn(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            progressMessageId,
+            err,
+          },
+          'Failed to edit tracked progress message; will recreate it on the next progress update',
+        );
         clearProgressTicker();
         progressMessageId = null;
+        latestProgressRendered = null;
       }
     };
 
@@ -885,7 +933,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     };
 
     const sendProgressMessage = async (text: string) => {
-      if (!text || text === latestProgressText) {
+      if (!text || (text === latestProgressText && progressMessageId)) {
         return;
       }
 
@@ -1095,8 +1143,19 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     clearProgressTicker();
 
     if (idleTimer) clearTimeout(idleTimer);
-    clearPendingFollowUpDiagnostics();
     deps.queue.setActivityTouch?.(chatJid, null);
+
+    const finalFollowUpRequeueReason =
+      followUpEndedWithoutOutputReason ||
+      (followUpRestartRequested ? 'follow-up-no-output-timeout' : null);
+    if (
+      finalFollowUpRequeueReason &&
+      requeuePendingFollowUp(finalFollowUpRequeueReason)
+    ) {
+      return true;
+    }
+
+    clearPendingFollowUpDiagnostics();
 
     if (hadError) {
       if (
