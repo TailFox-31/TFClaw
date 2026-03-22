@@ -461,8 +461,10 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           continue;
         }
 
-        deps.queue.enqueueTask(getTaskQueueJid(currentTask), currentTask.id, () =>
-          runTask(currentTask, deps),
+        deps.queue.enqueueTask(
+          getTaskQueueJid(currentTask),
+          currentTask.id,
+          () => runTask(currentTask, deps),
         );
       }
     } catch (err) {
