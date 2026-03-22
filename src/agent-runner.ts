@@ -253,6 +253,26 @@ function prepareGroupEnvironment(
         fs.copyFileSync(src, dst);
       }
     }
+    const groupCodexConfigOverlayPath = path.join(
+      groupDir,
+      '.codex',
+      'config.toml',
+    );
+    const sessionCodexConfigPath = path.join(sessionCodexDir, 'config.toml');
+    if (fs.existsSync(groupCodexConfigOverlayPath)) {
+      const overlayToml = fs
+        .readFileSync(groupCodexConfigOverlayPath, 'utf-8')
+        .trim();
+      if (overlayToml) {
+        const baseToml = fs.existsSync(sessionCodexConfigPath)
+          ? fs.readFileSync(sessionCodexConfigPath, 'utf-8').trimEnd()
+          : '';
+        const mergedToml = [baseToml, overlayToml]
+          .filter((value) => value.length > 0)
+          .join('\n\n');
+        fs.writeFileSync(sessionCodexConfigPath, mergedToml + '\n');
+      }
+    }
     const sessionAgentsPath = path.join(sessionCodexDir, 'AGENTS.md');
     const codexPlatformPrompt = readPlatformPrompt('codex', projectRoot);
     const codexPairedRoomPrompt = isPairedRoom

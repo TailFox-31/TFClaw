@@ -299,6 +299,76 @@ describe('agent-runner timeout behavior', () => {
     );
   });
 
+  it('merges a per-group codex config overlay before injecting managed MCP servers', async () => {
+    vi.useRealTimers();
+    fakeProc = createFakeProcess();
+    const overlayPath =
+      '/tmp/nanoclaw-test-groups/test-group/.codex/config.toml';
+    const sessionConfigPath =
+      '/tmp/nanoclaw-test-data/sessions/test-group/.codex/config.toml';
+    let sessionToml = `model = "gpt-5.4"\n`;
+
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const str = String(p);
+      return (
+        str.includes('dist/index.js') ||
+        str.includes('dist/ipc-mcp-stdio.js') ||
+        str.endsWith('/.codex/config.toml') ||
+        str === overlayPath
+      );
+    });
+    vi.mocked(fs.readFileSync).mockImplementation((p: fs.PathLike | number) => {
+      const str = String(p);
+      if (str === overlayPath) {
+        return `# room-specific overlay
+[mcp_servers.ouroboros]
+command = "/tmp/ouroboros/bin/ouroboros"
+args = ["mcp", "serve"]
+
+[mcp_servers.ouroboros.env]
+OUROBOROS_AGENT_RUNTIME = "codex"
+OUROBOROS_LLM_BACKEND = "codex"
+`;
+      }
+      if (str === sessionConfigPath) {
+        return sessionToml;
+      }
+      return '';
+    });
+    vi.mocked(fs.writeFileSync).mockImplementation(
+      (p: fs.PathLike | number, data: string | NodeJS.ArrayBufferView) => {
+        if (String(p) === sessionConfigPath) {
+          sessionToml = String(data);
+        }
+      },
+    );
+
+    const codexGroup: RegisteredGroup = {
+      ...testGroup,
+      agentType: 'codex',
+    };
+
+    const resultPromise = runAgentProcess(
+      codexGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+
+    const tomlWrite = vi
+      .mocked(fs.writeFileSync)
+      .mock.calls.filter((call) => String(call[0]) === sessionConfigPath)
+      .at(-1);
+    const toml = String(tomlWrite?.[1]);
+    expect(toml).toContain('[mcp_servers.ouroboros]');
+    expect(toml).toContain('OUROBOROS_AGENT_RUNTIME = "codex"');
+    expect(toml).toContain('[mcp_servers.nanoclaw]');
+  });
+
   it('waits for queued streamed output before resolving an error exit', async () => {
     let releaseOutputs: (() => void) | undefined;
     const outputsFlushed = new Promise<void>((resolve) => {
