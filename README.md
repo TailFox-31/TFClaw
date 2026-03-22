@@ -29,40 +29,17 @@ Both share the same codebase (`dist/index.js`), differentiated by environment va
 ## Architecture
 
 ```
-Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Claude Agent SDK
-                                          └──► Codex App-Server (JSON-RPC)
-                                                    ├── thread/start, thread/resume
-                                                    ├── turn/start (streaming, multimodal)
-                                                    └── turn/steer (mid-turn injection)
+Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Claude Code (Agent SDK, MessageStream)
+                                          └──► Codex (App-Server, JSON-RPC)
+                                          │
+                                     IPC polling ◄── follow-up messages (mid-turn steering)
+                                          │
+                                     Router ──► Discord (text, images, files)
 
-Agent ──► Bash ──► agent-browser (gstack browse)
-                        ├── goto, snapshot, click, fill
-                        ├── screenshot, pdf, responsive
-                        └── persistent Chromium daemon (~100ms/cmd)
-```
-
-## Directory Layout
-
-```
-ejclaw/
-├── src/
-│   ├── index.ts              # Orchestrator: state, message loop, agent invocation
-│   ├── agent-runner.ts       # Spawns agent processes, manages env/sessions/skills
-│   ├── group-queue.ts        # Per-group concurrency, priority queue
-│   ├── router.ts             # Outbound message formatting and routing
-│   ├── db.ts                 # SQLite operations (WAL mode, shared access)
-│   ├── config.ts             # Paths, intervals, trigger patterns
-│   └── channels/
-│       └── discord.ts        # Discord: mentions, images, typing, voice transcription
-├── runners/
-│   ├── agent-runner/         # Claude Code runner (Agent SDK)
-│   ├── codex-runner/         # Codex runner (app-server JSON-RPC)
-│   └── skills/
-│       └── agent-browser/    # Browser automation (gstack browse wrapper)
-├── groups/{name}/            # Per-group memory (CLAUDE.md)
-├── data/sessions/            # Per-group agent sessions
-├── store/                    # SQLite database
-└── prompts/                  # Platform-level system prompts
+Each agent has access to:
+  ├── MCP tools (send_message, schedule_task, watch_ci, ...)
+  ├── Bash skills (agent-browser → gstack browse, persistent Chromium)
+  └── Per-group memory (CLAUDE.md / AGENTS.md)
 ```
 
 ## Setup
