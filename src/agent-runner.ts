@@ -107,8 +107,7 @@ function buildBaseRunnerEnv(args: {
   const npmGlobalBin = path.join(os.homedir(), '.npm-global', 'bin');
   const currentPath = cleanEnv.PATH || '/usr/local/bin:/usr/bin:/bin';
   const extraPaths = [nodeBin, npmGlobalBin].filter(
-    (candidate) =>
-      !currentPath.includes(candidate) && fs.existsSync(candidate),
+    (candidate) => !currentPath.includes(candidate) && fs.existsSync(candidate),
   );
 
   return {

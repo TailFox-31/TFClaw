@@ -3,10 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import {
-  STATUS_SHOW_ROOMS,
-  USAGE_DASHBOARD_ENABLED,
-} from './config.js';
+import { STATUS_SHOW_ROOMS, USAGE_DASHBOARD_ENABLED } from './config.js';
 import {
   fetchClaudeUsageViaCli,
   type ClaudeUsageData,
@@ -135,7 +132,9 @@ async function refreshChannelMeta(
 
   const channel = opts.channels.find(
     (item) =>
-      item.name.startsWith('discord') && item.isConnected() && item.getChannelMeta,
+      item.name.startsWith('discord') &&
+      item.isConnected() &&
+      item.getChannelMeta,
   );
   if (!channel?.getChannelMeta) return;
 
@@ -307,7 +306,11 @@ function buildStatusContent(): string {
     rooms.sort((a, b) => (a.meta?.position ?? 999) - (b.meta?.position ?? 999));
     for (const room of rooms) {
       room.agents.sort((a, b) =>
-        a.agentType === b.agentType ? 0 : a.agentType === 'claude-code' ? -1 : 1,
+        a.agentType === b.agentType
+          ? 0
+          : a.agentType === 'claude-code'
+            ? -1
+            : 1,
       );
       const agentParts = room.agents.map((agent) => {
         const icon = STATUS_ICONS[agent.status] || '⚪';

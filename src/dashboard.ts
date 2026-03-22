@@ -52,10 +52,12 @@ export function buildStatusContent(opts: DashboardOptions): string {
     .filter((line): line is DashboardRoomLine => Boolean(line));
 
   return composeDashboardContent([
-    `**에이전트 상태** (${opts.assistantName}) — 활성 ${totalActive} | 큐대기 ${totalWaiting} | 전체 ${roomLines.length}\n\n${renderCategorizedRoomSections({
-      lines: roomLines,
-      showCategoryHeaders: false,
-    })}`,
+    `**에이전트 상태** (${opts.assistantName}) — 활성 ${totalActive} | 큐대기 ${totalWaiting} | 전체 ${roomLines.length}\n\n${renderCategorizedRoomSections(
+      {
+        lines: roomLines,
+        showCategoryHeaders: false,
+      },
+    )}`,
   ]);
 }
 

@@ -18,10 +18,7 @@ export interface TaskStatusTrackerTransport {
 
 export interface TaskStatusTracker {
   enabled: boolean;
-  update: (
-    phase: WatcherStatusPhase,
-    nextRun?: string | null,
-  ) => Promise<void>;
+  update: (phase: WatcherStatusPhase, nextRun?: string | null) => Promise<void>;
 }
 
 export function createTaskStatusTracker(
@@ -44,10 +41,7 @@ export function createTaskStatusTracker(
     });
   };
 
-  const update = async (
-    phase: WatcherStatusPhase,
-    nextRun?: string | null,
-  ) => {
+  const update = async (phase: WatcherStatusPhase, nextRun?: string | null) => {
     if (!enabled) return;
 
     const checkedAt = new Date().toISOString();
