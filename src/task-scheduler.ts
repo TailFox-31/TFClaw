@@ -202,6 +202,14 @@ export function renderWatchCiStatusMessage(args: {
   return lines.join('\n');
 }
 
+function getTaskQueueJid(
+  task: Pick<ScheduledTask, 'chat_jid' | 'context_mode' | 'id'>,
+): string {
+  return task.context_mode === 'isolated'
+    ? `${task.chat_jid}::task:${task.id}`
+    : task.chat_jid;
+}
+
 async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
@@ -279,6 +287,7 @@ async function runTask(
   let error: string | null = null;
   let statusMessageId = task.status_message_id;
   let statusStartedAt = task.status_started_at;
+  const queueJid = getTaskQueueJid(task);
 
   // For group context mode, use the group's current session
   const sessions = deps.getSessions();
@@ -354,7 +363,7 @@ async function runTask(
         assistantName: ASSISTANT_NAME,
       },
       (proc, processName) =>
-        deps.onProcess(task.chat_jid, proc, processName, task.group_folder),
+        deps.onProcess(queueJid, proc, processName, task.group_folder),
       async (streamedOutput: AgentOutput) => {
         if (streamedOutput.phase === 'progress') {
           return;
@@ -452,7 +461,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
           continue;
         }
 
-        deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () =>
+        deps.queue.enqueueTask(getTaskQueueJid(currentTask), currentTask.id, () =>
           runTask(currentTask, deps),
         );
       }
