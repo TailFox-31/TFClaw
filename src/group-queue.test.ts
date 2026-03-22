@@ -69,9 +69,7 @@ describe('GroupQueue', () => {
       releaseRun = resolve;
     });
 
-    const processMessages = vi.fn(
-      async () => await blocker,
-    );
+    const processMessages = vi.fn(async () => await blocker);
 
     queue.setProcessMessagesFn(processMessages);
     queue.enqueueMessageCheck('group1@g.us', 'group-folder');
