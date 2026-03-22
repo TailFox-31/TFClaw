@@ -314,6 +314,99 @@ describe('createMessageRuntime', () => {
     expect(saveState).toHaveBeenCalled();
   });
 
+  it('allows follow-up messages without a trigger after a visible reply in non-main groups', async () => {
+    const chatJid = 'group@test';
+    const group: RegisteredGroup = {
+      ...makeGroup('codex'),
+      requiresTrigger: true,
+    };
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(db.getMessagesSince)
+      .mockReturnValueOnce([
+        {
+          id: 'msg-1',
+          chat_jid: chatJid,
+          sender: 'user@test',
+          sender_name: 'User',
+          content: '@Andy 첫 요청',
+          timestamp: '2026-03-18T09:00:00.000Z',
+        },
+      ])
+      .mockReturnValueOnce([
+        {
+          id: 'msg-2',
+          chat_jid: chatJid,
+          sender: 'user@test',
+          sender_name: 'User',
+          content: '두 번째 말은 멘션 없이 이어서',
+          timestamp: '2026-03-18T09:00:10.000Z',
+        },
+      ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: '응답했습니다.',
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: '응답했습니다.',
+          phase: 'final',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 60_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const first = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-triggered-first-turn',
+      reason: 'messages',
+    });
+    const second = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-triggerless-follow-up',
+      reason: 'messages',
+    });
+
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(channel.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      chatJid,
+      '응답했습니다.',
+    );
+    expect(channel.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      chatJid,
+      '응답했습니다.',
+    );
+  });
+
   it('clears Claude sessions and closes stdin immediately on poisoned output', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');

@@ -86,6 +86,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   startMessageLoop: () => Promise<void>;
 } {
   let messageLoopRunning = false;
+  const implicitContinuationUntil = new Map<string, number>();
 
   const getCurrentAvailableGroups = (): AvailableGroup[] =>
     getAvailableGroups(deps.getRegisteredGroups());
@@ -115,6 +116,24 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     deps.saveState();
   };
 
+  const openImplicitContinuationWindow = (chatJid: string): void => {
+    if (deps.idleTimeout <= 0) return;
+    implicitContinuationUntil.set(chatJid, Date.now() + deps.idleTimeout);
+  };
+
+  const hasImplicitContinuationWindow = (
+    chatJid: string,
+    messages: NewMessage[],
+  ): boolean => {
+    const until = implicitContinuationUntil.get(chatJid);
+    if (!until) return false;
+    if (Date.now() > until) {
+      implicitContinuationUntil.delete(chatJid);
+      return false;
+    }
+    return messages.some((message) => message.is_from_me !== true);
+  };
+
   const getProcessableMessages = (
     chatJid: string,
     messages: Parameters<typeof filterProcessableMessages>[0],
@@ -138,10 +157,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     // into a reply loop.
     return messages.filter(
       (message) =>
-        !(
-          message.is_bot_message &&
-          message.content.trim() === failureText
-        ),
+        !(message.is_bot_message && message.content.trim() === failureText),
     );
   };
 
@@ -161,6 +177,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           item.result_payload,
         );
         markWorkItemDelivered(item.id, replaceMessageId);
+        openImplicitContinuationWindow(item.chat_jid);
         logger.info(
           {
             chatJid: item.chat_jid,
@@ -188,6 +205,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     try {
       await channel.sendMessage(item.chat_jid, item.result_payload);
       markWorkItemDelivered(item.id);
+      openImplicitContinuationWindow(item.chat_jid);
       logger.info(
         {
           chatJid: item.chat_jid,
@@ -655,7 +673,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             (msg.is_from_me ||
               isTriggerAllowed(chatJid, msg.sender, allowlistCfg)),
         );
-        if (!hasTrigger) {
+        if (
+          !hasTrigger &&
+          !hasImplicitContinuationWindow(chatJid, missedMessages)
+        ) {
           logger.info(
             { chatJid, group: group.name, groupFolder: group.folder, runId },
             'Skipping queued run because no allowed trigger was found',
@@ -1203,7 +1224,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                   (msg.is_from_me ||
                     isTriggerAllowed(chatJid, msg.sender, allowlistCfg)),
               );
-              if (!hasTrigger) continue;
+              if (
+                !hasTrigger &&
+                !hasImplicitContinuationWindow(chatJid, processableGroupMessages)
+              ) {
+                continue;
+              }
             }
 
             deps.queue.enqueueMessageCheck(chatJid, group.folder);
