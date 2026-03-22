@@ -700,17 +700,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       await turnController.start();
 
-      const output = await runAgent(
-        group,
-        prompt,
-        chatJid,
-        runId,
-        (result) => turnController.handleOutput(result),
+      const output = await runAgent(group, prompt, chatJid, runId, (result) =>
+        turnController.handleOutput(result),
       );
 
-      const { deliverySucceeded, visiblePhase } = await turnController.finish(
-        output,
-      );
+      const { deliverySucceeded, visiblePhase } =
+        await turnController.finish(output);
 
       if (!deliverySucceeded) {
         logger.warn(

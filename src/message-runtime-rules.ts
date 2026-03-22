@@ -5,7 +5,11 @@ import {
 } from './db.js';
 import { filterProcessableMessages } from './bot-message-filter.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
-import { type Channel, type NewMessage, type RegisteredGroup } from './types.js';
+import {
+  type Channel,
+  type NewMessage,
+  type RegisteredGroup,
+} from './types.js';
 
 const BOT_COLLABORATION_WINDOW_MS = 12 * 60 * 60 * 1000;
 
@@ -77,10 +81,18 @@ export function hasAllowedTrigger(opts: {
   messages: NewMessage[];
   group: RegisteredGroup;
   triggerPattern: RegExp;
-  hasImplicitContinuationWindow: (chatJid: string, messages: NewMessage[]) => boolean;
+  hasImplicitContinuationWindow: (
+    chatJid: string,
+    messages: NewMessage[],
+  ) => boolean;
 }): boolean {
-  const { chatJid, messages, group, triggerPattern, hasImplicitContinuationWindow } =
-    opts;
+  const {
+    chatJid,
+    messages,
+    group,
+    triggerPattern,
+    hasImplicitContinuationWindow,
+  } = opts;
 
   if (group.isMain === true || group.requiresTrigger === false) {
     return true;
