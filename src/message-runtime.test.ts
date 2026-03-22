@@ -697,7 +697,10 @@ describe('createMessageRuntime', () => {
         '중복 최종 답변입니다.',
       );
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '최종 답변입니다.');
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        chatJid,
+        '최종 답변입니다.',
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -1537,7 +1540,10 @@ describe('createMessageRuntime', () => {
         '아직 진행 중.\n\n10초',
       );
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '아직 진행 중.');
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        chatJid,
+        '아직 진행 중.',
+      );
     } finally {
       vi.useRealTimers();
     }
@@ -1564,16 +1570,14 @@ describe('createMessageRuntime', () => {
       },
     ]);
 
-    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
-      async () => {
-        await vi.advanceTimersByTimeAsync(1_100);
-        return {
-          status: 'success',
-          result: null,
-          newSessionId: 'session-quiet-budget',
-        };
-      },
-    );
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(async () => {
+      await vi.advanceTimersByTimeAsync(1_100);
+      return {
+        status: 'success',
+        result: null,
+        newSessionId: 'session-quiet-budget',
+      };
+    });
 
     const runtime = createMessageRuntime({
       assistantName: 'Andy',

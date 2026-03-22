@@ -569,7 +569,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const MAX_SILENT_ROLLOVERS = 2;
     const MAX_TOTAL_SILENT_WAIT_MS =
       QUIET_RUN_ROLLOVER_MS * (MAX_SILENT_ROLLOVERS + 1);
-    const FAILURE_FINAL_TEXT = '요청을 완료하지 못했습니다. 다시 시도해 주세요.';
+    const FAILURE_FINAL_TEXT =
+      '요청을 완료하지 못했습니다. 다시 시도해 주세요.';
     const queueItemBaseCursor = normalizeStoredSeqCursor(
       deps.getLastAgentTimestamps()[chatJid] || '0',
       chatJid,
@@ -630,11 +631,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               !requiresTrigger ||
               (hasTrigger &&
                 (msg.is_from_me ||
-                  isTriggerAllowed(
-                    chatJid,
-                    msg.sender,
-                    loadSenderAllowlist(),
-                  )))
+                  isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
             );
           },
         },
@@ -680,13 +677,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       );
 
       type VisiblePhase = 'silent' | 'progress' | 'final';
-      type PendingFollowUp =
-        | {
-            queuedAt: number;
-            textLength: number;
-            filename: string;
-          }
-        | null;
+      type PendingFollowUp = {
+        queuedAt: number;
+        textLength: number;
+        filename: string;
+      } | null;
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       let hadError = false;
       let producedDeliverySucceeded = true;
@@ -934,38 +929,41 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           idleTimer = null;
           return;
         }
-        idleTimer = setTimeout(() => {
-          const closeReason =
-            !hasVisibleOutput() && pendingFollowUp
-              ? 'follow-up-no-output-preemption'
-              : 'idle-timeout';
-          quietStopReason ??=
-            !hasVisibleOutput() && pendingFollowUp
-              ? 'follow-up-no-output-timeout'
-              : 'idle-timeout';
-          if (!hasVisibleOutput() && pendingFollowUp) {
-            logger.warn(
-              {
-                group: group.name,
-                chatJid,
-                runId,
-                followUpQueuedAt: new Date(
-                  pendingFollowUp.queuedAt,
-                ).toISOString(),
-                followUpQueuedTextLength: pendingFollowUp.textLength,
-                followUpQueuedFilename: pendingFollowUp.filename,
-                followUpWaitMs: Date.now() - pendingFollowUp.queuedAt,
-              },
-              'Idle timeout reached while a queued follow-up still had no visible output',
-            );
-          } else {
-            logger.debug(
-              { group: group.name, chatJid, runId, closeReason },
-              'Idle timeout, closing agent stdin',
-            );
-          }
-          deps.queue.closeStdin(chatJid, { runId, reason: closeReason });
-        }, hasVisibleOutput() ? deps.idleTimeout : QUIET_RUN_ROLLOVER_MS);
+        idleTimer = setTimeout(
+          () => {
+            const closeReason =
+              !hasVisibleOutput() && pendingFollowUp
+                ? 'follow-up-no-output-preemption'
+                : 'idle-timeout';
+            quietStopReason ??=
+              !hasVisibleOutput() && pendingFollowUp
+                ? 'follow-up-no-output-timeout'
+                : 'idle-timeout';
+            if (!hasVisibleOutput() && pendingFollowUp) {
+              logger.warn(
+                {
+                  group: group.name,
+                  chatJid,
+                  runId,
+                  followUpQueuedAt: new Date(
+                    pendingFollowUp.queuedAt,
+                  ).toISOString(),
+                  followUpQueuedTextLength: pendingFollowUp.textLength,
+                  followUpQueuedFilename: pendingFollowUp.filename,
+                  followUpWaitMs: Date.now() - pendingFollowUp.queuedAt,
+                },
+                'Idle timeout reached while a queued follow-up still had no visible output',
+              );
+            } else {
+              logger.debug(
+                { group: group.name, chatJid, runId, closeReason },
+                'Idle timeout, closing agent stdin',
+              );
+            }
+            deps.queue.closeStdin(chatJid, { runId, reason: closeReason });
+          },
+          hasVisibleOutput() ? deps.idleTimeout : QUIET_RUN_ROLLOVER_MS,
+        );
       };
 
       const noteFollowUpQueued = (meta?: {
