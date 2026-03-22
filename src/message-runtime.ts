@@ -8,6 +8,7 @@ import {
 import {
   getAllChats,
   getAllTasks,
+  getLastHumanMessageTimestamp,
   getLatestMessageSeqAtOrBefore,
   getMessagesSinceSeq,
   getNewMessagesBySeq,
@@ -87,6 +88,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 } {
   let messageLoopRunning = false;
   const implicitContinuationUntil = new Map<string, number>();
+  const BOT_COLLABORATION_WINDOW_MS = 12 * 60 * 60 * 1000;
+  const FAILURE_FINAL_TEXT = '요청을 완료하지 못했습니다. 다시 시도해 주세요.';
 
   const getCurrentAvailableGroups = (): AvailableGroup[] =>
     getAvailableGroups(deps.getRegisteredGroups());
@@ -132,6 +135,40 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return false;
     }
     return messages.some((message) => message.is_from_me !== true);
+  };
+
+  const shouldSkipBotOnlyCollaboration = (
+    chatJid: string,
+    messages: NewMessage[],
+  ): boolean => {
+    if (isPairedRoomJid(chatJid)) return false;
+    const allFromBots = messages.every(
+      (message) => message.is_from_me || !!message.is_bot_message,
+    );
+    if (!allFromBots) return false;
+    const lastHuman = getLastHumanMessageTimestamp(chatJid);
+    if (!lastHuman) return true;
+    return (
+      Date.now() - new Date(lastHuman).getTime() > BOT_COLLABORATION_WINDOW_MS
+    );
+  };
+
+  const hasAllowedTrigger = (
+    chatJid: string,
+    messages: NewMessage[],
+    group: RegisteredGroup,
+  ): boolean => {
+    if (group.isMain === true || group.requiresTrigger === false) {
+      return true;
+    }
+    const allowlistCfg = loadSenderAllowlist();
+    const hasTrigger = messages.some(
+      (message) =>
+        deps.triggerPattern.test(message.content.trim()) &&
+        (message.is_from_me ||
+          isTriggerAllowed(chatJid, message.sender, allowlistCfg)),
+    );
+    return hasTrigger || hasImplicitContinuationWindow(chatJid, messages);
   };
 
   const getProcessableMessages = (
@@ -602,9 +639,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const isMainGroup = group.isMain === true;
     const isClaudeCodeAgent =
       (group.agentType || 'claude-code') === 'claude-code';
-    const FAILURE_FINAL_TEXT =
-      '요청을 완료하지 못했습니다. 다시 시도해 주세요.';
-
     while (true) {
       const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
       const rawMissedMessages = getMessagesSinceSeq(
@@ -623,6 +657,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         if (lastIgnored) {
           advanceLastAgentCursor(chatJid, lastIgnored.timestamp);
         }
+        return true;
+      }
+
+      if (shouldSkipBotOnlyCollaboration(chatJid, missedMessages)) {
+        const lastMessage = missedMessages[missedMessages.length - 1];
+        if (lastMessage?.seq != null) {
+          advanceLastAgentCursor(chatJid, lastMessage.seq);
+        }
+        logger.info(
+          { chatJid, group: group.name, groupFolder: group.folder, runId },
+          'Skipping bot-only collaboration because no recent human message exists',
+        );
         return true;
       }
 
@@ -665,24 +711,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       });
       if (cmdResult.handled) return cmdResult.success;
 
-      if (!isMainGroup && group.requiresTrigger !== false) {
-        const allowlistCfg = loadSenderAllowlist();
-        const hasTrigger = missedMessages.some(
-          (msg) =>
-            deps.triggerPattern.test(msg.content.trim()) &&
-            (msg.is_from_me ||
-              isTriggerAllowed(chatJid, msg.sender, allowlistCfg)),
+      if (!hasAllowedTrigger(chatJid, missedMessages, group)) {
+        logger.info(
+          { chatJid, group: group.name, groupFolder: group.folder, runId },
+          'Skipping queued run because no allowed trigger was found',
         );
-        if (
-          !hasTrigger &&
-          !hasImplicitContinuationWindow(chatJid, missedMessages)
-        ) {
-          logger.info(
-            { chatJid, group: group.name, groupFolder: group.folder, runId },
-            'Skipping queued run because no allowed trigger was found',
-          );
-          return true;
-        }
+        return true;
       }
 
       const prompt = formatMessages(missedMessages, deps.timezone);
@@ -1192,6 +1226,21 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               continue;
             }
 
+            if (
+              shouldSkipBotOnlyCollaboration(chatJid, processableGroupMessages)
+            ) {
+              const lastIgnored =
+                processableGroupMessages[processableGroupMessages.length - 1];
+              if (lastIgnored?.seq != null) {
+                advanceLastAgentCursor(chatJid, lastIgnored.seq);
+              }
+              logger.info(
+                { chatJid, group: group.name, groupFolder: group.folder },
+                'Bot-collaboration timeout: no recent human message, skipping',
+              );
+              continue;
+            }
+
             const loopCmdMsg = groupMessages.find(
               (msg) =>
                 extractSessionCommand(msg.content, deps.triggerPattern) !==
@@ -1214,22 +1263,40 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               continue;
             }
 
-            const needsTrigger =
-              !isMainGroup && group.requiresTrigger !== false;
-            if (needsTrigger) {
-              const allowlistCfg = loadSenderAllowlist();
-              const hasTrigger = processableGroupMessages.some(
-                (msg) =>
-                  deps.triggerPattern.test(msg.content.trim()) &&
-                  (msg.is_from_me ||
-                    isTriggerAllowed(chatJid, msg.sender, allowlistCfg)),
-              );
-              if (
-                !hasTrigger &&
-                !hasImplicitContinuationWindow(chatJid, processableGroupMessages)
-              ) {
-                continue;
+            if (!hasAllowedTrigger(chatJid, processableGroupMessages, group)) {
+              continue;
+            }
+
+            const rawPendingMessages = getMessagesSinceSeq(
+              chatJid,
+              deps.getLastAgentTimestamps()[chatJid] || '0',
+              deps.assistantName,
+            );
+            const pendingMessages = filterLoopingPairedBotMessages(
+              chatJid,
+              getProcessableMessages(chatJid, rawPendingMessages, channel),
+              FAILURE_FINAL_TEXT,
+            );
+            const messagesToSend =
+              pendingMessages.length > 0
+                ? pendingMessages
+                : processableGroupMessages;
+            const formatted = formatMessages(messagesToSend, deps.timezone);
+
+            if (deps.queue.sendMessage(chatJid, formatted)) {
+              const endSeq = messagesToSend[messagesToSend.length - 1]?.seq;
+              if (endSeq != null) {
+                advanceLastAgentCursor(chatJid, endSeq);
               }
+              channel
+                .setTyping?.(chatJid, true)
+                ?.catch((err) =>
+                  logger.warn(
+                    { chatJid, err },
+                    'Failed to set typing indicator',
+                  ),
+                );
+              continue;
             }
 
             deps.queue.enqueueMessageCheck(chatJid, group.folder);

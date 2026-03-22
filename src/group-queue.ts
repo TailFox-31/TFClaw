@@ -197,6 +197,55 @@ export class GroupQueue {
     );
   }
 
+  sendMessage(groupJid: string, text: string): boolean {
+    const state = this.getGroup(groupJid);
+    if (!state.active || !state.groupFolder || state.isTaskProcess) {
+      logger.debug(
+        {
+          groupJid,
+          runId: state.currentRunId,
+          active: state.active,
+          groupFolder: state.groupFolder,
+          isTaskProcess: state.isTaskProcess,
+        },
+        'Cannot pipe follow-up message to active agent',
+      );
+      return false;
+    }
+
+    const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+    try {
+      fs.mkdirSync(inputDir, { recursive: true });
+      const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
+      const filepath = path.join(inputDir, filename);
+      const tempPath = `${filepath}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
+      fs.renameSync(tempPath, filepath);
+      logger.info(
+        {
+          groupJid,
+          runId: state.currentRunId,
+          groupFolder: state.groupFolder,
+          textLength: text.length,
+          filename,
+        },
+        'Queued follow-up message for active agent',
+      );
+      return true;
+    } catch (err) {
+      logger.warn(
+        {
+          groupJid,
+          runId: state.currentRunId,
+          groupFolder: state.groupFolder,
+          err,
+        },
+        'Failed to queue follow-up message for active agent',
+      );
+      return false;
+    }
+  }
+
   /**
    * Signal the active agent process to wind down by writing a close sentinel.
    */
