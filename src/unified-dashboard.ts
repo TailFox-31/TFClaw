@@ -5,8 +5,10 @@ import path from 'path';
 
 import { STATUS_SHOW_ROOMS, USAGE_DASHBOARD_ENABLED } from './config.js';
 import {
-  fetchClaudeUsageViaCli,
+  fetchClaudeUsage as fetchClaudeUsageApi,
+  fetchAllClaudeUsage,
   type ClaudeUsageData,
+  type ClaudeAccountUsage,
 } from './claude-usage.js';
 import {
   composeDashboardContent,
@@ -349,10 +351,10 @@ async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
     return null;
   }
 
-  const cliUsage = await fetchClaudeUsageViaCli();
-  if (cliUsage) {
+  const apiUsage = await fetchClaudeUsageApi();
+  if (apiUsage) {
     usageApi429Streak = 0;
-    return cliUsage;
+    return apiUsage;
   }
 
   try {
@@ -520,20 +522,18 @@ async function buildUsageContent(): Promise<string> {
   );
   const shouldFetchClaudeUsage = USAGE_DASHBOARD_ENABLED;
 
-  const [liveClaudeUsage, codexUsage] = await Promise.all([
+  const [liveClaudeAccounts, codexUsage] = await Promise.all([
     shouldFetchClaudeUsage && !hasActiveClaudeWork
-      ? fetchClaudeUsage()
+      ? fetchAllClaudeUsage()
       : Promise.resolve(null),
     fetchCodexUsage(),
   ]);
 
-  const claudeUsage = shouldFetchClaudeUsage
-    ? liveClaudeUsage || cachedClaudeUsageData
-    : null;
+  // Update cache with first account's data for backward compat
   const claudeUsageIsCached =
-    shouldFetchClaudeUsage && !liveClaudeUsage && !!cachedClaudeUsageData;
-  if (shouldFetchClaudeUsage && liveClaudeUsage) {
-    cachedClaudeUsageData = liveClaudeUsage;
+    shouldFetchClaudeUsage && !liveClaudeAccounts && !!cachedClaudeUsageData;
+  if (shouldFetchClaudeUsage && liveClaudeAccounts?.length) {
+    cachedClaudeUsageData = liveClaudeAccounts[0].usage;
   }
 
   const lines: string[] = ['📊 *사용량*'];
@@ -551,11 +551,19 @@ async function buildUsageContent(): Promise<string> {
   };
   const rows: UsageRow[] = [];
 
-  if (claudeUsage) {
-    const h5 = claudeUsage.five_hour;
-    const d7 = claudeUsage.seven_day;
+  const claudeAccounts = liveClaudeAccounts
+    || (cachedClaudeUsageData ? [{ index: 0, masked: '', isActive: true, isRateLimited: false, usage: cachedClaudeUsageData }] : []);
+
+  for (const account of claudeAccounts) {
+    const u = account.usage;
+    if (!u) continue;
+    const h5 = u.five_hour;
+    const d7 = u.seven_day;
+    const label = claudeAccounts.length > 1
+      ? `Claude${account.index + 1}${account.isActive ? '⚡' : ''}${account.isRateLimited ? '🚫' : ''}`
+      : claudeUsageIsCached ? 'Claude*' : 'Claude';
     rows.push({
-      name: claudeUsageIsCached ? 'Claude*' : 'Claude',
+      name: label,
       h5pct: h5
         ? h5.utilization > 1
           ? Math.round(h5.utilization)

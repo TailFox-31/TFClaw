@@ -29,7 +29,10 @@ export function initTokenRotation(): void {
   const single = process.env.CLAUDE_CODE_OAUTH_TOKEN;
 
   const raw = multi
-    ? multi.split(',').map((t) => t.trim()).filter(Boolean)
+    ? multi
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
     : single
       ? [single]
       : [];
@@ -97,6 +100,18 @@ export function markTokenHealthy(): void {
 /** Number of configured tokens. */
 export function getTokenCount(): number {
   return tokens.length;
+}
+
+/** Get all configured tokens (masked for display, raw for API calls). */
+export function getAllTokens(): { index: number; token: string; masked: string; isActive: boolean; isRateLimited: boolean }[] {
+  const now = Date.now();
+  return tokens.map((t, i) => ({
+    index: i,
+    token: t.token,
+    masked: `${t.token.slice(0, 20)}...${t.token.slice(-4)}`,
+    isActive: i === currentIndex,
+    isRateLimited: Boolean(t.rateLimitedUntil && t.rateLimitedUntil > now),
+  }));
 }
 
 /** Diagnostic info. */
