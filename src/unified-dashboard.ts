@@ -10,6 +10,7 @@ import {
   type ClaudeUsageData,
   type ClaudeAccountUsage,
 } from './claude-usage.js';
+import { getAllCodexAccounts } from './codex-token-rotation.js';
 import {
   composeDashboardContent,
   formatElapsed,
@@ -572,7 +573,7 @@ async function buildUsageContent(): Promise<string> {
     const d7 = u.seven_day;
     const label =
       claudeAccounts.length > 1
-        ? `Claude${account.index + 1}${account.isActive ? '⚡' : ''}${account.isRateLimited ? '🚫' : ''}`
+        ? `Claude${account.index + 1}${account.isActive ? '*' : ''}${account.isRateLimited ? '!' : ''}`
         : claudeUsageIsCached
           ? 'Claude*'
           : 'Claude';
@@ -593,7 +594,39 @@ async function buildUsageContent(): Promise<string> {
     });
   }
 
-  if (codexUsage && Array.isArray(codexUsage)) {
+  const codexAccounts = getAllCodexAccounts();
+  if (codexAccounts.length > 1) {
+    // Multi-account: show each account with plan + status
+    for (const acct of codexAccounts) {
+      const icon = acct.isActive ? '*' : acct.isRateLimited ? '!' : ' ';
+      const label = `Codex${acct.index + 1}${icon}`;
+      if (acct.isActive && codexUsage && Array.isArray(codexUsage)) {
+        const relevant = codexUsage.filter(
+          (limit) =>
+            limit.primary.usedPercent > 0 || limit.secondary.usedPercent > 0,
+        );
+        const display = relevant.length > 0 ? relevant : codexUsage.slice(0, 1);
+        for (const limit of display) {
+          rows.push({
+            name: `${label} ${acct.planType}`,
+            h5pct: Math.round(limit.primary.usedPercent),
+            h5reset: formatResetKST(limit.primary.resetsAt),
+            d7pct: Math.round(limit.secondary.usedPercent),
+            d7reset: formatResetKST(limit.secondary.resetsAt),
+          });
+        }
+      } else {
+        rows.push({
+          name: `${label} ${acct.planType}`,
+          h5pct: -1,
+          h5reset: '',
+          d7pct: -1,
+          d7reset: '',
+        });
+      }
+    }
+  } else if (codexUsage && Array.isArray(codexUsage)) {
+    // Single account: existing behavior
     const relevant = codexUsage.filter(
       (limit) =>
         limit.primary.usedPercent > 0 || limit.secondary.usedPercent > 0,
@@ -611,8 +644,13 @@ async function buildUsageContent(): Promise<string> {
   }
 
   if (rows.length > 0) {
+    // Emoji characters take 2 columns in monospace — count visual width
+    const visualWidth = (s: string) =>
+      [...s].reduce((w, c) => w + (c.codePointAt(0)! > 0x7f ? 2 : 1), 0);
+    const maxNameWidth = Math.max(8, ...rows.map((r) => visualWidth(r.name))) + 1;
+    const padName = (s: string) => s + ' '.repeat(maxNameWidth - visualWidth(s));
     lines.push('```');
-    lines.push('        5-Hour             7-Day');
+    lines.push(`${' '.repeat(maxNameWidth)}5-Hour             7-Day`);
     for (const row of rows) {
       const h5 =
         row.h5pct >= 0
@@ -622,7 +660,7 @@ async function buildUsageContent(): Promise<string> {
         row.d7pct >= 0
           ? `${bar(row.d7pct)} ${String(row.d7pct).padStart(3)}%`
           : '  —  ';
-      lines.push(`${row.name.padEnd(8)}${h5}   ${d7}`);
+      lines.push(`${padName(row.name)}${h5}   ${d7}`);
     }
     lines.push('```');
   } else {
@@ -732,7 +770,10 @@ export async function startUnifiedDashboard(
       const content = buildUnifiedDashboardContent();
       if (!content) {
         logger.warn(
-          { cachedUsageLength: cachedUsageContent.length, statusShowRooms: STATUS_SHOW_ROOMS },
+          {
+            cachedUsageLength: cachedUsageContent.length,
+            statusShowRooms: STATUS_SHOW_ROOMS,
+          },
           'Dashboard content empty, skipping render',
         );
         statusMessageId = null;

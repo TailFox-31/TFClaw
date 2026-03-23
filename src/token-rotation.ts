@@ -10,8 +10,14 @@
  * All exhausted:  fall through to provider fallback (Kimi etc.)
  */
 
+import fs from 'fs';
+import path from 'path';
+
+import { DATA_DIR } from './config.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+
+const STATE_FILE = path.join(DATA_DIR, 'token-rotation-state.json');
 
 interface TokenState {
   token: string;
@@ -31,11 +37,9 @@ export function initTokenRotation(): void {
     'CLAUDE_CODE_OAUTH_TOKEN',
   ]);
   const multi =
-    process.env.CLAUDE_CODE_OAUTH_TOKENS ||
-    envFile.CLAUDE_CODE_OAUTH_TOKENS;
+    process.env.CLAUDE_CODE_OAUTH_TOKENS || envFile.CLAUDE_CODE_OAUTH_TOKENS;
   const single =
-    process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-    envFile.CLAUDE_CODE_OAUTH_TOKEN;
+    process.env.CLAUDE_CODE_OAUTH_TOKEN || envFile.CLAUDE_CODE_OAUTH_TOKEN;
 
   const raw = multi
     ? multi
@@ -51,11 +55,42 @@ export function initTokenRotation(): void {
   }
 
   if (tokens.length > 1) {
+    loadState();
     logger.info(
-      { count: tokens.length },
+      { count: tokens.length, activeIndex: currentIndex },
       `Token rotation initialized with ${tokens.length} tokens`,
     );
   }
+}
+
+function saveState(): void {
+  try {
+    const state = {
+      currentIndex,
+      rateLimits: tokens.map((t) => t.rateLimitedUntil),
+    };
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+  } catch { /* best effort */ }
+}
+
+function loadState(): void {
+  try {
+    if (!fs.existsSync(STATE_FILE)) return;
+    const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+    const now = Date.now();
+    if (typeof state.currentIndex === 'number' && state.currentIndex < tokens.length) {
+      currentIndex = state.currentIndex;
+    }
+    if (Array.isArray(state.rateLimits)) {
+      for (let i = 0; i < Math.min(state.rateLimits.length, tokens.length); i++) {
+        const until = state.rateLimits[i];
+        if (typeof until === 'number' && until > now) {
+          tokens[i].rateLimitedUntil = until;
+        }
+      }
+    }
+    logger.info({ currentIndex, tokenCount: tokens.length }, 'Token rotation state restored');
+  } catch { /* start fresh */ }
 }
 
 /** Get the current active token. */
@@ -86,6 +121,7 @@ export function rotateToken(): boolean {
         { tokenIndex: currentIndex, totalTokens: tokens.length },
         `Rotated to token #${currentIndex + 1}/${tokens.length}`,
       );
+      saveState();
       return true;
     }
   }
@@ -103,6 +139,7 @@ export function markTokenHealthy(): void {
   const state = tokens[currentIndex];
   if (state?.rateLimitedUntil) {
     state.rateLimitedUntil = null;
+    saveState();
   }
 }
 
