@@ -800,16 +800,17 @@ async function refreshAllCodexAccountUsage(): Promise<void> {
         const display = relevant.length > 0 ? relevant : usage.slice(0, 1);
         if (usage.length > 0) {
           // Find max primary (5h) and secondary (7d) across all limits
+          // Always capture reset times from first limit as baseline
           let maxH5 = 0;
           let maxD7 = 0;
-          let h5Reset: string | number | undefined;
-          let d7Reset: string | number | undefined;
+          let h5Reset: string | number | undefined = usage[0].primary.resetsAt;
+          let d7Reset: string | number | undefined = usage[0].secondary.resetsAt;
           for (const limit of usage) {
-            if (limit.primary.usedPercent > maxH5) {
+            if (limit.primary.usedPercent >= maxH5) {
               maxH5 = limit.primary.usedPercent;
               h5Reset = limit.primary.resetsAt;
             }
-            if (limit.secondary.usedPercent > maxD7) {
+            if (limit.secondary.usedPercent >= maxD7) {
               maxD7 = limit.secondary.usedPercent;
               d7Reset = limit.secondary.resetsAt;
             }
