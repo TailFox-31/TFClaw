@@ -24,21 +24,27 @@ interface CodexAccount {
   authPath: string;
   accountId: string;
   planType: string;
+  subscriptionUntil: string | null;
   rateLimitedUntil: number | null;
   lastUsagePct?: number;
+  lastUsageD7Pct?: number;
   resetAt?: string;
 }
 
-function parsePlanFromJwt(idToken: string): string {
+function parseJwtAuth(idToken: string): { planType: string; expiresAt: string | null } {
   try {
     const parts = idToken.split('.');
-    if (parts.length < 2) return '?';
+    if (parts.length < 2) return { planType: '?', expiresAt: null };
     const payload = JSON.parse(
       Buffer.from(parts[1], 'base64url').toString('utf-8'),
     );
-    return payload?.['https://api.openai.com/auth']?.chatgpt_plan_type || '?';
+    const auth = payload?.['https://api.openai.com/auth'] || {};
+    return {
+      planType: auth.chatgpt_plan_type || '?',
+      expiresAt: auth.chatgpt_subscription_active_until || null,
+    };
   } catch {
-    return '?';
+    return { planType: '?', expiresAt: null };
   }
 }
 
@@ -72,12 +78,14 @@ export function initCodexTokenRotation(): void {
     try {
       const data = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
       const accountId = data?.tokens?.account_id || `account-${dir}`;
-      const planType = parsePlanFromJwt(data?.tokens?.id_token || '');
+      const jwt = parseJwtAuth(data?.tokens?.id_token || '');
+      const planType = jwt.planType;
       accounts.push({
         index: accounts.length,
         authPath,
         accountId,
         planType,
+        subscriptionUntil: jwt.expiresAt,
         rateLimitedUntil: null,
       });
     } catch {
@@ -98,6 +106,7 @@ function saveCodexState(): void {
       currentIndex,
       rateLimits: accounts.map((a) => a.rateLimitedUntil),
       usagePcts: accounts.map((a) => a.lastUsagePct ?? null),
+      usageD7Pcts: accounts.map((a) => a.lastUsageD7Pct ?? null),
       resetAts: accounts.map((a) => a.resetAt ?? null),
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(state));
@@ -130,12 +139,26 @@ function loadCodexState(): void {
       }
     }
     if (Array.isArray(state.usagePcts)) {
-      for (let i = 0; i < Math.min(state.usagePcts.length, accounts.length); i++) {
-        if (typeof state.usagePcts[i] === 'number') accounts[i].lastUsagePct = state.usagePcts[i];
+      for (
+        let i = 0;
+        i < Math.min(state.usagePcts.length, accounts.length);
+        i++
+      ) {
+        if (typeof state.usagePcts[i] === 'number')
+          accounts[i].lastUsagePct = state.usagePcts[i];
+      }
+    }
+    if (Array.isArray(state.usageD7Pcts)) {
+      for (let i = 0; i < Math.min(state.usageD7Pcts.length, accounts.length); i++) {
+        if (typeof state.usageD7Pcts[i] === 'number') accounts[i].lastUsageD7Pct = state.usageD7Pcts[i];
       }
     }
     if (Array.isArray(state.resetAts)) {
-      for (let i = 0; i < Math.min(state.resetAts.length, accounts.length); i++) {
+      for (
+        let i = 0;
+        i < Math.min(state.resetAts.length, accounts.length);
+        i++
+      ) {
         if (state.resetAts[i]) accounts[i].resetAt = state.resetAts[i];
       }
     }
@@ -224,6 +247,46 @@ export function rotateCodexToken(errorMessage?: string): boolean {
   return false;
 }
 
+/**
+ * Advance to the next healthy account (round-robin).
+ * Called after each successful request to spread load evenly
+ * and keep usage data fresh for all accounts.
+ */
+export function advanceCodexAccount(): void {
+  if (accounts.length <= 1) return;
+  const now = Date.now();
+  for (let i = 1; i < accounts.length; i++) {
+    const idx = (currentIndex + i) % accounts.length;
+    const acct = accounts[idx];
+    if (!acct.rateLimitedUntil || acct.rateLimitedUntil <= now) {
+      currentIndex = idx;
+      saveCodexState();
+      return;
+    }
+  }
+  // All others rate-limited, stay on current
+}
+
+/**
+ * Update cached usage info for a specific account (or current if index omitted).
+ */
+export function updateCodexAccountUsage(
+  usagePct: number,
+  resetAt?: string,
+  accountIndex?: number,
+  d7Pct?: number,
+): void {
+  if (accounts.length === 0) return;
+  const idx = accountIndex ?? currentIndex;
+  const acct = accounts[idx];
+  if (acct) {
+    acct.lastUsagePct = usagePct;
+    if (d7Pct != null) acct.lastUsageD7Pct = d7Pct;
+    if (resetAt) acct.resetAt = resetAt;
+    saveCodexState();
+  }
+}
+
 export function markCodexTokenHealthy(): void {
   if (accounts.length === 0) return;
   const acct = accounts[currentIndex];
@@ -244,6 +307,7 @@ export function getAllCodexAccounts(): {
   isActive: boolean;
   isRateLimited: boolean;
   cachedUsagePct?: number;
+  cachedUsageD7Pct?: number;
   resetAt?: string;
 }[] {
   const now = Date.now();
@@ -254,6 +318,7 @@ export function getAllCodexAccounts(): {
     isActive: i === currentIndex,
     isRateLimited: Boolean(a.rateLimitedUntil && a.rateLimitedUntil > now),
     cachedUsagePct: a.lastUsagePct,
+    cachedUsageD7Pct: a.lastUsageD7Pct,
     resetAt: a.resetAt,
   }));
 }

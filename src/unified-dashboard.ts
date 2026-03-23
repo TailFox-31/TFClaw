@@ -10,7 +10,10 @@ import {
   type ClaudeUsageData,
   type ClaudeAccountUsage,
 } from './claude-usage.js';
-import { getAllCodexAccounts } from './codex-token-rotation.js';
+import {
+  getAllCodexAccounts,
+  updateCodexAccountUsage,
+} from './codex-token-rotation.js';
 import {
   composeDashboardContent,
   formatElapsed,
@@ -83,6 +86,25 @@ function formatResetKST(value: string | number): string {
       hour: '2-digit',
       minute: '2-digit',
     });
+  } catch {
+    return String(value);
+  }
+}
+
+function formatResetRemaining(value: string | number): string {
+  try {
+    const date =
+      typeof value === 'number' ? new Date(value * 1000) : new Date(value);
+    const diffMs = date.getTime() - Date.now();
+    if (diffMs <= 0) return '리셋됨';
+    const hours = Math.floor(diffMs / 3_600_000);
+    const minutes = Math.floor((diffMs % 3_600_000) / 60_000);
+    if (hours > 24) {
+      const days = Math.floor(hours / 24);
+      return `${days}일 후`;
+    }
+    if (hours > 0) return `${hours}h ${minutes}m 후`;
+    return `${minutes}m 후`;
   } catch {
     return String(value);
   }
@@ -421,7 +443,9 @@ async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
   }
 }
 
-async function fetchCodexUsage(): Promise<CodexRateLimit[] | null> {
+async function fetchCodexUsage(
+  codexHomeOverride?: string,
+): Promise<CodexRateLimit[] | null> {
   const npmGlobalBin = path.join(os.homedir(), '.npm-global', 'bin', 'codex');
   const codexBin = fs.existsSync(npmGlobalBin) ? npmGlobalBin : 'codex';
 
@@ -444,17 +468,22 @@ async function fetchCodexUsage(): Promise<CodexRateLimit[] | null> {
 
     const timer = setTimeout(() => finish(null), 20_000);
 
+    const spawnEnv: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      PATH: [
+        path.dirname(process.execPath),
+        path.join(os.homedir(), '.npm-global', 'bin'),
+        process.env.PATH || '',
+      ].join(':'),
+    };
+    if (codexHomeOverride) {
+      spawnEnv.CODEX_HOME = codexHomeOverride;
+    }
+
     try {
       proc = spawn(codexBin, ['app-server'], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...(process.env as Record<string, string>),
-          PATH: [
-            path.dirname(process.execPath),
-            path.join(os.homedir(), '.npm-global', 'bin'),
-            process.env.PATH || '',
-          ].join(':'),
-        },
+        env: spawnEnv,
       });
     } catch {
       resolve(null);
@@ -616,15 +645,17 @@ async function buildUsageContent(): Promise<string> {
           });
         }
       } else {
-        // Show cached usage for rate-limited accounts
-        const pct = acct.isRateLimited && acct.cachedUsagePct != null
-          ? acct.cachedUsagePct : -1;
+        // Show cached usage from last scan
+        const pct =
+          acct.cachedUsagePct != null ? acct.cachedUsagePct : -1;
+        const d7pct =
+          acct.cachedUsageD7Pct != null ? acct.cachedUsageD7Pct : -1;
         const reset = acct.resetAt || '';
         rows.push({
           name: `${label} ${acct.planType}`,
           h5pct: pct,
           h5reset: reset,
-          d7pct: -1,
+          d7pct,
           d7reset: '',
         });
       }
@@ -736,6 +767,51 @@ function buildUnifiedDashboardContent(): string {
   return composeDashboardContent(sections);
 }
 
+const CODEX_ACCOUNTS_DIR = path.join(os.homedir(), '.codex-accounts');
+const CODEX_FULL_SCAN_INTERVAL = 3_600_000; // 1 hour
+
+/**
+ * Scan ALL Codex accounts by spawning app-server with each auth.
+ * Called on startup and every hour to keep cached usage fresh.
+ */
+async function refreshAllCodexAccountUsage(): Promise<void> {
+  const codexAccounts = getAllCodexAccounts();
+  if (codexAccounts.length <= 1) return;
+
+  logger.info(
+    { accountCount: codexAccounts.length },
+    'Scanning all Codex accounts for usage data',
+  );
+
+  for (const acct of codexAccounts) {
+    const accountDir = path.join(CODEX_ACCOUNTS_DIR, String(acct.index + 1));
+    if (!fs.existsSync(accountDir)) continue;
+
+    try {
+      const usage = await fetchCodexUsage(accountDir);
+      if (usage && Array.isArray(usage)) {
+        const relevant = usage.filter(
+          (l) => l.primary.usedPercent > 0 || l.secondary.usedPercent > 0,
+        );
+        const display = relevant.length > 0 ? relevant : usage.slice(0, 1);
+        if (display.length > 0) {
+          const pct = Math.round(display[0].primary.usedPercent);
+          const resetVal = display[0].primary.resetsAt;
+          const resetStr = resetVal ? formatResetRemaining(resetVal) : undefined;
+          const d7Pct = Math.round(display[0].secondary.usedPercent);
+          updateCodexAccountUsage(pct, resetStr, acct.index, d7Pct);
+          logger.info(
+            { account: acct.index + 1, usagePct: pct, reset: resetStr },
+            `Codex account #${acct.index + 1} usage: ${pct}%`,
+          );
+        }
+      }
+    } catch (err) {
+      logger.debug({ err, account: acct.index + 1 }, 'Failed to fetch usage for Codex account');
+    }
+  }
+}
+
 async function refreshUsageCache(): Promise<void> {
   if (usageUpdateInProgress) return;
   usageUpdateInProgress = true;
@@ -803,6 +879,9 @@ export async function startUnifiedDashboard(
 
   if (isRenderer) {
     setInterval(refreshUsageCache, opts.usageUpdateInterval);
+    // Full scan of all Codex accounts on startup + hourly
+    void refreshAllCodexAccountUsage();
+    setInterval(() => void refreshAllCodexAccountUsage(), CODEX_FULL_SCAN_INTERVAL);
   }
 
   logger.info(
