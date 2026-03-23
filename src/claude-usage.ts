@@ -8,6 +8,8 @@
 import { logger } from './logger.js';
 import { getCurrentToken, getAllTokens } from './token-rotation.js';
 
+const PROFILE_ENDPOINT = 'https://api.anthropic.com/api/oauth/profile';
+
 export interface ClaudeUsageData {
   five_hour?: { utilization: number; resets_at: string };
   seven_day?: { utilization: number; resets_at: string };
@@ -97,6 +99,66 @@ export async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
     return null;
   }
   return fetchUsageForToken(token);
+}
+
+export interface ClaudeAccountProfile {
+  email: string;
+  planType: string;  // "max", "pro", "free"
+}
+
+const profileCache = new Map<number, ClaudeAccountProfile>();
+
+async function fetchProfileForToken(token: string): Promise<ClaudeAccountProfile | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(PROFILE_ENDPOINT, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'anthropic-beta': 'oauth-2025-04-20',
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      account?: { email?: string; has_claude_max?: boolean; has_claude_pro?: boolean };
+      organization?: { organization_type?: string };
+    };
+    const orgType = data.organization?.organization_type || '';
+    const planType = data.account?.has_claude_max ? 'max'
+      : data.account?.has_claude_pro ? 'pro'
+      : orgType.replace('claude_', '') || 'free';
+    return {
+      email: data.account?.email || '?',
+      planType,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Fetch profiles for all Claude tokens (cached, called once on startup).
+ */
+export async function fetchAllClaudeProfiles(): Promise<void> {
+  const allTokens = getAllTokens();
+  for (const t of allTokens) {
+    const profile = await fetchProfileForToken(t.token);
+    if (profile) {
+      profileCache.set(t.index, profile);
+      logger.info(
+        { account: t.index + 1, plan: profile.planType, email: profile.email },
+        `Claude account #${t.index + 1}: ${profile.planType}`,
+      );
+    }
+  }
+}
+
+export function getClaudeProfile(index: number): ClaudeAccountProfile | undefined {
+  return profileCache.get(index);
 }
 
 export interface ClaudeAccountUsage {

@@ -7,6 +7,8 @@ import { STATUS_SHOW_ROOMS, USAGE_DASHBOARD_ENABLED } from './config.js';
 import {
   fetchClaudeUsage as fetchClaudeUsageApi,
   fetchAllClaudeUsage,
+  fetchAllClaudeProfiles,
+  getClaudeProfile,
   type ClaudeUsageData,
   type ClaudeAccountUsage,
 } from './claude-usage.js';
@@ -600,12 +602,14 @@ async function buildUsageContent(): Promise<string> {
     if (!u) continue;
     const h5 = u.five_hour;
     const d7 = u.seven_day;
+    const profile = getClaudeProfile(account.index);
+    const planSuffix = profile ? ` ${profile.planType}` : '';
     const label =
       claudeAccounts.length > 1
-        ? `Claude${account.index + 1}${account.isActive ? '*' : ''}${account.isRateLimited ? '!' : ''}`
+        ? `Claude${account.index + 1}${account.isActive ? '*' : ''}${account.isRateLimited ? '!' : ''}${planSuffix}`
         : claudeUsageIsCached
-          ? 'Claude*'
-          : 'Claude';
+          ? `Claude*${planSuffix}`
+          : `Claude${planSuffix}`;
     rows.push({
       name: label,
       h5pct: h5
@@ -863,6 +867,7 @@ export async function startUnifiedDashboard(
   }
 
   if (isRenderer) {
+    await fetchAllClaudeProfiles();
     await refreshUsageCache();
   }
 
