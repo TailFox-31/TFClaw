@@ -804,7 +804,8 @@ async function refreshAllCodexAccountUsage(): Promise<void> {
           let maxH5 = 0;
           let maxD7 = 0;
           let h5Reset: string | number | undefined = usage[0].primary.resetsAt;
-          let d7Reset: string | number | undefined = usage[0].secondary.resetsAt;
+          let d7Reset: string | number | undefined =
+            usage[0].secondary.resetsAt;
           for (const limit of usage) {
             if (limit.primary.usedPercent >= maxH5) {
               maxH5 = limit.primary.usedPercent;
@@ -905,9 +906,13 @@ export async function startUnifiedDashboard(
   if (isRenderer) {
     setInterval(refreshUsageCache, opts.usageUpdateInterval);
     // Full scan of all Codex accounts on startup + hourly
-    void refreshAllCodexAccountUsage();
+    // After scan, refresh dashboard so cached data is visible immediately
+    void refreshAllCodexAccountUsage().then(() => {
+      void refreshUsageCache().then(() => void updateStatus());
+    });
     setInterval(
-      () => void refreshAllCodexAccountUsage(),
+      () =>
+        void refreshAllCodexAccountUsage().then(() => void refreshUsageCache()),
       CODEX_FULL_SCAN_INTERVAL,
     );
   }
