@@ -26,6 +26,7 @@ export class MessageTurnController {
   private hadError = false;
   private producedDeliverySucceeded = true;
   private latestProgressText: string | null = null;
+  private previousProgressText: string | null = null;
   private latestProgressRendered: string | null = null;
   private progressMessageId: string | null = null;
   private progressStartedAt: number | null = null;
@@ -115,7 +116,7 @@ export class MessageTurnController {
     }
 
     if (text) {
-      await this.finalizeProgressMessage();
+      await this.finalizeProgressMessage(text);
       await this.deliverFinalText(text);
     } else if (raw) {
       logger.info(
@@ -214,7 +215,8 @@ export class MessageTurnController {
 
     const suffix = `\n\n${elapsedParts.join(' ')}`;
     const maxText = 2000 - TASK_STATUS_MESSAGE_PREFIX.length - suffix.length;
-    const truncated = text.length > maxText ? text.slice(0, maxText - 1) + '…' : text;
+    const truncated =
+      text.length > maxText ? text.slice(0, maxText - 1) + '…' : text;
     return `${TASK_STATUS_MESSAGE_PREFIX}${truncated}${suffix}`;
   }
 
@@ -227,6 +229,7 @@ export class MessageTurnController {
   private resetProgressState(): void {
     this.clearProgressTicker();
     this.latestProgressText = null;
+    this.previousProgressText = null;
     this.latestProgressRendered = null;
     this.progressMessageId = null;
     this.progressStartedAt = null;
@@ -290,7 +293,7 @@ export class MessageTurnController {
     }, 10_000);
   }
 
-  private async finalizeProgressMessage(): Promise<void> {
+  private async finalizeProgressMessage(finalText?: string): Promise<void> {
     logger.info(
       {
         chatJid: this.options.chatJid,
@@ -302,7 +305,28 @@ export class MessageTurnController {
       },
       'Finalizing tracked progress message',
     );
-    await this.syncTrackedProgressMessage();
+    // If the last progress text matches the final result, revert to the
+    // previous progress so the same text doesn't appear twice in chat.
+    if (
+      finalText &&
+      this.latestProgressText === finalText &&
+      this.previousProgressText &&
+      this.progressMessageId &&
+      this.options.channel.editMessage
+    ) {
+      try {
+        const rendered = this.renderProgressMessage(this.previousProgressText);
+        await this.options.channel.editMessage(
+          this.options.chatJid,
+          this.progressMessageId,
+          rendered,
+        );
+      } catch {
+        // Best effort
+      }
+    } else {
+      await this.syncTrackedProgressMessage();
+    }
     this.resetProgressState();
   }
 
@@ -338,6 +362,7 @@ export class MessageTurnController {
       this.progressStartedAt = Date.now();
     }
     this.latestProgressTextForFinal = text;
+    this.previousProgressText = this.latestProgressText;
     this.latestProgressText = text;
     const rendered = this.renderProgressMessage(text);
 
