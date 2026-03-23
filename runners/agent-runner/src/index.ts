@@ -452,6 +452,7 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
   let terminalResultObserved = false;
+  let pendingProgressText: string | null = null;
 
   // Discover additional directories
   const extraDirs: string[] = [];
@@ -541,6 +542,18 @@ async function runQuery(
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
 
+    // Flush pending progress on any non-assistant message (ensures it's
+    // emitted before tool-activity or other events that depend on it).
+    if (message.type !== 'assistant' && pendingProgressText) {
+      writeOutput({
+        status: 'success',
+        phase: 'progress',
+        result: pendingProgressText,
+        newSessionId,
+      });
+      pendingProgressText = null;
+    }
+
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);
@@ -609,6 +622,14 @@ async function runQuery(
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
       const isError = message.subtype?.startsWith('error');
+      // Discard pending progress if it matches the final result (prevent duplicate)
+      if (pendingProgressText && textResult && pendingProgressText === textResult) {
+        log(`Discarding pending progress (matches result)`);
+        pendingProgressText = null;
+      } else if (pendingProgressText) {
+        writeOutput({ status: 'success', phase: 'progress', result: pendingProgressText, newSessionId });
+        pendingProgressText = null;
+      }
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       if (isError) {
         // Log full error details for debugging
@@ -672,15 +693,22 @@ async function runQuery(
         stream.end();
         break;
       }
-      // Intermediate assistant text between tool calls → progress
+      // Intermediate assistant text between tool calls → buffer as pending progress.
+      // Don't emit immediately — if the next message is a result with the same text,
+      // this would cause a duplicate. The pending text is flushed when the next
+      // non-result message arrives, or discarded if result matches.
       if (stopReason !== 'end_turn' && textResult) {
-        log(`Intermediate assistant text (${textResult.length} chars, stop=${stopReason})`);
-        writeOutput({
-          status: 'success',
-          phase: 'progress',
-          result: textResult,
-          newSessionId,
-        });
+        // Flush any previous pending progress first
+        if (pendingProgressText) {
+          writeOutput({
+            status: 'success',
+            phase: 'progress',
+            result: pendingProgressText,
+            newSessionId,
+          });
+        }
+        pendingProgressText = textResult;
+        log(`Intermediate assistant text buffered (${textResult.length} chars, stop=${stopReason})`);
       }
     }
   }
