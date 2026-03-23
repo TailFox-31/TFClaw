@@ -164,12 +164,20 @@ function loadCodexState(): void {
       }
     }
     if (Array.isArray(state.resetAts)) {
-      for (let i = 0; i < Math.min(state.resetAts.length, accounts.length); i++) {
+      for (
+        let i = 0;
+        i < Math.min(state.resetAts.length, accounts.length);
+        i++
+      ) {
         if (state.resetAts[i]) accounts[i].resetAt = state.resetAts[i];
       }
     }
     if (Array.isArray(state.resetD7Ats)) {
-      for (let i = 0; i < Math.min(state.resetD7Ats.length, accounts.length); i++) {
+      for (
+        let i = 0;
+        i < Math.min(state.resetD7Ats.length, accounts.length);
+        i++
+      ) {
         if (state.resetD7Ats[i]) accounts[i].resetD7At = state.resetD7Ats[i];
       }
     }

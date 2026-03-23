@@ -401,7 +401,10 @@ export async function runAgentForGroup(
     // Codex rate-limit rotation (non-Claude agents)
     if (!isClaudeCodeAgent && getCodexAccountCount() > 1) {
       const trigger = detectFallbackTrigger(output.error);
-      if (trigger.shouldFallback && rotateCodexToken(output.error ?? undefined)) {
+      if (
+        trigger.shouldFallback &&
+        rotateCodexToken(output.error ?? undefined)
+      ) {
         logger.info(
           { chatJid, group: group.name, runId, reason: trigger.reason },
           'Codex rate-limited, retrying with rotated account',

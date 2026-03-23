@@ -184,9 +184,10 @@ function prepareCodexSessionEnvironment(args: {
   fs.mkdirSync(sessionCodexDir, { recursive: true });
 
   const rotatedAuthSrc = getActiveCodexAuthPath();
-  const authSrc = rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
-    ? rotatedAuthSrc
-    : path.join(hostCodexDir, 'auth.json');
+  const authSrc =
+    rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
+      ? rotatedAuthSrc
+      : path.join(hostCodexDir, 'auth.json');
   const authDst = path.join(sessionCodexDir, 'auth.json');
   if (fs.existsSync(authSrc)) fs.copyFileSync(authSrc, authDst);
   for (const file of ['config.toml', 'config.json']) {
