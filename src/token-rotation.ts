@@ -10,6 +10,7 @@
  * All exhausted:  fall through to provider fallback (Kimi etc.)
  */
 
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
 interface TokenState {
@@ -25,8 +26,16 @@ export function initTokenRotation(): void {
   if (initialized) return;
   initialized = true;
 
-  const multi = process.env.CLAUDE_CODE_OAUTH_TOKENS;
-  const single = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const envFile = readEnvFile([
+    'CLAUDE_CODE_OAUTH_TOKENS',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+  ]);
+  const multi =
+    process.env.CLAUDE_CODE_OAUTH_TOKENS ||
+    envFile.CLAUDE_CODE_OAUTH_TOKENS;
+  const single =
+    process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+    envFile.CLAUDE_CODE_OAUTH_TOKEN;
 
   const raw = multi
     ? multi
@@ -103,7 +112,13 @@ export function getTokenCount(): number {
 }
 
 /** Get all configured tokens (masked for display, raw for API calls). */
-export function getAllTokens(): { index: number; token: string; masked: string; isActive: boolean; isRateLimited: boolean }[] {
+export function getAllTokens(): {
+  index: number;
+  token: string;
+  masked: string;
+  isActive: boolean;
+  isRateLimited: boolean;
+}[] {
   const now = Date.now();
   return tokens.map((t, i) => ({
     index: i,

@@ -25,9 +25,10 @@ interface UsageApiResponse {
   seven_day_opus?: { utilization: number; resets_at?: string };
 }
 
-function mapWindow(
-  w?: { utilization: number; resets_at?: string },
-): { utilization: number; resets_at: string } | undefined {
+function mapWindow(w?: {
+  utilization: number;
+  resets_at?: string;
+}): { utilization: number; resets_at: string } | undefined {
   if (!w) return undefined;
   return { utilization: w.utilization, resets_at: w.resets_at || '' };
 }
@@ -77,10 +78,7 @@ async function fetchUsageForToken(
     if ((err as Error).name === 'AbortError') {
       logger.warn('Claude usage API: request timed out');
     } else {
-      logger.warn(
-        { err },
-        'Claude usage API: fetch failed',
-      );
+      logger.warn({ err }, 'Claude usage API: fetch failed');
     }
     return null;
   } finally {
@@ -93,8 +91,7 @@ async function fetchUsageForToken(
  * Uses the current active token from rotation.
  */
 export async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
-  const token =
-    getCurrentToken() || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const token = getCurrentToken() || process.env.CLAUDE_CODE_OAUTH_TOKEN;
   if (!token) {
     logger.debug('No Claude OAuth token available for usage check');
     return null;
@@ -116,18 +113,21 @@ export interface ClaudeAccountUsage {
  */
 export async function fetchAllClaudeUsage(): Promise<ClaudeAccountUsage[]> {
   const allTokens = getAllTokens();
+  logger.debug({ tokenCount: allTokens.length }, 'fetchAllClaudeUsage called');
   if (allTokens.length === 0) {
     // Single token fallback
     const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     if (!token) return [];
     const usage = await fetchUsageForToken(token);
-    return [{
-      index: 0,
-      masked: `${token.slice(0, 20)}...${token.slice(-4)}`,
-      isActive: true,
-      isRateLimited: false,
-      usage,
-    }];
+    return [
+      {
+        index: 0,
+        masked: `${token.slice(0, 20)}...${token.slice(-4)}`,
+        isActive: true,
+        isRateLimited: false,
+        usage,
+      },
+    ];
   }
 
   const results: ClaudeAccountUsage[] = [];

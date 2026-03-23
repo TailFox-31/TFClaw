@@ -7,7 +7,10 @@ describe('ClaudeUsageData', () => {
     const data: ClaudeUsageData = {
       five_hour: { utilization: 45.2, resets_at: '2026-03-23T17:00:00Z' },
       seven_day: { utilization: 72.1, resets_at: '2026-03-29T00:00:00Z' },
-      seven_day_sonnet: { utilization: 60.0, resets_at: '2026-03-29T00:00:00Z' },
+      seven_day_sonnet: {
+        utilization: 60.0,
+        resets_at: '2026-03-29T00:00:00Z',
+      },
       seven_day_opus: { utilization: 80.0, resets_at: '2026-03-29T00:00:00Z' },
     };
 

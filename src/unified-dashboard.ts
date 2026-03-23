@@ -551,17 +551,31 @@ async function buildUsageContent(): Promise<string> {
   };
   const rows: UsageRow[] = [];
 
-  const claudeAccounts = liveClaudeAccounts
-    || (cachedClaudeUsageData ? [{ index: 0, masked: '', isActive: true, isRateLimited: false, usage: cachedClaudeUsageData }] : []);
+  const claudeAccounts =
+    liveClaudeAccounts ||
+    (cachedClaudeUsageData
+      ? [
+          {
+            index: 0,
+            masked: '',
+            isActive: true,
+            isRateLimited: false,
+            usage: cachedClaudeUsageData,
+          },
+        ]
+      : []);
 
   for (const account of claudeAccounts) {
     const u = account.usage;
     if (!u) continue;
     const h5 = u.five_hour;
     const d7 = u.seven_day;
-    const label = claudeAccounts.length > 1
-      ? `Claude${account.index + 1}${account.isActive ? '⚡' : ''}${account.isRateLimited ? '🚫' : ''}`
-      : claudeUsageIsCached ? 'Claude*' : 'Claude';
+    const label =
+      claudeAccounts.length > 1
+        ? `Claude${account.index + 1}${account.isActive ? '⚡' : ''}${account.isRateLimited ? '🚫' : ''}`
+        : claudeUsageIsCached
+          ? 'Claude*'
+          : 'Claude';
     rows.push({
       name: label,
       h5pct: h5
@@ -717,6 +731,10 @@ export async function startUnifiedDashboard(
       await refreshChannelMeta(opts);
       const content = buildUnifiedDashboardContent();
       if (!content) {
+        logger.warn(
+          { cachedUsageLength: cachedUsageContent.length, statusShowRooms: STATUS_SHOW_ROOMS },
+          'Dashboard content empty, skipping render',
+        );
         statusMessageId = null;
         return;
       }
@@ -728,7 +746,7 @@ export async function startUnifiedDashboard(
         if (id) statusMessageId = id;
       }
     } catch (err) {
-      logger.debug({ err }, 'Dashboard update failed');
+      logger.warn({ err }, 'Dashboard update failed');
       statusMessageId = null;
     }
   };
