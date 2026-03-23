@@ -5,8 +5,14 @@
  * Supports multiple tokens for rotation-aware usage checking.
  */
 
+import fs from 'fs';
+import path from 'path';
+
+import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 import { getCurrentToken, getAllTokens } from './token-rotation.js';
+
+const USAGE_CACHE_FILE = path.join(DATA_DIR, 'claude-usage-cache.json');
 
 const PROFILE_ENDPOINT = 'https://api.anthropic.com/api/oauth/profile';
 
@@ -35,9 +41,50 @@ function mapWindow(w?: {
   return { utilization: w.utilization, resets_at: w.resets_at || '' };
 }
 
+// ── Disk cache for usage data (survives restarts, 429s) ──
+
+interface UsageCacheEntry {
+  usage: ClaudeUsageData;
+  fetchedAt: number;
+}
+
+let usageDiskCache: Record<string, UsageCacheEntry> = {};
+let diskCacheLoaded = false;
+
+function loadUsageDiskCache(): void {
+  if (diskCacheLoaded) return;
+  diskCacheLoaded = true;
+  try {
+    if (fs.existsSync(USAGE_CACHE_FILE)) {
+      usageDiskCache = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf-8'));
+    }
+  } catch { /* start fresh */ }
+}
+
+function saveUsageDiskCache(): void {
+  try {
+    fs.writeFileSync(USAGE_CACHE_FILE, JSON.stringify(usageDiskCache));
+  } catch { /* best effort */ }
+}
+
+function cacheKey(token: string): string {
+  return token.slice(0, 12);
+}
+
+// Rate limit: at most one API call per token per 5 minutes
+const MIN_FETCH_INTERVAL_MS = 300_000;
+
 async function fetchUsageForToken(
   token: string,
 ): Promise<ClaudeUsageData | null> {
+  loadUsageDiskCache();
+
+  // Return cached data if fetched recently (avoid API rate-limit)
+  const key = cacheKey(token);
+  const cached = usageDiskCache[key];
+  if (cached && Date.now() - cached.fetchedAt < MIN_FETCH_INTERVAL_MS) {
+    return cached.usage;
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
@@ -57,32 +104,38 @@ async function fetchUsageForToken(
       return null;
     }
     if (res.status === 429) {
-      logger.warn('Claude usage API: rate limited (429)');
-      return null;
+      logger.warn('Claude usage API: rate limited (429), returning cached data');
+      return usageDiskCache[cacheKey(token)]?.usage ?? null;
     }
     if (!res.ok) {
       logger.warn(
         { status: res.status },
         `Claude usage API: unexpected status ${res.status}`,
       );
-      return null;
+      return usageDiskCache[cacheKey(token)]?.usage ?? null;
     }
 
     const data = (await res.json()) as UsageApiResponse;
 
-    return {
+    const result: ClaudeUsageData = {
       five_hour: mapWindow(data.five_hour),
       seven_day: mapWindow(data.seven_day),
       seven_day_sonnet: mapWindow(data.seven_day_sonnet),
       seven_day_opus: mapWindow(data.seven_day_opus),
     };
+
+    // Persist to disk cache
+    usageDiskCache[cacheKey(token)] = { usage: result, fetchedAt: Date.now() };
+    saveUsageDiskCache();
+
+    return result;
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
       logger.warn('Claude usage API: request timed out');
     } else {
       logger.warn({ err }, 'Claude usage API: fetch failed');
     }
-    return null;
+    return usageDiskCache[cacheKey(token)]?.usage ?? null;
   } finally {
     clearTimeout(timer);
   }
@@ -103,12 +156,14 @@ export async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
 
 export interface ClaudeAccountProfile {
   email: string;
-  planType: string;  // "max", "pro", "free"
+  planType: string; // "max", "pro", "free"
 }
 
 const profileCache = new Map<number, ClaudeAccountProfile>();
 
-async function fetchProfileForToken(token: string): Promise<ClaudeAccountProfile | null> {
+async function fetchProfileForToken(
+  token: string,
+): Promise<ClaudeAccountProfile | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -121,14 +176,20 @@ async function fetchProfileForToken(token: string): Promise<ClaudeAccountProfile
       signal: controller.signal,
     });
     if (!res.ok) return null;
-    const data = await res.json() as {
-      account?: { email?: string; has_claude_max?: boolean; has_claude_pro?: boolean };
+    const data = (await res.json()) as {
+      account?: {
+        email?: string;
+        has_claude_max?: boolean;
+        has_claude_pro?: boolean;
+      };
       organization?: { organization_type?: string };
     };
     const orgType = data.organization?.organization_type || '';
-    const planType = data.account?.has_claude_max ? 'max'
-      : data.account?.has_claude_pro ? 'pro'
-      : orgType.replace('claude_', '') || 'free';
+    const planType = data.account?.has_claude_max
+      ? 'max'
+      : data.account?.has_claude_pro
+        ? 'pro'
+        : orgType.replace('claude_', '') || 'free';
     return {
       email: data.account?.email || '?',
       planType,
@@ -157,7 +218,9 @@ export async function fetchAllClaudeProfiles(): Promise<void> {
   }
 }
 
-export function getClaudeProfile(index: number): ClaudeAccountProfile | undefined {
+export function getClaudeProfile(
+  index: number,
+): ClaudeAccountProfile | undefined {
   return profileCache.get(index);
 }
 

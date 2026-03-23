@@ -5,11 +5,9 @@ import path from 'path';
 
 import { STATUS_SHOW_ROOMS, USAGE_DASHBOARD_ENABLED } from './config.js';
 import {
-  fetchClaudeUsage as fetchClaudeUsageApi,
   fetchAllClaudeUsage,
   fetchAllClaudeProfiles,
   getClaudeProfile,
-  type ClaudeUsageData,
   type ClaudeAccountUsage,
 } from './claude-usage.js';
 import {
@@ -24,7 +22,6 @@ import {
   renderCategorizedRoomSections,
 } from './dashboard-render.js';
 import { getAllChats, updateRegisteredGroupName } from './db.js';
-import { readEnvFile } from './env.js';
 import type { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import {
@@ -69,11 +66,8 @@ const STATUS_SNAPSHOT_MAX_AGE_MS = 60000;
 
 let statusMessageId: string | null = null;
 let cachedUsageContent = '';
-let cachedClaudeUsageData: ClaudeUsageData | null = null;
+let cachedClaudeAccounts: ClaudeAccountUsage[] = [];
 let usageUpdateInProgress = false;
-let usageApiBackoffUntil = 0;
-let usageApi429Streak = 0;
-let usageApiPollingDisabled = false;
 let channelMetaCache = new Map<string, ChannelMeta>();
 let channelMetaLastRefresh = 0;
 
@@ -133,22 +127,6 @@ export async function purgeDashboardChannel(
   if (channel?.purgeChannel) {
     await channel.purgeChannel(statusJid);
   }
-}
-
-function parseRetryAfterMs(retryAfter: string | null): number | null {
-  if (!retryAfter) return null;
-
-  const seconds = Number(retryAfter);
-  if (Number.isFinite(seconds) && seconds > 0) {
-    return seconds * 1000;
-  }
-
-  const absolute = Date.parse(retryAfter);
-  if (!Number.isNaN(absolute)) {
-    return Math.max(0, absolute - Date.now());
-  }
-
-  return null;
 }
 
 async function refreshChannelMeta(
@@ -366,85 +344,6 @@ function buildStatusContent(): string {
   return `${header}\n\n${sections}`;
 }
 
-async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
-  if (usageApiPollingDisabled) {
-    logger.debug('Skipping usage API call (polling disabled for this process)');
-    return null;
-  }
-  if (Date.now() < usageApiBackoffUntil) {
-    logger.debug('Skipping usage API call (backoff active)');
-    return null;
-  }
-
-  const apiUsage = await fetchClaudeUsageApi();
-  if (apiUsage) {
-    usageApi429Streak = 0;
-    return apiUsage;
-  }
-
-  try {
-    const envToken = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN']);
-    let token =
-      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      envToken.CLAUDE_CODE_OAUTH_TOKEN ||
-      '';
-    if (!token) {
-      const configDir =
-        process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-      const credsPath = path.join(configDir, '.credentials.json');
-      if (!fs.existsSync(credsPath)) return null;
-      const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
-      token = creds?.claudeAiOauth?.accessToken || '';
-    }
-    if (!token) return null;
-
-    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-      },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      if (res.status === 429) {
-        const retryAfter = res.headers.get('retry-after');
-        const retryAfterMs = parseRetryAfterMs(retryAfter);
-        const backoffMs = Math.max(600_000, retryAfterMs ?? 0);
-        usageApi429Streak += 1;
-        usageApiBackoffUntil = Date.now() + backoffMs;
-        if (usageApi429Streak >= 3) {
-          usageApiPollingDisabled = true;
-        }
-        logger.warn(
-          {
-            status: 429,
-            retryAfter,
-            retryAfterMs,
-            backoffMs,
-            consecutive429s: usageApi429Streak,
-            pollingDisabled: usageApiPollingDisabled,
-            body: body.slice(0, 200),
-          },
-          usageApiPollingDisabled
-            ? 'Usage API rate limited repeatedly (429), disabling usage polling for this process'
-            : 'Usage API rate limited (429), backing off',
-        );
-      } else {
-        logger.warn(
-          { status: res.status, body: body.slice(0, 200) },
-          'Usage API returned non-OK status',
-        );
-      }
-      return null;
-    }
-    usageApi429Streak = 0;
-    return (await res.json()) as ClaudeUsageData;
-  } catch (err) {
-    logger.debug({ err }, 'Usage API fetch failed');
-    return null;
-  }
-}
-
 async function fetchCodexUsage(
   codexHomeOverride?: string,
 ): Promise<CodexRateLimit[] | null> {
@@ -543,74 +442,46 @@ async function fetchCodexUsage(
   });
 }
 
-async function buildUsageContent(): Promise<string> {
-  const activeSnapshots = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS);
-  const hasActiveClaudeWork = activeSnapshots.some(
-    (snapshot) =>
-      snapshot.agentType === 'claude-code' &&
-      snapshot.entries.some(
-        (entry) => entry.status === 'processing' || entry.status === 'waiting',
-      ),
+type UsageRow = {
+  name: string;
+  h5pct: number;
+  h5reset: string;
+  d7pct: number;
+  d7reset: string;
+};
+
+export function mergeClaudeDashboardAccounts(
+  liveAccounts: ClaudeAccountUsage[] | null | undefined,
+  cachedAccounts: ClaudeAccountUsage[],
+): ClaudeAccountUsage[] {
+  if (!liveAccounts) return cachedAccounts;
+
+  const cachedByIndex = new Map(
+    cachedAccounts.map((account) => [account.index, account]),
   );
-  const shouldFetchClaudeUsage = USAGE_DASHBOARD_ENABLED;
 
-  const [liveClaudeAccounts, codexUsage] = await Promise.all([
-    shouldFetchClaudeUsage && !hasActiveClaudeWork
-      ? fetchAllClaudeUsage()
-      : Promise.resolve(null),
-    fetchCodexUsage(),
-  ]);
+  return liveAccounts.map((account) => ({
+    ...account,
+    usage: account.usage || cachedByIndex.get(account.index)?.usage || null,
+  }));
+}
 
-  // Update cache with first account's data for backward compat
-  const claudeUsageIsCached =
-    shouldFetchClaudeUsage && !liveClaudeAccounts && !!cachedClaudeUsageData;
-  if (shouldFetchClaudeUsage && liveClaudeAccounts?.length) {
-    cachedClaudeUsageData = liveClaudeAccounts[0].usage;
-  }
+export function buildClaudeUsageRows(
+  claudeAccounts: ClaudeAccountUsage[],
+): UsageRow[] {
+  const isMultiAccount = claudeAccounts.length > 1;
 
-  const lines: string[] = ['📊 *사용량*'];
-  const bar = (pct: number) => {
-    const filled = Math.round(pct / 10);
-    return '█'.repeat(filled) + '░'.repeat(10 - filled);
-  };
-
-  type UsageRow = {
-    name: string;
-    h5pct: number;
-    h5reset: string;
-    d7pct: number;
-    d7reset: string;
-  };
-  const rows: UsageRow[] = [];
-
-  const claudeAccounts =
-    liveClaudeAccounts ||
-    (cachedClaudeUsageData
-      ? [
-          {
-            index: 0,
-            masked: '',
-            isActive: true,
-            isRateLimited: false,
-            usage: cachedClaudeUsageData,
-          },
-        ]
-      : []);
-
-  for (const account of claudeAccounts) {
-    const u = account.usage;
-    if (!u) continue;
-    const h5 = u.five_hour;
-    const d7 = u.seven_day;
+  return claudeAccounts.map((account) => {
+    const usage = account.usage;
+    const h5 = usage?.five_hour;
+    const d7 = usage?.seven_day;
     const profile = getClaudeProfile(account.index);
     const planSuffix = profile ? ` ${profile.planType}` : '';
-    const label =
-      claudeAccounts.length > 1
-        ? `Claude${account.index + 1}${account.isActive ? '*' : ''}${account.isRateLimited ? '!' : ''}${planSuffix}`
-        : claudeUsageIsCached
-          ? `Claude*${planSuffix}`
-          : `Claude${planSuffix}`;
-    rows.push({
+    const label = isMultiAccount
+      ? `Claude${account.index + 1}${account.isActive ? '*' : ''}${account.isRateLimited ? '!' : ''}${planSuffix}`
+      : `Claude${account.isActive ? '*' : ''}${account.isRateLimited ? '!' : ''}${planSuffix}`;
+
+    return {
       name: label,
       h5pct: h5
         ? h5.utilization > 1
@@ -624,7 +495,38 @@ async function buildUsageContent(): Promise<string> {
           : Math.round(d7.utilization * 100)
         : -1,
       d7reset: d7 ? formatResetRemaining(d7.resets_at) : '',
-    });
+    };
+  });
+}
+
+async function buildUsageContent(): Promise<string> {
+  const shouldFetchClaudeUsage = USAGE_DASHBOARD_ENABLED;
+  let liveClaudeAccounts: ClaudeAccountUsage[] | null = null;
+
+  const codexUsagePromise = fetchCodexUsage();
+  if (shouldFetchClaudeUsage) {
+    try {
+      liveClaudeAccounts = await fetchAllClaudeUsage();
+    } catch (err) {
+      logger.warn({ err }, 'Failed to fetch Claude usage for dashboard');
+    }
+  }
+  const codexUsage = await codexUsagePromise;
+
+  const lines: string[] = ['📊 *사용량*'];
+  const bar = (pct: number) => {
+    const filled = Math.round(pct / 10);
+    return '█'.repeat(filled) + '░'.repeat(10 - filled);
+  };
+
+  const rows: UsageRow[] = [];
+
+  if (shouldFetchClaudeUsage) {
+    cachedClaudeAccounts = mergeClaudeDashboardAccounts(
+      liveClaudeAccounts,
+      cachedClaudeAccounts,
+    );
+    rows.push(...buildClaudeUsageRows(cachedClaudeAccounts));
   }
 
   const codexAccounts = getAllCodexAccounts();
@@ -712,14 +614,6 @@ async function buildUsageContent(): Promise<string> {
     lines.push('_조회 불가_');
   }
 
-  if (shouldFetchClaudeUsage && usageApiPollingDisabled) {
-    lines.push(
-      '_* Claude 사용량 조회는 반복된 429로 이번 프로세스에서 일시 중지_',
-    );
-  }
-  if (claudeUsageIsCached) {
-    lines.push('_* Claude 사용량은 작업 중일 때는 캐시값 유지_');
-  }
   lines.push('');
   lines.push('🖥️ *서버*');
 

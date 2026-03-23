@@ -123,9 +123,10 @@ function prepareClaudeEnvironment(args: {
       args.envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL || '';
   }
   {
+    // Token rotation takes priority over static .env value
     const oauthToken =
-      args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
       getCurrentToken() ||
+      args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
       process.env.CLAUDE_CODE_OAUTH_TOKEN;
     if (oauthToken) {
       args.env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;

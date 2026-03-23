@@ -142,21 +142,29 @@ export function getCurrentToken(): string | undefined {
  * Try to rotate to the next available (non-rate-limited) token.
  * Returns true if a fresh token was found, false if all are exhausted.
  */
-export function rotateToken(errorMessage?: string): boolean {
+export function rotateToken(
+  errorMessage?: string,
+  opts?: { ignoreRateLimits?: boolean },
+): boolean {
   if (tokens.length <= 1) return false;
 
   const now = Date.now();
   tokens[currentIndex].rateLimitedUntil = computeCooldownUntil(errorMessage);
+  const ignoreRL = opts?.ignoreRateLimits ?? false;
 
   // Find next available token
   for (let i = 1; i < tokens.length; i++) {
     const idx = (currentIndex + i) % tokens.length;
     const state = tokens[idx];
-    if (!state.rateLimitedUntil || state.rateLimitedUntil <= now) {
+    if (
+      ignoreRL ||
+      !state.rateLimitedUntil ||
+      state.rateLimitedUntil <= now
+    ) {
       state.rateLimitedUntil = null;
       currentIndex = idx;
       logger.info(
-        { tokenIndex: currentIndex, totalTokens: tokens.length },
+        { tokenIndex: currentIndex, totalTokens: tokens.length, ignoreRL },
         `Rotated to token #${currentIndex + 1}/${tokens.length}`,
       );
       saveState();
