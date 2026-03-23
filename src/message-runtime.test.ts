@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
+
+/** Prefix helper for progress message assertions */
+const P = (text: string) => `${TASK_STATUS_MESSAGE_PREFIX}${text}`;
+
 vi.mock('./agent-runner.js', () => ({
   runAgentProcess: vi.fn(),
   writeGroupsSnapshot: vi.fn(),
@@ -686,17 +691,17 @@ describe('createMessageRuntime', () => {
       expect(result).toBe(true);
       expect(channel.sendAndTrack).toHaveBeenCalledWith(
         chatJid,
-        'CI 상태 확인 중입니다.\n\n0초',
+        P('CI 상태 확인 중입니다.\n\n0초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        'CI 상태 확인 중입니다.\n\n10초',
+        P('CI 상태 확인 중입니다.\n\n10초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        'CI 상태 확인 중입니다.\n\n10초',
+        P('CI 상태 확인 중입니다.\n\n10초'),
       );
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
@@ -779,11 +784,11 @@ describe('createMessageRuntime', () => {
     expect(result).toBe(true);
     expect(channel.sendAndTrack).toHaveBeenCalledWith(
       chatJid,
-      '진행 중입니다.\n\n0초',
+      P('진행 중입니다.\n\n0초'),
     );
     expect(channel.sendMessage).toHaveBeenCalledWith(
       chatJid,
-      '진행 중입니다.\n\n0초',
+      P('진행 중입니다.\n\n0초'),
     );
   });
 
@@ -851,11 +856,11 @@ describe('createMessageRuntime', () => {
     expect(result).toBe(true);
     expect(channel.sendAndTrack).toHaveBeenCalledWith(
       chatJid,
-      '진행 중입니다.\n\n0초',
+      P('진행 중입니다.\n\n0초'),
     );
     expect(channel.sendMessage).toHaveBeenCalledWith(
       chatJid,
-      '진행 중입니다.\n\n0초',
+      P('진행 중입니다.\n\n0초'),
     );
   });
 
@@ -949,17 +954,17 @@ describe('createMessageRuntime', () => {
       expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
       expect(channel.sendAndTrack).toHaveBeenCalledWith(
         chatJid,
-        '첫 번째 진행상황입니다.\n\n0초',
+        P('첫 번째 진행상황입니다.\n\n0초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '첫 번째 진행상황입니다.\n\n10초',
+        P('첫 번째 진행상황입니다.\n\n10초'),
       );
       expect(channel.editMessage).not.toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '늦게 도착한 진행상황입니다.\n\n0초',
+        P('늦게 도착한 진행상황입니다.\n\n0초'),
       );
       expect(channel.editMessage).not.toHaveBeenCalledWith(
         chatJid,
@@ -1049,17 +1054,17 @@ describe('createMessageRuntime', () => {
       expect(result).toBe(true);
       expect(channel.sendAndTrack).toHaveBeenCalledWith(
         chatJid,
-        '오래 걸리는 작업입니다.\n\n0초',
+        P('오래 걸리는 작업입니다.\n\n0초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '오래 걸리는 작업입니다.\n\n1시간 0초',
+        P('오래 걸리는 작업입니다.\n\n1시간 0초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '오래 걸리는 작업입니다.\n\n1시간 10초',
+        P('오래 걸리는 작업입니다.\n\n1시간 10초'),
       );
       expect(channel.sendMessage).toHaveBeenCalledWith(
         chatJid,
@@ -1142,17 +1147,17 @@ describe('createMessageRuntime', () => {
       expect(result).toBe(true);
       expect(channel.sendAndTrack).toHaveBeenCalledWith(
         chatJid,
-        '테스트를 돌리는 중입니다.\n\n0초',
+        P('테스트를 돌리는 중입니다.\n\n0초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '테스트를 돌리는 중입니다.\n\n10초',
+        P('테스트를 돌리는 중입니다.\n\n10초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '테스트를 돌리는 중입니다.\n\n10초',
+        P('테스트를 돌리는 중입니다.\n\n10초'),
       );
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
@@ -1313,29 +1318,29 @@ describe('createMessageRuntime', () => {
       expect(channel.sendAndTrack).toHaveBeenNthCalledWith(
         1,
         chatJid,
-        '첫 번째 진행상황입니다.\n\n0초',
+        P('첫 번째 진행상황입니다.\n\n0초'),
       );
       expect(channel.sendAndTrack).toHaveBeenNthCalledWith(
         2,
         chatJid,
-        '두 번째 진행상황입니다.\n\n0초',
+        P('두 번째 진행상황입니다.\n\n0초'),
       );
       expect(channel.editMessage).toHaveBeenNthCalledWith(
         1,
         chatJid,
         'progress-1',
-        '첫 번째 진행상황입니다.\n\n10초',
+        P('첫 번째 진행상황입니다.\n\n10초'),
       );
       expect(channel.editMessage).toHaveBeenNthCalledWith(
         2,
         chatJid,
         'progress-2',
-        '두 번째 진행상황입니다.\n\n10초',
+        P('두 번째 진행상황입니다.\n\n10초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-2',
-        '두 번째 진행상황입니다.\n\n10초',
+        P('두 번째 진행상황입니다.\n\n10초'),
       );
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
@@ -1425,17 +1430,17 @@ describe('createMessageRuntime', () => {
       expect(result).toBe(true);
       expect(channel.sendAndTrack).toHaveBeenCalledWith(
         chatJid,
-        '검증 중입니다.\n\n0초',
+        P('검증 중입니다.\n\n0초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '커밋은 정상 들어갔고 pre-commit도 통과했습니다.\n\n10초',
+        P('커밋은 정상 들어갔고 pre-commit도 통과했습니다.\n\n10초'),
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '커밋은 정상 들어갔고 pre-commit도 통과했습니다.\n\n10초',
+        P('커밋은 정상 들어갔고 pre-commit도 통과했습니다.\n\n10초'),
       );
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
@@ -1531,7 +1536,7 @@ describe('createMessageRuntime', () => {
       expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
       expect(channel.sendAndTrack).toHaveBeenCalledWith(
         chatJid,
-        '진행 중입니다.\n\n0초',
+        P('진행 중입니다.\n\n0초'),
       );
       // 같은 progress 메시지는 유지하고, final은 별도 메시지로 보낸다.
       expect(channel.editMessage).toHaveBeenCalledWith(
@@ -1542,7 +1547,7 @@ describe('createMessageRuntime', () => {
       expect(channel.editMessage).toHaveBeenLastCalledWith(
         chatJid,
         'progress-1',
-        '아직 진행 중.\n\n10초',
+        P('아직 진행 중.\n\n10초'),
       );
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
@@ -1764,7 +1769,7 @@ describe('createMessageRuntime', () => {
     expect(result).toBe(true);
     expect(channel.sendAndTrack).toHaveBeenCalledWith(
       chatJid,
-      '중간 진행상황입니다.\n\n0초',
+      P('중간 진행상황입니다.\n\n0초'),
     );
     expect(channel.sendMessage).toHaveBeenCalledTimes(1);
     expect(channel.sendMessage).toHaveBeenCalledWith(

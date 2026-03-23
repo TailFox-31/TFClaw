@@ -214,6 +214,14 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN suspended_until TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   database.exec(`
     UPDATE scheduled_tasks
     SET agent_type = COALESCE(
@@ -928,7 +936,12 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
+      | 'prompt'
+      | 'schedule_type'
+      | 'schedule_value'
+      | 'next_run'
+      | 'status'
+      | 'suspended_until'
     >
   >,
 ): void {
@@ -954,6 +967,10 @@ export function updateTask(
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  if (updates.suspended_until !== undefined) {
+    fields.push('suspended_until = ?');
+    values.push(updates.suspended_until);
   }
 
   if (fields.length === 0) return;
@@ -1005,10 +1022,11 @@ export function getDueTasks(
       `
     SELECT * FROM scheduled_tasks
     WHERE status = 'active' AND agent_type = ? AND next_run IS NOT NULL AND next_run <= ?
+      AND (suspended_until IS NULL OR suspended_until <= ?)
     ORDER BY next_run
   `,
     )
-    .all(agentType, now) as ScheduledTask[];
+    .all(agentType, now, now) as ScheduledTask[];
 }
 
 export function updateTaskAfterRun(
@@ -1040,6 +1058,25 @@ export function logTaskRun(log: TaskRunLog): void {
     log.result,
     log.error,
   );
+}
+
+export function getRecentConsecutiveErrors(
+  taskId: string,
+  limit: number = 5,
+): string[] {
+  const rows = db
+    .prepare(
+      `SELECT status, error FROM task_run_logs
+       WHERE task_id = ? ORDER BY run_at DESC LIMIT ?`,
+    )
+    .all(taskId, limit) as Array<{ status: string; error: string | null }>;
+
+  const errors: string[] = [];
+  for (const row of rows) {
+    if (row.status !== 'error' || !row.error) break;
+    errors.push(row.error);
+  }
+  return errors;
 }
 
 // --- Router state accessors ---

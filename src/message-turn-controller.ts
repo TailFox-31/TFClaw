@@ -2,6 +2,7 @@ import { type AgentOutput } from './agent-runner.js';
 import { logger } from './logger.js';
 import { formatOutbound } from './router.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import { type Channel, type RegisteredGroup } from './types.js';
 
 export type VisiblePhase = 'silent' | 'progress' | 'final';
@@ -211,7 +212,7 @@ export class MessageTurnController {
     if (minutes > 0) elapsedParts.push(`${minutes}분`);
     elapsedParts.push(`${seconds}초`);
 
-    return `${text}\n\n${elapsedParts.join(' ')}`;
+    return `${TASK_STATUS_MESSAGE_PREFIX}${text}\n\n${elapsedParts.join(' ')}`;
   }
 
   private clearProgressTicker(): void {

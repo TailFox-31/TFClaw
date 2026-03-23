@@ -32,6 +32,7 @@ interface ContainerInput {
 
 interface ContainerOutput {
   status: 'success' | 'error';
+  phase?: 'progress' | 'final';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -57,6 +58,11 @@ interface SDKUserMessage {
   message: { role: 'user'; content: string | ContentBlock[] };
   parent_tool_use_id: null;
   session_id: string;
+}
+
+interface AssistantContentBlock {
+  type?: string;
+  text?: string;
 }
 
 // Paths configurable via env vars.
@@ -172,6 +178,25 @@ function writeOutput(output: ContainerOutput): void {
 
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
+}
+
+function extractAssistantText(message: unknown): string | null {
+  const assistant = message as {
+    message?: {
+      content?: AssistantContentBlock[];
+    };
+  };
+  const blocks = assistant.message?.content;
+  if (!Array.isArray(blocks)) return null;
+
+  const text = blocks
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text!.trim())
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+
+  return text || null;
 }
 
 function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
@@ -525,6 +550,32 @@ async function runQuery(
       log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
     }
 
+    if (message.type === 'tool_progress') {
+      const tp = message as {
+        tool_name: string;
+        elapsed_time_seconds: number;
+      };
+      const label = `${tp.tool_name} (${Math.round(tp.elapsed_time_seconds)}s)`;
+      log(`Tool progress: ${label}`);
+      writeOutput({
+        status: 'success',
+        phase: 'progress',
+        result: label,
+        newSessionId,
+      });
+    }
+
+    if (message.type === 'tool_use_summary') {
+      const ts = message as { summary: string };
+      log(`Tool use summary: ${ts.summary.slice(0, 200)}`);
+      writeOutput({
+        status: 'success',
+        phase: 'progress',
+        result: ts.summary,
+        newSessionId,
+      });
+    }
+
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
@@ -568,6 +619,26 @@ async function runQuery(
       stream.end();
       log('Terminal result observed, ending query stream');
       break;
+    }
+
+    if (message.type === 'assistant') {
+      const stopReason = (message as { stop_reason?: string }).stop_reason;
+      const textResult = extractAssistantText(message);
+      if (stopReason === 'end_turn' && textResult) {
+        resultCount++;
+        log(
+          `Terminal assistant turn observed without result event (${textResult.length} chars), ending query stream`,
+        );
+        writeOutput({
+          status: 'success',
+          result: textResult,
+          newSessionId,
+        });
+        terminalResultObserved = true;
+        ipcPolling = false;
+        stream.end();
+        break;
+      }
     }
   }
 

@@ -30,6 +30,11 @@ import {
 import { logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import {
+  evaluateTaskSuspension,
+  formatSuspensionNotice,
+  suspendTask,
+} from './task-suspension.js';
+import {
   getTaskQueueJid,
   getTaskRuntimeTaskId,
   shouldUseTaskScopedSession,
@@ -305,8 +310,31 @@ async function runTask(
     return;
   }
 
+  // Clear suspension on success
+  if (!error && currentTask.suspended_until) {
+    updateTask(task.id, { suspended_until: null });
+  }
+
+  // Check for repeated quota/auth errors → auto-suspend
+  let suspended = false;
   if (error) {
+    const suspension = evaluateTaskSuspension(currentTask, error);
+    if (suspension.suspended && suspension.suspendedUntil) {
+      suspended = true;
+      suspendTask(task.id, suspension.suspendedUntil);
+      const notice = formatSuspensionNotice(
+        currentTask,
+        suspension.suspendedUntil,
+        suspension.reason || error.slice(0, 200),
+      );
+      await deps.sendMessage(task.chat_jid, notice);
+    }
+  }
+
+  if (error && !suspended) {
     await statusTracker.update('retrying', nextRun);
+  } else if (suspended) {
+    // Don't update status tracker — task is suspended, not retrying
   } else if (nextRun) {
     await statusTracker.update('waiting', nextRun);
   } else {

@@ -167,17 +167,19 @@ export async function runAgentForGroup(
       );
     }
 
+    const agentType = group.agentType || 'claude-code';
+    const providerLabel = canFallback ? provider : agentType;
     logger.info(
       {
         chatJid,
         group: group.name,
         groupFolder: group.folder,
         runId,
-        provider,
+        provider: providerLabel,
         canFallback,
         groupHasOverride,
       },
-      `Using provider: ${provider}`,
+      `Using provider: ${providerLabel}`,
     );
 
     try {
