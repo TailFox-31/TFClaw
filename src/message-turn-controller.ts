@@ -27,6 +27,7 @@ export class MessageTurnController {
   private producedDeliverySucceeded = true;
   private latestProgressText: string | null = null;
   private previousProgressText: string | null = null;
+  private pendingProgressText: string | null = null;
   private latestProgressRendered: string | null = null;
   private progressMessageId: string | null = null;
   private progressStartedAt: number | null = null;
@@ -104,7 +105,7 @@ export class MessageTurnController {
 
     if (result.phase === 'progress') {
       if (text) {
-        await this.sendProgressMessage(text);
+        this.bufferProgress(text);
       }
       if (!this.poisonedSessionDetected) {
         this.resetIdleTimer();
@@ -115,8 +116,11 @@ export class MessageTurnController {
       return;
     }
 
+    // Final arrived — flush any buffered progress that isn't the same text,
+    // then discard the pending buffer so it never shows up.
     if (text) {
-      await this.finalizeProgressMessage(text);
+      await this.flushPendingProgress(text);
+      await this.finalizeProgressMessage();
       await this.deliverFinalText(text);
     } else if (raw) {
       logger.info(
@@ -228,12 +232,37 @@ export class MessageTurnController {
 
   private resetProgressState(): void {
     this.clearProgressTicker();
+    this.pendingProgressText = null;
     this.latestProgressText = null;
     this.previousProgressText = null;
     this.latestProgressRendered = null;
     this.progressMessageId = null;
     this.progressStartedAt = null;
     this.progressEditFailCount = 0;
+  }
+
+  /**
+   * Buffer a progress update. The previous pending text gets flushed
+   * immediately, and the new text waits until the next event arrives.
+   * If a final result arrives before another progress, the pending
+   * text is discarded — so it never shows up in Discord.
+   */
+  private bufferProgress(text: string): void {
+    if (this.pendingProgressText) {
+      void this.sendProgressMessage(this.pendingProgressText);
+    }
+    this.pendingProgressText = text;
+  }
+
+  /**
+   * Flush pending progress before a final result, but only if the
+   * pending text differs from the final text.
+   */
+  private async flushPendingProgress(finalText: string): Promise<void> {
+    if (this.pendingProgressText && this.pendingProgressText !== finalText) {
+      await this.sendProgressMessage(this.pendingProgressText);
+    }
+    this.pendingProgressText = null;
   }
 
   private async syncTrackedProgressMessage(): Promise<void> {
@@ -293,7 +322,7 @@ export class MessageTurnController {
     }, 10_000);
   }
 
-  private async finalizeProgressMessage(finalText?: string): Promise<void> {
+  private async finalizeProgressMessage(): Promise<void> {
     logger.info(
       {
         chatJid: this.options.chatJid,
@@ -305,28 +334,7 @@ export class MessageTurnController {
       },
       'Finalizing tracked progress message',
     );
-    // If the last progress text matches the final result, revert to the
-    // previous progress so the same text doesn't appear twice in chat.
-    if (
-      finalText &&
-      this.latestProgressText === finalText &&
-      this.previousProgressText &&
-      this.progressMessageId &&
-      this.options.channel.editMessage
-    ) {
-      try {
-        const rendered = this.renderProgressMessage(this.previousProgressText);
-        await this.options.channel.editMessage(
-          this.options.chatJid,
-          this.progressMessageId,
-          rendered,
-        );
-      } catch {
-        // Best effort
-      }
-    } else {
-      await this.syncTrackedProgressMessage();
-    }
+    await this.syncTrackedProgressMessage();
     this.resetProgressState();
   }
 
