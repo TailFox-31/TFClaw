@@ -42,6 +42,9 @@ export interface AgentOutput {
   status: 'success' | 'error';
   result: string | null;
   phase?: 'progress' | 'final' | 'tool-activity' | 'intermediate';
+  agentId?: string;
+  agentLabel?: string;
+  agentDone?: boolean;
   newSessionId?: string;
   error?: string;
 }

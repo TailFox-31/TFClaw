@@ -33,6 +33,9 @@ interface ContainerInput {
 interface ContainerOutput {
   status: 'success' | 'error';
   phase?: 'progress' | 'final' | 'tool-activity' | 'intermediate';
+  agentId?: string;
+  agentLabel?: string;
+  agentDone?: boolean;
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -561,10 +564,21 @@ async function runQuery(
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
       const tn = message as { task_id: string; status: string; summary: string };
       log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
+      if (tn.status === 'completed' || tn.status === 'error' || tn.status === 'cancelled') {
+        writeOutput({
+          status: 'success',
+          phase: 'progress',
+          agentId: tn.task_id,
+          agentDone: true,
+          result: tn.summary || null,
+          newSessionId,
+        });
+      }
     }
 
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_progress') {
       const tp = message as Record<string, unknown>;
+      const taskId = typeof tp.task_id === 'string' ? tp.task_id : undefined;
       const summary = typeof tp.summary === 'string' ? tp.summary : '';
       const description = typeof tp.description === 'string' ? tp.description : '';
       if (description) {
@@ -572,6 +586,7 @@ async function runQuery(
           status: 'success',
           phase: 'tool-activity',
           result: description,
+          agentId: taskId,
           newSessionId,
         });
       }
@@ -586,6 +601,8 @@ async function runQuery(
           status: 'success',
           phase: 'progress',
           result: `🔄 ${desc}`,
+          agentId: ts.task_id,
+          agentLabel: desc,
           newSessionId,
         });
       }
