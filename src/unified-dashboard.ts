@@ -647,8 +647,10 @@ async function buildUsageContent(): Promise<string> {
     // Emoji characters take 2 columns in monospace — count visual width
     const visualWidth = (s: string) =>
       [...s].reduce((w, c) => w + (c.codePointAt(0)! > 0x7f ? 2 : 1), 0);
-    const maxNameWidth = Math.max(8, ...rows.map((r) => visualWidth(r.name))) + 1;
-    const padName = (s: string) => s + ' '.repeat(maxNameWidth - visualWidth(s));
+    const maxNameWidth =
+      Math.max(8, ...rows.map((r) => visualWidth(r.name))) + 1;
+    const padName = (s: string) =>
+      s + ' '.repeat(maxNameWidth - visualWidth(s));
     lines.push('```');
     lines.push(`${' '.repeat(maxNameWidth)}5-Hour             7-Day`);
     for (const row of rows) {
@@ -735,8 +737,8 @@ async function refreshUsageCache(): Promise<void> {
   usageUpdateInProgress = true;
   try {
     cachedUsageContent = await buildUsageContent();
-  } catch {
-    /* keep previous cache */
+  } catch (err) {
+    logger.warn({ err }, 'Failed to build usage content');
   } finally {
     usageUpdateInProgress = false;
   }
