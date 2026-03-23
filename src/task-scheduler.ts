@@ -332,11 +332,15 @@ async function runTask(
     if (trigger.shouldFallback) {
       const isCodex = SERVICE_AGENT_TYPE === 'codex';
       const rotated = isCodex
-        ? getCodexAccountCount() > 1 && rotateCodexToken()
-        : getTokenCount() > 1 && rotateToken();
+        ? getCodexAccountCount() > 1 && rotateCodexToken(error)
+        : getTokenCount() > 1 && rotateToken(error);
       if (rotated) {
         logger.info(
-          { taskId: task.id, agent: SERVICE_AGENT_TYPE, reason: trigger.reason },
+          {
+            taskId: task.id,
+            agent: SERVICE_AGENT_TYPE,
+            reason: trigger.reason,
+          },
           'Task rate-limited, rotated token — will retry on next schedule',
         );
         if (isCodex) markCodexTokenHealthy();

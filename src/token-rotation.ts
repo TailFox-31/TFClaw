@@ -70,7 +70,9 @@ function saveState(): void {
       rateLimits: tokens.map((t) => t.rateLimitedUntil),
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(state));
-  } catch { /* best effort */ }
+  } catch {
+    /* best effort */
+  }
 }
 
 function loadState(): void {
@@ -78,19 +80,56 @@ function loadState(): void {
     if (!fs.existsSync(STATE_FILE)) return;
     const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
     const now = Date.now();
-    if (typeof state.currentIndex === 'number' && state.currentIndex < tokens.length) {
+    if (
+      typeof state.currentIndex === 'number' &&
+      state.currentIndex < tokens.length
+    ) {
       currentIndex = state.currentIndex;
     }
     if (Array.isArray(state.rateLimits)) {
-      for (let i = 0; i < Math.min(state.rateLimits.length, tokens.length); i++) {
+      for (
+        let i = 0;
+        i < Math.min(state.rateLimits.length, tokens.length);
+        i++
+      ) {
         const until = state.rateLimits[i];
         if (typeof until === 'number' && until > now) {
           tokens[i].rateLimitedUntil = until;
         }
       }
     }
-    logger.info({ currentIndex, tokenCount: tokens.length }, 'Token rotation state restored');
-  } catch { /* start fresh */ }
+    logger.info(
+      { currentIndex, tokenCount: tokens.length },
+      'Token rotation state restored',
+    );
+  } catch {
+    /* start fresh */
+  }
+}
+
+const BUFFER_MS = 3 * 60_000;
+const DEFAULT_COOLDOWN_MS = 3_600_000;
+
+function parseRetryAfterFromError(error?: string): number | null {
+  if (!error) return null;
+  const match = error.match(
+    /(?:try again at|resets?\s+(?:at\s+)?)\s*(\w+ \d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
+  );
+  if (!match) return null;
+  try {
+    const cleaned = match[1].replace(/(\d+)(?:st|nd|rd|th)/i, '$1');
+    const ts = new Date(cleaned).getTime();
+    if (Number.isNaN(ts)) return null;
+    return ts;
+  } catch {
+    return null;
+  }
+}
+
+function computeCooldownUntil(error?: string): number {
+  const retryAt = parseRetryAfterFromError(error);
+  if (retryAt) return retryAt + BUFFER_MS;
+  return Date.now() + DEFAULT_COOLDOWN_MS;
 }
 
 /** Get the current active token. */
@@ -103,12 +142,11 @@ export function getCurrentToken(): string | undefined {
  * Try to rotate to the next available (non-rate-limited) token.
  * Returns true if a fresh token was found, false if all are exhausted.
  */
-export function rotateToken(): boolean {
+export function rotateToken(errorMessage?: string): boolean {
   if (tokens.length <= 1) return false;
 
   const now = Date.now();
-  // Mark current as rate-limited (default 1 hour)
-  tokens[currentIndex].rateLimitedUntil = now + 3_600_000;
+  tokens[currentIndex].rateLimitedUntil = computeCooldownUntil(errorMessage);
 
   // Find next available token
   for (let i = 1; i < tokens.length; i++) {

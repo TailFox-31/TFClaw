@@ -616,10 +616,14 @@ async function buildUsageContent(): Promise<string> {
           });
         }
       } else {
+        // Show cached usage for rate-limited accounts
+        const pct = acct.isRateLimited && acct.cachedUsagePct != null
+          ? acct.cachedUsagePct : -1;
+        const reset = acct.resetAt || '';
         rows.push({
           name: `${label} ${acct.planType}`,
-          h5pct: -1,
-          h5reset: '',
+          h5pct: pct,
+          h5reset: reset,
           d7pct: -1,
           d7reset: '',
         });

@@ -309,7 +309,7 @@ export async function runAgentForGroup(
         : detectFallbackTrigger(errMsg);
       if (trigger.shouldFallback) {
         // Try rotating token before falling back to another provider
-        if (getTokenCount() > 1 && rotateToken()) {
+        if (getTokenCount() > 1 && rotateToken(errMsg)) {
           logger.info(
             { chatJid, group: group.name, runId, reason: trigger.reason },
             'Rate-limited, retrying with rotated token',
@@ -383,7 +383,7 @@ export async function runAgentForGroup(
           }
         : detectFallbackTrigger(output.error);
       if (trigger.shouldFallback) {
-        if (getTokenCount() > 1 && rotateToken()) {
+        if (getTokenCount() > 1 && rotateToken(output.error ?? undefined)) {
           logger.info(
             { chatJid, group: group.name, runId, reason: trigger.reason },
             'Rate-limited (output error), retrying with rotated token',
@@ -401,7 +401,7 @@ export async function runAgentForGroup(
     // Codex rate-limit rotation (non-Claude agents)
     if (!isClaudeCodeAgent && getCodexAccountCount() > 1) {
       const trigger = detectFallbackTrigger(output.error);
-      if (trigger.shouldFallback && rotateCodexToken()) {
+      if (trigger.shouldFallback && rotateCodexToken(output.error ?? undefined)) {
         logger.info(
           { chatJid, group: group.name, runId, reason: trigger.reason },
           'Codex rate-limited, retrying with rotated account',
@@ -433,7 +433,7 @@ export async function runAgentForGroup(
     !isClaudeCodeAgent &&
     primaryAttempt.streamedTriggerReason &&
     getCodexAccountCount() > 1 &&
-    rotateCodexToken()
+    rotateCodexToken(output.error ?? undefined)
   ) {
     logger.info(
       {

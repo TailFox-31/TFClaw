@@ -25,6 +25,8 @@ interface CodexAccount {
   accountId: string;
   planType: string;
   rateLimitedUntil: number | null;
+  lastUsagePct?: number;
+  resetAt?: string;
 }
 
 function parsePlanFromJwt(idToken: string): string {
@@ -95,9 +97,13 @@ function saveCodexState(): void {
     const state = {
       currentIndex,
       rateLimits: accounts.map((a) => a.rateLimitedUntil),
+      usagePcts: accounts.map((a) => a.lastUsagePct ?? null),
+      resetAts: accounts.map((a) => a.resetAt ?? null),
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(state));
-  } catch { /* best effort */ }
+  } catch {
+    /* best effort */
+  }
 }
 
 function loadCodexState(): void {
@@ -105,19 +111,71 @@ function loadCodexState(): void {
     if (!fs.existsSync(STATE_FILE)) return;
     const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
     const now = Date.now();
-    if (typeof state.currentIndex === 'number' && state.currentIndex < accounts.length) {
+    if (
+      typeof state.currentIndex === 'number' &&
+      state.currentIndex < accounts.length
+    ) {
       currentIndex = state.currentIndex;
     }
     if (Array.isArray(state.rateLimits)) {
-      for (let i = 0; i < Math.min(state.rateLimits.length, accounts.length); i++) {
+      for (
+        let i = 0;
+        i < Math.min(state.rateLimits.length, accounts.length);
+        i++
+      ) {
         const until = state.rateLimits[i];
         if (typeof until === 'number' && until > now) {
           accounts[i].rateLimitedUntil = until;
         }
       }
     }
-    logger.info({ currentIndex, accountCount: accounts.length }, 'Codex rotation state restored');
-  } catch { /* start fresh */ }
+    if (Array.isArray(state.usagePcts)) {
+      for (let i = 0; i < Math.min(state.usagePcts.length, accounts.length); i++) {
+        if (typeof state.usagePcts[i] === 'number') accounts[i].lastUsagePct = state.usagePcts[i];
+      }
+    }
+    if (Array.isArray(state.resetAts)) {
+      for (let i = 0; i < Math.min(state.resetAts.length, accounts.length); i++) {
+        if (state.resetAts[i]) accounts[i].resetAt = state.resetAts[i];
+      }
+    }
+    logger.info(
+      { currentIndex, accountCount: accounts.length },
+      'Codex rotation state restored',
+    );
+  } catch {
+    /* start fresh */
+  }
+}
+
+const BUFFER_MS = 3 * 60_000; // 3 min buffer after reset time
+const DEFAULT_COOLDOWN_MS = 3_600_000; // 1 hour fallback
+
+/**
+ * Parse "try again at Mar 26th, 2026 9:00 AM" from error message.
+ * Returns timestamp in ms, or null if not found.
+ */
+function parseRetryAfterFromError(error?: string): number | null {
+  if (!error) return null;
+  const match = error.match(
+    /try again at\s+(\w+ \d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
+  );
+  if (!match) return null;
+  try {
+    // Remove ordinal suffixes (1st, 2nd, 3rd, 4th)
+    const cleaned = match[1].replace(/(\d+)(?:st|nd|rd|th)/i, '$1');
+    const ts = new Date(cleaned).getTime();
+    if (Number.isNaN(ts)) return null;
+    return ts;
+  } catch {
+    return null;
+  }
+}
+
+function computeCooldownUntil(error?: string): number {
+  const retryAt = parseRetryAfterFromError(error);
+  if (retryAt) return retryAt + BUFFER_MS;
+  return Date.now() + DEFAULT_COOLDOWN_MS;
 }
 
 /** Get the auth.json path for the current active account. */
@@ -130,11 +188,18 @@ export function getActiveCodexAuthPath(): string | null {
  * Try to rotate to the next available Codex account.
  * Returns true if a fresh account was found.
  */
-export function rotateCodexToken(): boolean {
+export function rotateCodexToken(errorMessage?: string): boolean {
   if (accounts.length <= 1) return false;
 
   const now = Date.now();
-  accounts[currentIndex].rateLimitedUntil = now + 3_600_000;
+  const acct = accounts[currentIndex];
+  acct.rateLimitedUntil = computeCooldownUntil(errorMessage);
+  acct.lastUsagePct = 100;
+  // Extract reset time string from error for display
+  const resetMatch = errorMessage?.match(
+    /try again at\s+(\w+ \d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
+  );
+  if (resetMatch) acct.resetAt = resetMatch[1];
 
   for (let i = 1; i < accounts.length; i++) {
     const idx = (currentIndex + i) % accounts.length;
@@ -178,6 +243,8 @@ export function getAllCodexAccounts(): {
   planType: string;
   isActive: boolean;
   isRateLimited: boolean;
+  cachedUsagePct?: number;
+  resetAt?: string;
 }[] {
   const now = Date.now();
   return accounts.map((a, i) => ({
@@ -186,5 +253,7 @@ export function getAllCodexAccounts(): {
     planType: a.planType,
     isActive: i === currentIndex,
     isRateLimited: Boolean(a.rateLimitedUntil && a.rateLimitedUntil > now),
+    cachedUsagePct: a.lastUsagePct,
+    resetAt: a.resetAt,
   }));
 }
