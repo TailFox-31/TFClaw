@@ -271,7 +271,7 @@ export class DiscordChannel implements Channel {
               return `[Audio: ${att.name || 'audio'}]`;
             } else if (
               contentType.startsWith('text/') ||
-              /\.(txt|md|json|csv|log|xml|yaml|yml|toml|ini|cfg|conf|sh|bash|zsh|py|js|ts|jsx|tsx|html|css|sql|rs|go|java|c|cpp|h|hpp|rb|php|swift|kt|scala|r|lua|pl|ex|exs|hs|ml|clj|dart|v|zig|nim|ps1|bat|cmd)$/i.test(
+              /\.(txt|md|csv|json|log)$/i.test(
                 att.name || '',
               )
             ) {
