@@ -5,6 +5,7 @@ import {
   resolveGroupIpcPath,
   resolveTaskRuntimeIpcPath,
 } from './group-folder.js';
+import { writeJsonFile } from './utils.js';
 
 export function writeTasksSnapshot(
   groupFolder: string,
@@ -28,7 +29,7 @@ export function writeTasksSnapshot(
     ? tasks
     : tasks.filter((t) => t.groupFolder === groupFolder);
   const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  writeJsonFile(tasksFile, filteredTasks, true);
 }
 
 export interface AvailableGroup {
@@ -48,12 +49,5 @@ export function writeGroupsSnapshot(
   fs.mkdirSync(groupIpcDir, { recursive: true });
   const visibleGroups = isMain ? groups : [];
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
-  fs.writeFileSync(
-    groupsFile,
-    JSON.stringify(
-      { groups: visibleGroups, lastSync: new Date().toISOString() },
-      null,
-      2,
-    ),
-  );
+  writeJsonFile(groupsFile, { groups: visibleGroups, lastSync: new Date().toISOString() }, true);
 }

@@ -20,6 +20,7 @@ import {
   computeCooldownUntil,
   findNextAvailable,
 } from './token-rotation-base.js';
+import { readJsonFile, writeJsonFile } from './utils.js';
 
 const STATE_FILE = path.join(DATA_DIR, 'token-rotation-state.json');
 
@@ -67,42 +68,39 @@ function saveState(): void {
       currentIndex,
       rateLimits: tokens.map((t) => t.rateLimitedUntil),
     };
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+    writeJsonFile(STATE_FILE, state);
   } catch {
     /* best effort */
   }
 }
 
 function loadState(): void {
-  try {
-    if (!fs.existsSync(STATE_FILE)) return;
-    const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
-    const now = Date.now();
-    if (
-      typeof state.currentIndex === 'number' &&
-      state.currentIndex < tokens.length
+  const state = readJsonFile<{ currentIndex?: number; rateLimits?: (number | null)[] }>(STATE_FILE);
+  if (!state) return;
+
+  const now = Date.now();
+  if (
+    typeof state.currentIndex === 'number' &&
+    state.currentIndex < tokens.length
+  ) {
+    currentIndex = state.currentIndex;
+  }
+  if (Array.isArray(state.rateLimits)) {
+    for (
+      let i = 0;
+      i < Math.min(state.rateLimits.length, tokens.length);
+      i++
     ) {
-      currentIndex = state.currentIndex;
-    }
-    if (Array.isArray(state.rateLimits)) {
-      for (
-        let i = 0;
-        i < Math.min(state.rateLimits.length, tokens.length);
-        i++
-      ) {
-        const until = state.rateLimits[i];
-        if (typeof until === 'number' && until > now) {
-          tokens[i].rateLimitedUntil = until;
-        }
+      const until = state.rateLimits[i];
+      if (typeof until === 'number' && until > now) {
+        tokens[i].rateLimitedUntil = until;
       }
     }
-    logger.info(
-      { currentIndex, tokenCount: tokens.length },
-      'Token rotation state restored',
-    );
-  } catch {
-    /* start fresh */
   }
+  logger.info(
+    { currentIndex, tokenCount: tokens.length },
+    'Token rotation state restored',
+  );
 }
 
 /** Get the current active token. */

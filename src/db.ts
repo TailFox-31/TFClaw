@@ -18,6 +18,7 @@ import {
   ScheduledTask,
   TaskRunLog,
 } from './types.js';
+import { readJsonFile } from './utils.js';
 
 let db: Database.Database;
 
@@ -1300,14 +1301,14 @@ export function isPairedRoomJid(jid: string): boolean {
 function migrateJsonState(): void {
   const migrateFile = (filename: string) => {
     const filePath = path.join(DATA_DIR, filename);
-    if (!fs.existsSync(filePath)) return null;
+    const data = readJsonFile(filePath);
+    if (data === null) return null;
     try {
-      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
       fs.renameSync(filePath, `${filePath}.migrated`);
-      return data;
     } catch {
-      return null;
+      /* best effort */
     }
+    return data;
   };
 
   // Migrate router_state.json

@@ -1,4 +1,5 @@
 import { AgentOutput } from './agent-runner.js';
+import { getErrorMessage } from './utils.js';
 import {
   getMessagesSinceSeq,
   getNewMessagesBySeq,
@@ -119,7 +120,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       );
       return true;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errorMessage = getErrorMessage(err);
       markWorkItemDeliveryRetry(item.id, errorMessage);
       logger.warn(
         {

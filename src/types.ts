@@ -5,9 +5,21 @@ export interface AgentConfig {
   codexEffort?: string;
   claudeModel?: string;
   claudeEffort?: string;
+  claudeThinking?: 'adaptive' | 'enabled' | 'disabled';
+  claudeThinkingBudget?: number;
 }
 
 export type AgentType = 'claude-code' | 'codex';
+
+/** Phase of agent output as emitted by the runner. */
+export type AgentOutputPhase =
+  | 'progress'
+  | 'final'
+  | 'tool-activity'
+  | 'intermediate';
+
+/** Phase as visible in the UI (mapped from AgentOutputPhase). */
+export type VisiblePhase = 'silent' | 'progress' | 'final';
 
 export interface RegisteredGroup {
   name: string;

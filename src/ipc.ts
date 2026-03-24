@@ -9,6 +9,7 @@ import {
   SERVICE_AGENT_TYPE,
   TIMEZONE,
 } from './config.js';
+import { readJsonFile } from './utils.js';
 import { AvailableGroup } from './agent-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -78,22 +79,24 @@ export function startIpcWatcher(deps: IpcDeps): void {
           for (const file of messageFiles) {
             const filePath = path.join(messagesDir, file);
             try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
+              const data = readJsonFile(filePath);
+              if (!data || typeof data !== 'object') throw new Error('Invalid JSON');
+              const msg = data as { type?: string; chatJid?: string; text?: string };
+              if (msg.type === 'message' && msg.chatJid && msg.text) {
                 // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
+                const targetGroup = registeredGroups[msg.chatJid];
                 if (
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+                  await deps.sendMessage(msg.chatJid, msg.text);
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
+                    { chatJid: msg.chatJid, sourceGroup },
                     'IPC message sent',
                   );
                 } else {
                   logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
+                    { chatJid: msg.chatJid, sourceGroup },
                     'Unauthorized IPC message attempt blocked',
                   );
                 }
@@ -129,9 +132,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
           for (const file of taskFiles) {
             const filePath = path.join(tasksDir, file);
             try {
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              const data = readJsonFile(filePath);
+              if (!data || typeof data !== 'object') throw new Error('Invalid JSON');
               // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data, sourceGroup, isMain, deps);
+              await processTaskIpc(data as Parameters<typeof processTaskIpc>[0], sourceGroup, isMain, deps);
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(

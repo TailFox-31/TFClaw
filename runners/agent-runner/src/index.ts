@@ -32,6 +32,7 @@ interface ContainerInput {
   secrets?: Record<string, string>;
 }
 
+/** Mirrors AgentOutput in src/agent-runner.ts (separate package, can't import directly). */
 interface ContainerOutput {
   status: 'success' | 'error';
   phase?: 'progress' | 'final' | 'tool-activity' | 'intermediate';
@@ -88,6 +89,7 @@ const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
+/** SSOT: src/agent-protocol.ts — keep in sync */
 const IMAGE_TAG_RE = /\[Image:\s*(\/[^\]]+)\]/g;
 const MIME_TYPES: Record<string, string> = {
   '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -339,6 +341,14 @@ function createPreCompactHook(assistantName?: string): HookCallback {
     const preCompact = input as PreCompactHookInput;
     const transcriptPath = preCompact.transcript_path;
     const sessionId = preCompact.session_id;
+    const trigger = preCompact.trigger || 'auto';
+
+    // Show compact status in chat so users know it's not just slow loading
+    writeOutput({
+      status: 'success',
+      phase: 'progress',
+      result: trigger === 'auto' ? '대화 요약 중...' : '컴팩트 중...',
+    });
 
     if (!transcriptPath || !fs.existsSync(transcriptPath)) {
       log('No transcript found for archiving');

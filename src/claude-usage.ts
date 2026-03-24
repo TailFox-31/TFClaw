@@ -11,6 +11,7 @@ import path from 'path';
 import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 import { getCurrentToken, getAllTokens } from './token-rotation.js';
+import { readJsonFile, writeJsonFile } from './utils.js';
 
 const USAGE_CACHE_FILE = path.join(DATA_DIR, 'claude-usage-cache.json');
 
@@ -54,18 +55,12 @@ let diskCacheLoaded = false;
 function loadUsageDiskCache(): void {
   if (diskCacheLoaded) return;
   diskCacheLoaded = true;
-  try {
-    if (fs.existsSync(USAGE_CACHE_FILE)) {
-      usageDiskCache = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf-8'));
-    }
-  } catch {
-    /* start fresh */
-  }
+  usageDiskCache = readJsonFile<Record<string, UsageCacheEntry>>(USAGE_CACHE_FILE) ?? {};
 }
 
 function saveUsageDiskCache(): void {
   try {
-    fs.writeFileSync(USAGE_CACHE_FILE, JSON.stringify(usageDiskCache));
+    writeJsonFile(USAGE_CACHE_FILE, usageDiskCache);
   } catch {
     /* best effort */
   }

@@ -1,5 +1,6 @@
 import { TIMEZONE } from './config.js';
 import type { ScheduledTask } from './types.js';
+import { formatElapsedKorean } from './utils.js';
 
 export type WatcherStatusPhase =
   | 'checking'
@@ -65,16 +66,7 @@ function formatElapsedLabel(
     0,
     new Date(checkedAtIso).getTime() - new Date(startedAtIso).getTime(),
   );
-  const totalSeconds = Math.floor(elapsedMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  const parts: string[] = [];
-  if (hours > 0) parts.push(`${hours}시간`);
-  if (minutes > 0) parts.push(`${minutes}분`);
-  parts.push(`${seconds}초`);
-  return parts.join(' ');
+  return formatElapsedKorean(elapsedMs);
 }
 
 export function renderWatchCiStatusMessage(args: {

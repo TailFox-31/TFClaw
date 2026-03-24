@@ -2,6 +2,7 @@ import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import path from 'path';
+import { getErrorMessage } from './utils.js';
 
 import {
   ASSISTANT_NAME,
@@ -34,7 +35,6 @@ import { createTaskStatusTracker } from './task-status-tracker.js';
 import {
   isClaudeAuthExpiredMessage,
   isClaudeUsageExhaustedMessage,
-  shouldRotateClaudeToken,
 } from './agent-error-detection.js';
 import {
   detectFallbackTrigger,
@@ -46,6 +46,7 @@ import {
   isUsageExhausted,
   markPrimaryCooldown,
 } from './provider-fallback.js';
+import { runClaudeRotationLoop } from './provider-retry.js';
 import {
   detectCodexRotationTrigger,
   rotateCodexToken,
@@ -53,9 +54,9 @@ import {
   markCodexTokenHealthy,
 } from './codex-token-rotation.js';
 import {
-  rotateToken,
   getTokenCount,
   markTokenHealthy,
+  rotateToken,
 } from './token-rotation.js';
 import {
   evaluateTaskSuspension,
@@ -222,7 +223,7 @@ async function runTask(
   try {
     context = resolveTaskExecutionContext(task, deps);
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = getErrorMessage(err);
     if (error.startsWith('Group not found:')) {
       logger.error(
         { taskId: task.id, groupFolder: task.group_folder, error },
@@ -441,83 +442,44 @@ async function runTask(
       },
       rotationMessage?: string,
     ): Promise<void> => {
-      let trigger = initialTrigger;
-      let lastRotationMessage = rotationMessage;
+      const logCtx = {
+        taskId: task.id,
+        group: context.group.name,
+        groupFolder: task.group_folder,
+      };
 
-      while (
-        shouldRotateClaudeToken(trigger.reason) &&
-        getTokenCount() > 1 &&
-        rotateToken(lastRotationMessage, { ignoreRateLimits: true })
-      ) {
-        logger.info(
-          {
-            taskId: task.id,
-            group: context.group.name,
-            groupFolder: task.group_folder,
-            reason: trigger.reason,
-          },
-          'Scheduled task Claude rate-limited, retrying with rotated account',
-        );
-
-        const retryAttempt = await runTaskAttempt('claude');
-        result = retryAttempt.attemptResult;
-        error = retryAttempt.attemptError;
-
-        if (
-          retryAttempt.streamedTriggerReason &&
-          !retryAttempt.sawOutput &&
-          retryAttempt.output.status !== 'error'
-        ) {
-          trigger = {
-            reason: retryAttempt.streamedTriggerReason.reason,
-            retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
+      const outcome = await runClaudeRotationLoop(
+        initialTrigger,
+        async () => {
+          const attempt = await runTaskAttempt('claude');
+          result = attempt.attemptResult;
+          error = attempt.attemptError;
+          return {
+            output: attempt.output,
+            sawOutput: attempt.sawOutput,
+            streamedTriggerReason: attempt.streamedTriggerReason,
           };
-          lastRotationMessage =
-            typeof retryAttempt.output.result === 'string'
-              ? retryAttempt.output.result
-              : undefined;
-          continue;
-        }
+        },
+        logCtx,
+        rotationMessage,
+      );
 
-        if (retryAttempt.output.status === 'error' && !retryAttempt.sawOutput) {
-          const retryTrigger = retryAttempt.streamedTriggerReason
-            ? {
-                shouldFallback: true,
-                reason: retryAttempt.streamedTriggerReason.reason,
-                retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
-              }
-            : detectFallbackTrigger(retryAttempt.attemptError);
-          if (retryTrigger.shouldFallback) {
-            trigger = {
-              reason: retryTrigger.reason,
-              retryAfterMs: retryTrigger.retryAfterMs,
-            };
-            lastRotationMessage = retryAttempt.attemptError || undefined;
-            continue;
-          }
-        }
-
-        if (retryAttempt.output.status === 'success') {
-          markTokenHealthy();
+      switch (outcome.type) {
+        case 'success':
           error = null;
           return;
-        }
-
-        return;
+        case 'error':
+          return;
+        case 'no-fallback':
+          error = `Claude ${outcome.trigger.reason}`;
+          return;
+        case 'needs-fallback':
+          await runFallbackTaskAttempt(
+            outcome.trigger.reason,
+            outcome.trigger.retryAfterMs,
+          );
+          return;
       }
-
-      // Usage exhausted: don't fall back to Kimi — just mark cooldown and skip
-      if (trigger.reason === 'usage-exhausted') {
-        markPrimaryCooldown(trigger.reason, trigger.retryAfterMs);
-        logger.info(
-          { taskId: task.id, group: context.group.name },
-          'All Claude tokens usage-exhausted, skipping Kimi fallback for scheduled task',
-        );
-        error = 'Claude usage exhausted';
-        return;
-      }
-
-      await runFallbackTaskAttempt(trigger.reason, trigger.retryAfterMs);
     };
 
     const provider = canFallback ? await getActiveProvider() : 'claude';
@@ -569,7 +531,7 @@ async function runTask(
       'Task completed',
     );
   } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
+    error = getErrorMessage(err);
     logger.error({ taskId: task.id, error }, 'Task failed');
   }
 

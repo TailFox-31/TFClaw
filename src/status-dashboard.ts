@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { CACHE_DIR } from './config.js';
+import { writeJsonFile } from './utils.js';
 import type { GroupStatus } from './group-queue.js';
 import type { AgentType } from './types.js';
 
@@ -32,7 +33,7 @@ export function writeStatusSnapshot(snapshot: StatusSnapshot): void {
     `${snapshot.agentType}.json`,
   );
   const tempPath = `${targetPath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(snapshot, null, 2));
+  writeJsonFile(tempPath, snapshot, true);
   fs.renameSync(tempPath, targetPath);
 }
 

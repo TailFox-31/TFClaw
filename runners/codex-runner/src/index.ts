@@ -50,6 +50,7 @@ const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
+/** SSOT: src/agent-protocol.ts — keep in sync */
 const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
 
@@ -134,6 +135,7 @@ function drainIpcInput(): string[] {
 }
 
 function extractImagePaths(text: string): { cleanText: string; imagePaths: string[] } {
+  /** SSOT: src/agent-protocol.ts — keep in sync */
   const imagePattern = /\[Image:\s*(\/[^\]]+)\]/g;
   const imagePaths: string[] = [];
   let match: RegExpExecArray | null;

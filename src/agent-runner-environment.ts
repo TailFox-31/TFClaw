@@ -162,6 +162,14 @@ function prepareClaudeEnvironment(args: {
   if (args.group.agentConfig?.claudeEffort) {
     args.env.CLAUDE_EFFORT = args.group.agentConfig.claudeEffort;
   }
+  if (args.group.agentConfig?.claudeThinking) {
+    args.env.CLAUDE_THINKING = args.group.agentConfig.claudeThinking;
+  }
+  if (args.group.agentConfig?.claudeThinkingBudget) {
+    args.env.CLAUDE_THINKING_BUDGET = String(
+      args.group.agentConfig.claudeThinkingBudget,
+    );
+  }
 }
 
 function prepareCodexSessionEnvironment(args: {

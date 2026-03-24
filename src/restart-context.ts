@@ -5,6 +5,7 @@ import path from 'path';
 import { DATA_DIR, SERVICE_ID, TIMEZONE } from './config.js';
 import { logger } from './logger.js';
 import type { RegisteredGroup } from './types.js';
+import { readJsonFile, writeJsonFile } from './utils.js';
 
 export interface RestartInterruptedGroup {
   chatJid: string;
@@ -61,16 +62,14 @@ function getMainGroupJid(
 }
 
 function readRestartContextFile(filePath: string): RestartContext | null {
-  if (!fs.existsSync(filePath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as RestartContext;
-  } catch (err) {
+  const data = readJsonFile<RestartContext>(filePath);
+  if (data === null && fs.existsSync(filePath)) {
     logger.warn(
-      { err, filePath },
+      { filePath },
       'Failed to parse restart context file; ignoring invalid content',
     );
-    return null;
   }
+  return data;
 }
 
 function getLatestDistBuildTime(): number | null {
@@ -134,7 +133,7 @@ export function writeRestartContext(
   const writtenPaths: string[] = [];
   for (const serviceId of serviceIds) {
     const filePath = getRestartContextPath(serviceId);
-    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    writeJsonFile(filePath, payload, true);
     writtenPaths.push(filePath);
   }
   return writtenPaths;
@@ -175,7 +174,7 @@ export function writeShutdownRestartContext(
       interruptedGroups: mergedInterrupted,
     };
 
-    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    writeJsonFile(filePath, payload, true);
     writtenPaths.push(filePath);
   }
 
@@ -205,24 +204,19 @@ export function buildInterruptedRestartAnnouncement(
 export function consumeRestartContext(): RestartContext | null {
   const filePath = getRestartContextPath();
   if (!fs.existsSync(filePath)) return null;
-  try {
-    const parsed = JSON.parse(
-      fs.readFileSync(filePath, 'utf8'),
-    ) as RestartContext;
-    fs.unlinkSync(filePath);
-    return parsed;
-  } catch (err) {
+  const parsed = readJsonFile<RestartContext>(filePath);
+  if (!parsed) {
     logger.warn(
-      { err, filePath },
+      { filePath },
       'Failed to read restart context; removing invalid file',
     );
-    try {
-      fs.unlinkSync(filePath);
-    } catch {
-      // Ignore cleanup failure.
-    }
-    return null;
   }
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    // Ignore cleanup failure.
+  }
+  return parsed;
 }
 
 export function buildRestartAnnouncement(context: RestartContext): string {

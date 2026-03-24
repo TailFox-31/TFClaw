@@ -25,6 +25,7 @@ import {
   findNextAvailable,
   parseRetryAfterFromError,
 } from './token-rotation-base.js';
+import { readJsonFile, writeJsonFile } from './utils.js';
 
 const STATE_FILE = path.join(DATA_DIR, 'codex-rotation-state.json');
 
@@ -93,22 +94,22 @@ export function initCodexTokenRotation(): void {
     const authPath = path.join(ACCOUNTS_DIR, dir, 'auth.json');
     if (!fs.existsSync(authPath)) continue;
 
-    try {
-      const data = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
-      const accountId = data?.tokens?.account_id || `account-${dir}`;
-      const jwt = parseJwtAuth(data?.tokens?.id_token || '');
-      const planType = jwt.planType;
-      accounts.push({
-        index: accounts.length,
-        authPath,
-        accountId,
-        planType,
-        subscriptionUntil: jwt.expiresAt,
-        rateLimitedUntil: null,
-      });
-    } catch {
+    const data = readJsonFile<{ tokens?: { account_id?: string; id_token?: string } }>(authPath);
+    if (!data) {
       logger.warn({ authPath }, 'Failed to parse codex account auth.json');
+      continue;
     }
+    const accountId = data?.tokens?.account_id || `account-${dir}`;
+    const jwt = parseJwtAuth(data?.tokens?.id_token || '');
+    const planType = jwt.planType;
+    accounts.push({
+      index: accounts.length,
+      authPath,
+      accountId,
+      planType,
+      subscriptionUntil: jwt.expiresAt,
+      rateLimitedUntil: null,
+    });
   }
 
   if (accounts.length > 1) loadCodexState();
@@ -128,80 +129,84 @@ function saveCodexState(): void {
       resetAts: accounts.map((a) => a.resetAt ?? null),
       resetD7Ats: accounts.map((a) => a.resetD7At ?? null),
     };
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+    writeJsonFile(STATE_FILE, state);
   } catch {
     /* best effort */
   }
 }
 
 function loadCodexState(): void {
-  try {
-    if (!fs.existsSync(STATE_FILE)) return;
-    const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
-    const now = Date.now();
-    if (
-      typeof state.currentIndex === 'number' &&
-      state.currentIndex < accounts.length
-    ) {
-      currentIndex = state.currentIndex;
-    }
-    if (Array.isArray(state.rateLimits)) {
-      for (
-        let i = 0;
-        i < Math.min(state.rateLimits.length, accounts.length);
-        i++
-      ) {
-        const until = state.rateLimits[i];
-        if (typeof until === 'number' && until > now) {
-          accounts[i].rateLimitedUntil = until;
-        }
-      }
-    }
-    if (Array.isArray(state.usagePcts)) {
-      for (
-        let i = 0;
-        i < Math.min(state.usagePcts.length, accounts.length);
-        i++
-      ) {
-        if (typeof state.usagePcts[i] === 'number')
-          accounts[i].lastUsagePct = state.usagePcts[i];
-      }
-    }
-    if (Array.isArray(state.usageD7Pcts)) {
-      for (
-        let i = 0;
-        i < Math.min(state.usageD7Pcts.length, accounts.length);
-        i++
-      ) {
-        if (typeof state.usageD7Pcts[i] === 'number')
-          accounts[i].lastUsageD7Pct = state.usageD7Pcts[i];
-      }
-    }
-    if (Array.isArray(state.resetAts)) {
-      for (
-        let i = 0;
-        i < Math.min(state.resetAts.length, accounts.length);
-        i++
-      ) {
-        if (state.resetAts[i]) accounts[i].resetAt = state.resetAts[i];
-      }
-    }
-    if (Array.isArray(state.resetD7Ats)) {
-      for (
-        let i = 0;
-        i < Math.min(state.resetD7Ats.length, accounts.length);
-        i++
-      ) {
-        if (state.resetD7Ats[i]) accounts[i].resetD7At = state.resetD7Ats[i];
-      }
-    }
-    logger.info(
-      { currentIndex, accountCount: accounts.length },
-      'Codex rotation state restored',
-    );
-  } catch {
-    /* start fresh */
+  const state = readJsonFile<{
+    currentIndex?: number;
+    rateLimits?: (number | null)[];
+    usagePcts?: (number | null)[];
+    usageD7Pcts?: (number | null)[];
+    resetAts?: (string | null)[];
+    resetD7Ats?: (string | null)[];
+  }>(STATE_FILE);
+  if (!state) return;
+
+  const now = Date.now();
+  if (
+    typeof state.currentIndex === 'number' &&
+    state.currentIndex < accounts.length
+  ) {
+    currentIndex = state.currentIndex;
   }
+  if (Array.isArray(state.rateLimits)) {
+    for (
+      let i = 0;
+      i < Math.min(state.rateLimits.length, accounts.length);
+      i++
+    ) {
+      const until = state.rateLimits[i];
+      if (typeof until === 'number' && until > now) {
+        accounts[i].rateLimitedUntil = until;
+      }
+    }
+  }
+  if (Array.isArray(state.usagePcts)) {
+    for (
+      let i = 0;
+      i < Math.min(state.usagePcts.length, accounts.length);
+      i++
+    ) {
+      if (typeof state.usagePcts[i] === 'number')
+        accounts[i].lastUsagePct = state.usagePcts[i]!;
+    }
+  }
+  if (Array.isArray(state.usageD7Pcts)) {
+    for (
+      let i = 0;
+      i < Math.min(state.usageD7Pcts.length, accounts.length);
+      i++
+    ) {
+      if (typeof state.usageD7Pcts[i] === 'number')
+        accounts[i].lastUsageD7Pct = state.usageD7Pcts[i]!;
+    }
+  }
+  if (Array.isArray(state.resetAts)) {
+    for (
+      let i = 0;
+      i < Math.min(state.resetAts.length, accounts.length);
+      i++
+    ) {
+      if (state.resetAts[i]) accounts[i].resetAt = state.resetAts[i]!;
+    }
+  }
+  if (Array.isArray(state.resetD7Ats)) {
+    for (
+      let i = 0;
+      i < Math.min(state.resetD7Ats.length, accounts.length);
+      i++
+    ) {
+      if (state.resetD7Ats[i]) accounts[i].resetD7At = state.resetD7Ats[i]!;
+    }
+  }
+  logger.info(
+    { currentIndex, accountCount: accounts.length },
+    'Codex rotation state restored',
+  );
 }
 
 /** Get the auth.json path for the current active account. */

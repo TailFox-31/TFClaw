@@ -1,4 +1,5 @@
 import path from 'path';
+import { getErrorMessage } from './utils.js';
 
 import {
   AgentOutput,
@@ -16,7 +17,6 @@ import {
   isClaudeAuthError,
   isClaudeAuthExpiredMessage,
   isClaudeUsageExhaustedMessage,
-  shouldRotateClaudeToken,
 } from './agent-error-detection.js';
 import {
   detectFallbackTrigger,
@@ -28,6 +28,7 @@ import {
   isUsageExhausted,
   markPrimaryCooldown,
 } from './provider-fallback.js';
+import { runClaudeRotationLoop } from './provider-retry.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import {
   detectCodexRotationTrigger,
@@ -35,11 +36,7 @@ import {
   getCodexAccountCount,
   markCodexTokenHealthy,
 } from './codex-token-rotation.js';
-import {
-  rotateToken,
-  getTokenCount,
-  markTokenHealthy,
-} from './token-rotation.js';
+import { getTokenCount } from './token-rotation.js';
 import type { RegisteredGroup } from './types.js';
 
 export interface MessageAgentExecutorDeps {
@@ -392,10 +389,7 @@ export async function runAgentForGroup(
       const retryAttempt = await runAttempt('codex');
 
       if (retryAttempt.error) {
-        const errMsg =
-          retryAttempt.error instanceof Error
-            ? retryAttempt.error.message
-            : String(retryAttempt.error);
+        const errMsg = getErrorMessage(retryAttempt.error);
         const retryTrigger = detectCodexRotationTrigger(errMsg);
         if (retryTrigger.shouldRotate) {
           trigger = { reason: retryTrigger.reason };
@@ -486,156 +480,54 @@ export async function runAgentForGroup(
     },
     rotationMessage?: string,
   ): Promise<'success' | 'error'> => {
-    let trigger = initialTrigger;
-    let lastRotationMessage = rotationMessage;
+    const logCtx = {
+      chatJid,
+      group: group.name,
+      groupFolder: group.folder,
+      runId,
+    };
 
-    while (
-      shouldRotateClaudeToken(trigger.reason) &&
-      getTokenCount() > 1 &&
-      rotateToken(lastRotationMessage, { ignoreRateLimits: true })
-    ) {
-      logger.info(
-        { chatJid, group: group.name, runId, reason: trigger.reason },
-        'Claude rate-limited, retrying with rotated account',
-      );
-
-      const retryAttempt = await runAttempt('claude');
-
-      if (retryAttempt.error) {
-        if (!retryAttempt.sawOutput) {
-          const errMsg =
-            retryAttempt.error instanceof Error
-              ? retryAttempt.error.message
-              : String(retryAttempt.error);
-          const retryTrigger = retryAttempt.streamedTriggerReason
-            ? {
-                shouldFallback: true,
-                reason: retryAttempt.streamedTriggerReason.reason,
-                retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
-              }
-            : detectFallbackTrigger(errMsg);
-          if (retryTrigger.shouldFallback) {
-            trigger = {
-              reason: retryTrigger.reason,
-              retryAfterMs: retryTrigger.retryAfterMs,
-            };
-            lastRotationMessage = errMsg;
-            continue;
-          }
-        }
-
-        logger.error(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            provider: 'claude',
-            err: retryAttempt.error,
-          },
-          'Rotated Claude account also threw',
-        );
-        return 'error';
-      }
-
-      const retryOutput = retryAttempt.output;
-      if (!retryOutput) {
-        logger.error(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            provider: 'claude',
-          },
-          'Rotated Claude account produced no output object',
-        );
-        return 'error';
-      }
-
-      if (
-        !retryAttempt.sawOutput &&
-        retryAttempt.streamedTriggerReason &&
-        retryOutput.status !== 'error'
-      ) {
-        trigger = {
-          reason: retryAttempt.streamedTriggerReason.reason,
-          retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
+    const outcome = await runClaudeRotationLoop(
+      initialTrigger,
+      async () => {
+        const attempt = await runAttempt('claude');
+        return {
+          output: attempt.output,
+          thrownError: attempt.error,
+          sawOutput: attempt.sawOutput,
+          sawSuccessNullResult: attempt.sawSuccessNullResultWithoutOutput,
+          streamedTriggerReason: attempt.streamedTriggerReason,
         };
-        lastRotationMessage =
-          typeof retryOutput.result === 'string'
-            ? retryOutput.result
-            : undefined;
-        continue;
-      }
+      },
+      logCtx,
+      rotationMessage,
+    );
 
-      if (
-        !retryAttempt.sawOutput &&
-        retryAttempt.sawSuccessNullResultWithoutOutput
-      ) {
-        return canFallback
-          ? runFallbackAttempt('success-null-result')
-          : 'error';
-      }
-
-      if (retryOutput.status === 'error') {
-        if (!retryAttempt.sawOutput) {
-          const retryTrigger = retryAttempt.streamedTriggerReason
-            ? {
-                shouldFallback: true,
-                reason: retryAttempt.streamedTriggerReason.reason,
-                retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
-              }
-            : detectFallbackTrigger(retryOutput.error);
-          if (retryTrigger.shouldFallback) {
-            trigger = {
-              reason: retryTrigger.reason,
-              retryAfterMs: retryTrigger.retryAfterMs,
-            };
-            lastRotationMessage = retryOutput.error ?? undefined;
-            continue;
-          }
-        }
-
-        logger.error(
-          {
-            group: group.name,
-            chatJid,
-            runId,
-            provider: 'claude',
-            error: retryOutput.error,
-          },
-          'Rotated Claude account failed',
-        );
+    switch (outcome.type) {
+      case 'success':
+        return 'success';
+      case 'error':
         return 'error';
-      }
-
-      markTokenHealthy();
-      return 'success';
+      case 'no-fallback':
+        return 'error';
+      case 'needs-fallback':
+        if (outcome.trigger.reason === 'success-null-result') {
+          return canFallback
+            ? runFallbackAttempt('success-null-result')
+            : 'error';
+        }
+        if (!canFallback) {
+          logger.warn(
+            { ...logCtx, reason: outcome.trigger.reason },
+            'All Claude tokens exhausted and fallback disabled',
+          );
+          return 'error';
+        }
+        return runFallbackAttempt(
+          outcome.trigger.reason,
+          outcome.trigger.retryAfterMs,
+        );
     }
-
-    // Usage exhausted or auth-expired: don't fall back to Kimi — log only
-    if (
-      trigger.reason === 'usage-exhausted' ||
-      trigger.reason === 'auth-expired'
-    ) {
-      markPrimaryCooldown(trigger.reason, trigger.retryAfterMs);
-      logger.info(
-        { chatJid, group: group.name, runId, reason: trigger.reason },
-        `All Claude tokens ${trigger.reason}, silently skipping (no Kimi fallback)`,
-      );
-      return 'error';
-    }
-
-    if (!canFallback) {
-      logger.warn(
-        { chatJid, group: group.name, runId, reason: trigger.reason },
-        'All Claude tokens exhausted and fallback disabled',
-      );
-      return 'error';
-    }
-
-    return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
   };
 
   const provider = canFallback ? await getActiveProvider() : 'claude';
@@ -657,10 +549,7 @@ export async function runAgentForGroup(
       provider === 'claude' &&
       !primaryAttempt.sawOutput
     ) {
-      const errMsg =
-        primaryAttempt.error instanceof Error
-          ? primaryAttempt.error.message
-          : String(primaryAttempt.error);
+      const errMsg = getErrorMessage(primaryAttempt.error);
       const trigger = primaryAttempt.streamedTriggerReason
         ? {
             shouldFallback: true,
@@ -680,10 +569,7 @@ export async function runAgentForGroup(
     }
 
     if (!isClaudeCodeAgent) {
-      const errMsg =
-        primaryAttempt.error instanceof Error
-          ? primaryAttempt.error.message
-          : String(primaryAttempt.error);
+      const errMsg = getErrorMessage(primaryAttempt.error);
       const trigger = detectCodexRotationTrigger(errMsg);
       if (trigger.shouldRotate && getCodexAccountCount() > 1) {
         return retryCodexWithRotation({ reason: trigger.reason }, errMsg);

@@ -6,6 +6,7 @@ import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { getErrorMessage } from './utils.js';
 import {
   AGENT_MAX_OUTPUT_SIZE,
   AGENT_TIMEOUT,
@@ -18,11 +19,8 @@ export {
   writeTasksSnapshot,
 } from './agent-runner-snapshot.js';
 import { logger } from './logger.js';
-import { AgentType, RegisteredGroup } from './types.js';
-
-// Sentinel markers for robust output parsing (must match agent-runner)
-const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
+import { OUTPUT_END_MARKER, OUTPUT_START_MARKER } from './agent-protocol.js';
+import { AgentOutputPhase, AgentType, RegisteredGroup } from './types.js';
 
 export interface AgentInput {
   prompt: string;
@@ -42,7 +40,7 @@ export interface AgentInput {
 export interface AgentOutput {
   status: 'success' | 'error';
   result: string | null;
-  phase?: 'progress' | 'final' | 'tool-activity' | 'intermediate';
+  phase?: AgentOutputPhase;
   agentId?: string;
   agentLabel?: string;
   agentDone?: boolean;
@@ -441,7 +439,7 @@ export async function runAgentProcess(
         resolve({
           status: 'error',
           result: null,
-          error: `Failed to parse agent output: ${err instanceof Error ? err.message : String(err)}`,
+          error: `Failed to parse agent output: ${getErrorMessage(err)}`,
         });
       }
     });

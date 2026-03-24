@@ -4,9 +4,10 @@ import { PassThrough } from 'stream';
 import fs from 'fs';
 import { spawn } from 'child_process';
 
-// Sentinel markers must match agent-runner.ts
-const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
+import {
+  OUTPUT_START_MARKER,
+  OUTPUT_END_MARKER,
+} from './agent-protocol.js';
 
 // Mock config
 vi.mock('./config.js', () => ({

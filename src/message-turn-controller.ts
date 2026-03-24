@@ -3,9 +3,14 @@ import { logger } from './logger.js';
 import { formatOutbound } from './router.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
-import { type Channel, type RegisteredGroup } from './types.js';
+import { formatElapsedKorean } from './utils.js';
+import {
+  type Channel,
+  type RegisteredGroup,
+  type VisiblePhase,
+} from './types.js';
 
-export type VisiblePhase = 'silent' | 'progress' | 'final';
+export type { VisiblePhase };
 
 interface SubagentTrack {
   label: string;
@@ -324,20 +329,12 @@ export class MessageTurnController {
   }
 
   private renderProgressMessage(text: string): string {
-    const elapsedSeconds =
+    const elapsedMs =
       this.progressStartedAt === null
         ? 0
-        : Math.floor((Date.now() - this.progressStartedAt) / 5_000) * 5;
-    const hours = Math.floor(elapsedSeconds / 3600);
-    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
-    const seconds = elapsedSeconds % 60;
-    const elapsedParts: string[] = [];
+        : Math.floor((Date.now() - this.progressStartedAt) / 5_000) * 5000;
 
-    if (hours > 0) elapsedParts.push(`${hours}시간`);
-    if (minutes > 0) elapsedParts.push(`${minutes}분`);
-    elapsedParts.push(`${seconds}초`);
-
-    const suffix = `\n\n${elapsedParts.join(' ')}`;
+    const suffix = `\n\n${formatElapsedKorean(elapsedMs)}`;
     let body: string;
 
     if (this.subagents.size > 1) {

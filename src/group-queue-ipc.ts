@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import { writeJsonFile } from './utils.js';
+
 function resolveInputDir(ipcDir: string): string {
   return path.join(ipcDir, 'input');
 }
@@ -11,7 +13,7 @@ export function queueFollowUpMessage(ipcDir: string, text: string): string {
   const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
   const filepath = path.join(inputDir, filename);
   const tempPath = `${filepath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
+  writeJsonFile(tempPath, { type: 'message', text });
   fs.renameSync(tempPath, filepath);
   return filename;
 }

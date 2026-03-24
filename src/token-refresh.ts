@@ -13,6 +13,7 @@
  */
 import fs from 'fs';
 import os from 'os';
+import { getErrorMessage, readJsonFile } from './utils.js';
 import path from 'path';
 
 import { logger } from './logger.js';
@@ -72,13 +73,12 @@ function getCredentialsPath(accountIndex: number): string {
 
 function readCredentials(accountIndex: number): CredentialsFile | null {
   const credsPath = getCredentialsPath(accountIndex);
-  try {
-    if (!fs.existsSync(credsPath)) return null;
-    return JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
-  } catch (err) {
-    logger.warn({ err, accountIndex }, 'Failed to read Claude credentials');
-    return null;
+  if (!fs.existsSync(credsPath)) return null;
+  const data = readJsonFile<CredentialsFile>(credsPath);
+  if (!data) {
+    logger.warn({ accountIndex }, 'Failed to read Claude credentials');
   }
+  return data;
 }
 
 function writeCredentials(accountIndex: number, creds: CredentialsFile): void {
@@ -121,7 +121,7 @@ function syncToSessionDirs(credsPath: string): void {
     }
   } catch (err) {
     logger.warn(
-      { err: err instanceof Error ? err.message : String(err) },
+      { err: getErrorMessage(err) },
       'Failed to sync credentials to sessions',
     );
   }
@@ -165,7 +165,7 @@ function updateEnvTokens(): void {
     logger.debug('Updated .env with refreshed tokens');
   } catch (err) {
     logger.warn(
-      { err: err instanceof Error ? err.message : String(err) },
+      { err: getErrorMessage(err) },
       'Failed to update .env with refreshed tokens',
     );
   }
@@ -208,7 +208,7 @@ async function refreshToken(
     );
   } catch (err) {
     logger.warn(
-      { url: TOKEN_URL, err: err instanceof Error ? err.message : String(err) },
+      { url: TOKEN_URL, err: getErrorMessage(err) },
       'Token refresh request error',
     );
   }
@@ -276,7 +276,7 @@ async function checkAndRefreshAccount(
     logger.error(
       {
         accountIndex,
-        err: err instanceof Error ? err.message : String(err),
+        err: getErrorMessage(err),
       },
       'Failed to refresh Claude OAuth token — manual re-login may be required',
     );
