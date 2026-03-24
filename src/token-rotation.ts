@@ -105,7 +105,6 @@ function loadState(): void {
   }
 }
 
-
 /** Get the current active token. */
 export function getCurrentToken(): string | undefined {
   if (tokens.length === 0) return process.env.CLAUDE_CODE_OAUTH_TOKEN;

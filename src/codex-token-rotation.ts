@@ -204,7 +204,6 @@ function loadCodexState(): void {
   }
 }
 
-
 /** Get the auth.json path for the current active account. */
 export function getActiveCodexAuthPath(): string | null {
   if (accounts.length === 0) return null;

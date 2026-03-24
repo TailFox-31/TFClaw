@@ -70,8 +70,7 @@ export const STATUS_UPDATE_INTERVAL = 10000; // 10s
 export const USAGE_UPDATE_INTERVAL = 300000; // 5 minutes
 export const STATUS_SHOW_ROOMS =
   (getEnv('STATUS_SHOW_ROOMS') || 'true') !== 'false';
-export const USAGE_DASHBOARD_ENABLED =
-  getEnv('USAGE_DASHBOARD') === 'true';
+export const USAGE_DASHBOARD_ENABLED = getEnv('USAGE_DASHBOARD') === 'true';
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default

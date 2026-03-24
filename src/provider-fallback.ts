@@ -82,10 +82,7 @@ function loadConfig(): FallbackConfig {
     authToken,
     model,
     smallModel: getEnv('FALLBACK_SMALL_MODEL') || model,
-    defaultCooldownMs: parseInt(
-      getEnv('FALLBACK_COOLDOWN_MS') || '600000',
-      10,
-    ),
+    defaultCooldownMs: parseInt(getEnv('FALLBACK_COOLDOWN_MS') || '600000', 10),
   };
 
   if (_config.enabled) {
