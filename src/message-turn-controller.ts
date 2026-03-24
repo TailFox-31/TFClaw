@@ -119,12 +119,8 @@ export class MessageTurnController {
 
     if (result.phase === 'intermediate') {
       if (text) {
-        if (this.subagents.size > 0) {
-          // Subagents active — standalone to not disrupt progress
-          this.lastIntermediateText = text;
-          await this.options.channel.sendMessage(this.options.chatJid, text);
-        } else if (this.progressMessageId) {
-          // Progress exists — update heading
+        if (this.progressMessageId) {
+          // Progress exists — update heading (works with or without subagents)
           this.previousProgressText = this.latestProgressText;
           this.latestProgressText = text;
           this.latestProgressTextForFinal = text;
