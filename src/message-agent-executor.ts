@@ -44,6 +44,14 @@ export interface MessageAgentExecutorDeps {
   clearSession: (groupFolder: string) => void;
 }
 
+function isClaudeAuthError(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('failed to authenticate') &&
+    (lower.includes('401') || lower.includes('authentication_error'))
+  );
+}
+
 function isClaudeUsageExhaustedMessage(text: string): boolean {
   const normalized = text
     .trim()
@@ -187,6 +195,25 @@ export async function runAgentForGroup(
             streamedTriggerReason = {
               reason: 'usage-exhausted',
             };
+            return;
+          }
+          // 401 auth errors — suppress from chat, log only
+          if (
+            provider === 'claude' &&
+            output.status === 'success' &&
+            !sawOutput &&
+            typeof output.result === 'string' &&
+            isClaudeAuthError(output.result)
+          ) {
+            logger.warn(
+              {
+                chatJid,
+                group: group.name,
+                runId,
+                resultPreview: output.result.slice(0, 120),
+              },
+              'Suppressed Claude 401 auth error from chat output',
+            );
             return;
           }
           if (output.result !== null && output.result !== undefined) {
