@@ -208,6 +208,22 @@ export function getAllTokens(): {
   }));
 }
 
+/** Update the access token value for a specific index (after OAuth refresh). */
+export function updateTokenValue(index: number, newAccessToken: string): void {
+  if (index < 0 || index >= tokens.length) {
+    logger.warn(
+      { index, total: tokens.length },
+      'updateTokenValue: index out of range',
+    );
+    return;
+  }
+  tokens[index].token = newAccessToken;
+  logger.info(
+    { index, masked: `${newAccessToken.slice(0, 20)}...${newAccessToken.slice(-4)}` },
+    'Token value updated after OAuth refresh',
+  );
+}
+
 /** Diagnostic info. */
 export function getTokenRotationInfo(): {
   total: number;

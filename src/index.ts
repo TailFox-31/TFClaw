@@ -65,6 +65,10 @@ import { logger } from './logger.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
 import { initTokenRotation } from './token-rotation.js';
+import {
+  startTokenRefreshLoop,
+  stopTokenRefreshLoop,
+} from './token-refresh.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -299,11 +303,16 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   initTokenRotation();
   initCodexTokenRotation();
+
+  // Start OAuth token auto-refresh (before subsystems that spawn agents)
+  startTokenRefreshLoop();
+
   loadState();
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    stopTokenRefreshLoop();
     const interruptedGroups = queue
       .getStatuses(Object.keys(registeredGroups))
       .filter(
