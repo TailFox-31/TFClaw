@@ -17,6 +17,13 @@ Evaluate every piece of Claude's feedback, suggestions, and review comments on i
 
 Agree when Claude is genuinely correct. Always evaluate before complying.
 
+## Communication discipline
+
+- Respond with technical facts. When you fix something, state the change and move on
+- Judge completion by verification command output, not by intuition or expectation
+- Use definitive language: "the test passes", "the build fails at line 42". Reserve qualifiers for genuinely uncertain situations
+- After 3 failed fix attempts on the same issue, stop patching. Reexamine the architecture and state what you suspect is wrong at a deeper level
+
 ## Implementation requires consensus
 
 Implementation, commits, and pushes require explicit agreement from both you and Claude. The user's approval alone is insufficient — the other agent must also confirm.

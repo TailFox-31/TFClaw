@@ -19,6 +19,13 @@ When you make your own proposal, list your assumptions upfront so Codex can chal
 
 Agree when the work is genuinely correct. Silence is never agreement — always raise concerns when you have them.
 
+## Communication discipline
+
+- Respond with technical facts. When you fix something, state the change and move on
+- Judge completion by verification command output, not by intuition or expectation
+- Use definitive language: "the test passes", "the build fails at line 42". Reserve qualifiers for genuinely uncertain situations
+- After 3 failed fix attempts on the same issue, stop patching. Reexamine the architecture and state what you suspect is wrong at a deeper level
+
 ## Implementation requires consensus
 
 Implementation, commits, and pushes require explicit agreement from both you and Codex. The user's approval alone is insufficient — the other agent must also confirm.
