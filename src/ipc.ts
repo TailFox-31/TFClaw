@@ -80,8 +80,13 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = readJsonFile(filePath);
-              if (!data || typeof data !== 'object') throw new Error('Invalid JSON');
-              const msg = data as { type?: string; chatJid?: string; text?: string };
+              if (!data || typeof data !== 'object')
+                throw new Error('Invalid JSON');
+              const msg = data as {
+                type?: string;
+                chatJid?: string;
+                text?: string;
+              };
               if (msg.type === 'message' && msg.chatJid && msg.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[msg.chatJid];
@@ -133,9 +138,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(tasksDir, file);
             try {
               const data = readJsonFile(filePath);
-              if (!data || typeof data !== 'object') throw new Error('Invalid JSON');
+              if (!data || typeof data !== 'object')
+                throw new Error('Invalid JSON');
               // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data as Parameters<typeof processTaskIpc>[0], sourceGroup, isMain, deps);
+              await processTaskIpc(
+                data as Parameters<typeof processTaskIpc>[0],
+                sourceGroup,
+                isMain,
+                deps,
+              );
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(

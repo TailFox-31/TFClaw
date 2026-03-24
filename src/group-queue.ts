@@ -1,6 +1,10 @@
 import { ChildProcess } from 'child_process';
 
-import { MAX_CONCURRENT_AGENTS } from './config.js';
+import {
+  MAX_CONCURRENT_AGENTS,
+  RECOVERY_CONCURRENT_AGENTS,
+  RECOVERY_DURATION_MS,
+} from './config.js';
 import { queueFollowUpMessage, writeCloseSentinel } from './group-queue-ipc.js';
 import { logger } from './logger.js';
 
@@ -50,6 +54,8 @@ export class GroupQueue {
   private activeCount = 0;
   private activeTaskCount = 0;
   private waitingGroups: string[] = [];
+  private recoveryMode = false;
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private processMessagesFn:
     | ((groupJid: string, context: GroupRunContext) => Promise<boolean>)
     | null = null;
@@ -83,6 +89,30 @@ export class GroupQueue {
     fn: (groupJid: string, context: GroupRunContext) => Promise<boolean>,
   ): void {
     this.processMessagesFn = fn;
+  }
+
+  /** Limit concurrency after restart to avoid API rate-limit storms. */
+  enterRecoveryMode(): void {
+    this.recoveryMode = true;
+    logger.info(
+      { maxConcurrent: RECOVERY_CONCURRENT_AGENTS, durationMs: RECOVERY_DURATION_MS },
+      'Entering recovery mode (staggered restart)',
+    );
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryMode = false;
+      this.recoveryTimer = null;
+      logger.info(
+        { maxConcurrent: MAX_CONCURRENT_AGENTS },
+        'Recovery mode ended, full concurrency restored',
+      );
+      this.drainWaiting();
+    }, RECOVERY_DURATION_MS);
+  }
+
+  private get effectiveMaxConcurrent(): number {
+    return this.recoveryMode
+      ? RECOVERY_CONCURRENT_AGENTS
+      : MAX_CONCURRENT_AGENTS;
   }
 
   private createRunId(): string {
@@ -121,13 +151,13 @@ export class GroupQueue {
       return;
     }
 
-    if (this.activeCount >= MAX_CONCURRENT_AGENTS) {
+    if (this.activeCount >= this.effectiveMaxConcurrent) {
       state.pendingMessages = true;
       if (!this.waitingGroups.includes(groupJid)) {
         this.waitingGroups.push(groupJid);
       }
       logger.debug(
-        { groupJid, activeCount: this.activeCount },
+        { groupJid, activeCount: this.activeCount, max: this.effectiveMaxConcurrent },
         'At concurrency limit, message queued',
       );
       return;
@@ -160,7 +190,7 @@ export class GroupQueue {
     }
 
     if (
-      this.activeCount >= MAX_CONCURRENT_AGENTS ||
+      this.activeCount >= this.effectiveMaxConcurrent ||
       this.activeTaskCount >= MAX_CONCURRENT_TASKS
     ) {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
@@ -466,7 +496,7 @@ export class GroupQueue {
   private drainWaiting(): void {
     while (
       this.waitingGroups.length > 0 &&
-      this.activeCount < MAX_CONCURRENT_AGENTS
+      this.activeCount < this.effectiveMaxConcurrent
     ) {
       const nextMessageIndex = this.waitingGroups.findIndex((jid) => {
         const state = this.getGroup(jid);

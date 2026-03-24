@@ -4,10 +4,7 @@ import { PassThrough } from 'stream';
 import fs from 'fs';
 import { spawn } from 'child_process';
 
-import {
-  OUTPUT_START_MARKER,
-  OUTPUT_END_MARKER,
-} from './agent-protocol.js';
+import { OUTPUT_START_MARKER, OUTPUT_END_MARKER } from './agent-protocol.js';
 
 // Mock config
 vi.mock('./config.js', () => ({

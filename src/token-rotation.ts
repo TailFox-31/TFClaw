@@ -75,7 +75,10 @@ function saveState(): void {
 }
 
 function loadState(): void {
-  const state = readJsonFile<{ currentIndex?: number; rateLimits?: (number | null)[] }>(STATE_FILE);
+  const state = readJsonFile<{
+    currentIndex?: number;
+    rateLimits?: (number | null)[];
+  }>(STATE_FILE);
   if (!state) return;
 
   const now = Date.now();
@@ -86,11 +89,7 @@ function loadState(): void {
     currentIndex = state.currentIndex;
   }
   if (Array.isArray(state.rateLimits)) {
-    for (
-      let i = 0;
-      i < Math.min(state.rateLimits.length, tokens.length);
-      i++
-    ) {
+    for (let i = 0; i < Math.min(state.rateLimits.length, tokens.length); i++) {
       const until = state.rateLimits[i];
       if (typeof until === 'number' && until > now) {
         tokens[i].rateLimitedUntil = until;

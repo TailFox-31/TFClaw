@@ -49,5 +49,9 @@ export function writeGroupsSnapshot(
   fs.mkdirSync(groupIpcDir, { recursive: true });
   const visibleGroups = isMain ? groups : [];
   const groupsFile = path.join(groupIpcDir, 'available_groups.json');
-  writeJsonFile(groupsFile, { groups: visibleGroups, lastSync: new Date().toISOString() }, true);
+  writeJsonFile(
+    groupsFile,
+    { groups: visibleGroups, lastSync: new Date().toISOString() },
+    true,
+  );
 }

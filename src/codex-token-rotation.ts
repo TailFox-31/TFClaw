@@ -94,7 +94,9 @@ export function initCodexTokenRotation(): void {
     const authPath = path.join(ACCOUNTS_DIR, dir, 'auth.json');
     if (!fs.existsSync(authPath)) continue;
 
-    const data = readJsonFile<{ tokens?: { account_id?: string; id_token?: string } }>(authPath);
+    const data = readJsonFile<{
+      tokens?: { account_id?: string; id_token?: string };
+    }>(authPath);
     if (!data) {
       logger.warn({ authPath }, 'Failed to parse codex account auth.json');
       continue;
@@ -186,11 +188,7 @@ function loadCodexState(): void {
     }
   }
   if (Array.isArray(state.resetAts)) {
-    for (
-      let i = 0;
-      i < Math.min(state.resetAts.length, accounts.length);
-      i++
-    ) {
+    for (let i = 0; i < Math.min(state.resetAts.length, accounts.length); i++) {
       if (state.resetAts[i]) accounts[i].resetAt = state.resetAts[i]!;
     }
   }

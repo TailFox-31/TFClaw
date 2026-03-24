@@ -54,6 +54,18 @@ export const MAX_CONCURRENT_AGENTS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_AGENTS || '5', 10) || 5,
 );
+export const RECOVERY_CONCURRENT_AGENTS = parseInt(
+  getEnv('RECOVERY_CONCURRENT_AGENTS') || '3',
+  10,
+);
+export const RECOVERY_STAGGER_MS = parseInt(
+  getEnv('RECOVERY_STAGGER_MS') || '2000',
+  10,
+);
+export const RECOVERY_DURATION_MS = parseInt(
+  getEnv('RECOVERY_DURATION_MS') || '60000',
+  10,
+);
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

@@ -271,9 +271,7 @@ export class DiscordChannel implements Channel {
               return `[Audio: ${att.name || 'audio'}]`;
             } else if (
               contentType.startsWith('text/') ||
-              /\.(txt|md|csv|json|log)$/i.test(
-                att.name || '',
-              )
+              /\.(txt|md|csv|json|log)$/i.test(att.name || '')
             ) {
               // Download and inline text-based files
               try {
@@ -450,8 +448,9 @@ export class DiscordChannel implements Channel {
       }
       cleaned = formatOutbound(cleaned);
 
-      // Discord has a 2000 character limit per message — split if needed
+      // Discord has a 2000 character limit per message and 10 attachments per message
       const MAX_LENGTH = 2000;
+      const MAX_ATTACHMENTS = 10;
       const files = imageFiles.map((f) => ({
         attachment: f,
         name: path.basename(f),
@@ -462,19 +461,43 @@ export class DiscordChannel implements Channel {
         return;
       }
 
+      // Split files into batches of MAX_ATTACHMENTS
+      const fileBatches: typeof files[] = [];
+      for (let i = 0; i < files.length; i += MAX_ATTACHMENTS) {
+        fileBatches.push(files.slice(i, i + MAX_ATTACHMENTS));
+      }
+
       if (cleaned.length <= MAX_LENGTH) {
+        // Send text with first batch of files
         await textChannel.send({
           content: cleaned || undefined,
-          files: files.length > 0 ? files : undefined,
+          files: fileBatches[0]?.length ? fileBatches[0] : undefined,
           flags: MessageFlags.SuppressEmbeds,
         });
+        // Send remaining file batches as follow-up messages
+        for (let b = 1; b < fileBatches.length; b++) {
+          await textChannel.send({
+            files: fileBatches[b],
+            flags: MessageFlags.SuppressEmbeds,
+          });
+        }
       } else {
-        // Send text in chunks, attach images to the first chunk
+        // Send text in chunks, attach first batch to the first chunk
+        let fileBatchIndex = 0;
         for (let i = 0; i < cleaned.length; i += MAX_LENGTH) {
           const chunk = cleaned.slice(i, i + MAX_LENGTH);
+          const batch = fileBatches[fileBatchIndex];
           await textChannel.send({
             content: chunk,
-            files: i === 0 && files.length > 0 ? files : undefined,
+            files: batch?.length ? batch : undefined,
+            flags: MessageFlags.SuppressEmbeds,
+          });
+          if (batch?.length) fileBatchIndex++;
+        }
+        // Send any remaining file batches
+        for (let b = fileBatchIndex; b < fileBatches.length; b++) {
+          await textChannel.send({
+            files: fileBatches[b],
             flags: MessageFlags.SuppressEmbeds,
           });
         }

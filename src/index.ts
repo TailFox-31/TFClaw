@@ -438,6 +438,7 @@ async function main(): Promise<void> {
     writeGroupsSnapshot,
   });
   queue.setProcessMessagesFn(runtime.processGroupMessages);
+  queue.enterRecoveryMode();
   runtime.recoverPendingMessages();
   const restartContext = await announceRestartRecovery(processStartedAtMs);
   for (const candidate of getInterruptedRecoveryCandidates(

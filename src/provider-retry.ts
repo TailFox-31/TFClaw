@@ -8,8 +8,15 @@
 import { shouldRotateClaudeToken } from './agent-error-detection.js';
 import { logger } from './logger.js';
 import { getErrorMessage } from './utils.js';
-import { detectFallbackTrigger, markPrimaryCooldown } from './provider-fallback.js';
-import { rotateToken, getTokenCount, markTokenHealthy } from './token-rotation.js';
+import {
+  detectFallbackTrigger,
+  markPrimaryCooldown,
+} from './provider-fallback.js';
+import {
+  rotateToken,
+  getTokenCount,
+  markTokenHealthy,
+} from './token-rotation.js';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -115,7 +122,10 @@ export async function runClaudeRotationLoop(
 
     // ── Success with null result (MAE-specific, TaskScheduler ignores) ──
     if (!attempt.sawOutput && attempt.sawSuccessNullResult) {
-      return { type: 'needs-fallback', trigger: { reason: 'success-null-result' } };
+      return {
+        type: 'needs-fallback',
+        trigger: { reason: 'success-null-result' },
+      };
     }
 
     // ── Error status ──

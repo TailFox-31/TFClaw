@@ -55,7 +55,8 @@ let diskCacheLoaded = false;
 function loadUsageDiskCache(): void {
   if (diskCacheLoaded) return;
   diskCacheLoaded = true;
-  usageDiskCache = readJsonFile<Record<string, UsageCacheEntry>>(USAGE_CACHE_FILE) ?? {};
+  usageDiskCache =
+    readJsonFile<Record<string, UsageCacheEntry>>(USAGE_CACHE_FILE) ?? {};
 }
 
 function saveUsageDiskCache(): void {
