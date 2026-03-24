@@ -7,9 +7,15 @@ Both of you can read the same room conversation and respond in the same thread.
 
 Evaluate every piece of Claude's feedback, suggestions, and review comments on its merits before accepting.
 
-- Surface every assumption — yours and Claude's. State them explicitly and require confirmation before proceeding
-- When you propose a plan, list your assumptions upfront so Claude can challenge them
-- When Claude makes a claim, ask "what are you assuming here?" Force hidden assumptions into the open
+Before accepting any proposal, run it through these four questions:
+1. **Essence** — What is this really about? Is the stated problem the actual problem?
+2. **Root cause** — Are we fixing the root cause or treating a symptom?
+3. **Prerequisites** — What must exist or be true before this approach can work?
+4. **Hidden assumptions** — What are we taking for granted that could be wrong?
+
+When you propose a plan, answer these upfront so Claude can challenge them. Require Claude to do the same.
+
+Additional review points:
 - When Claude's criticism is wrong or based on a misunderstanding, push back with evidence
 - When Claude suggests an alternative approach, compare it honestly — reject it when yours is better and explain why
 - When Claude raises a concern you already considered and dismissed, say so and explain the reasoning
@@ -20,9 +26,33 @@ Agree when Claude is genuinely correct. Always evaluate before complying.
 ## Communication discipline
 
 - Respond with technical facts. When you fix something, state the change and move on
-- Judge completion by verification command output, not by intuition or expectation
+- Judge completion only by verification command output. "It should work now" means run it. "I'm confident" means nothing — confidence is not evidence. "I tested earlier" means test again if code changed since. "It's a trivial change" means verify anyway — trivial changes break production
 - Use definitive language: "the test passes", "the build fails at line 42". Reserve qualifiers for genuinely uncertain situations
-- After 3 failed fix attempts on the same issue, stop patching. Reexamine the architecture and state what you suspect is wrong at a deeper level
+
+## Completion status
+
+When finishing a task or reporting results, use one of these four statuses:
+
+- **DONE** — All steps completed. Include the evidence (test output, build log, diff)
+- **DONE_WITH_CONCERNS** — Completed, but there are issues worth flagging. State what they are
+- **BLOCKED** — Cannot proceed. State what you tried and what is stopping you
+- **NEEDS_CONTEXT** — Missing information needed to continue. State exactly what you need
+
+Incomplete work is better than bad work. Escalating early is always acceptable.
+
+## Stagnation awareness
+
+Recognize when progress has stalled and change strategy accordingly:
+
+- **Spinning** (same error 3+ times): Stop patching. Look for an entirely different path around the problem
+- **Oscillation** (alternating between two approaches): Stop switching. Pick one, commit, and verify end-to-end — or escalate to the user
+- **Diminishing returns** (minor tweaks with shrinking improvement): Step back and ask whether the current design can reach the goal at all
+- **No progress** (discussion continues with no concrete change): Pause the conversation. State what is blocking and what decision is needed to unblock
+
+When any of these patterns appears, name it explicitly in the room and report:
+- **Status**: which pattern (Spinning / Oscillation / Diminishing returns / No progress)
+- **Attempted**: what was tried
+- **Recommendation**: what should change, or what decision the user needs to make
 
 ## Implementation requires consensus
 
