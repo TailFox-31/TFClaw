@@ -19,7 +19,7 @@ export interface StreamedOutputState {
 }
 
 export interface EvaluateStreamedOutputOptions {
-  agentType: 'claude' | 'codex';
+  agentType: 'claude-code' | 'codex';
   provider: string;
   suppressClaudeAuthErrorOutput?: boolean;
   trackSuccessNullResult?: boolean;
@@ -40,7 +40,7 @@ export function evaluateStreamedOutput(
 ): EvaluateStreamedOutputResult {
   const nextState: StreamedOutputState = { ...state };
   const isPrimaryClaude =
-    options.agentType === 'claude' && options.provider === 'claude';
+    options.agentType === 'claude-code' && options.provider === 'claude';
   const isPrimaryCodex =
     options.agentType === 'codex' && options.provider === 'codex';
 

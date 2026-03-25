@@ -331,7 +331,7 @@ async function runTask(
             streamedOutput,
             streamedState,
             {
-              agentType: isClaudeAgent ? 'claude' : 'codex',
+              agentType: isClaudeAgent ? 'claude-code' : 'codex',
               provider,
               shortCircuitTriggeredErrors: true,
             },

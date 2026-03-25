@@ -40,7 +40,7 @@ function freshState(): StreamedOutputState {
 }
 
 const claudeOpts: EvaluateStreamedOutputOptions = {
-  agentType: 'claude',
+  agentType: 'claude-code',
   provider: 'claude',
 };
 
@@ -91,7 +91,7 @@ describe('evaluateStreamedOutput', () => {
       const result = evaluateStreamedOutput(
         successOutput('Hello'),
         freshState(),
-        { agentType: 'claude', provider: 'fallback' },
+        { agentType: 'claude-code', provider: 'fallback' },
       );
       expect(result.shouldForwardOutput).toBe(true);
       expect(result.state.sawOutput).toBe(true);
@@ -130,7 +130,7 @@ describe('evaluateStreamedOutput', () => {
       const result = evaluateStreamedOutput(
         successOutput('banner text'),
         freshState(),
-        { agentType: 'claude', provider: 'fallback' },
+        { agentType: 'claude-code', provider: 'fallback' },
       );
       // Non-primary: skip banner check, forward normally
       expect(result.shouldForwardOutput).toBe(true);
@@ -244,7 +244,7 @@ describe('evaluateStreamedOutput', () => {
 
     it('does not track for non-primary Claude', () => {
       const result = evaluateStreamedOutput(successOutput(null), freshState(), {
-        agentType: 'claude',
+        agentType: 'claude-code',
         provider: 'fallback',
         trackSuccessNullResult: true,
       });

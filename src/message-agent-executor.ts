@@ -147,7 +147,7 @@ export async function runAgentForGroup(
             resetSessionRequested = true;
           }
           const evaluation = evaluateStreamedOutput(output, streamedState, {
-            agentType: isClaudeCodeAgent ? 'claude' : 'codex',
+            agentType: isClaudeCodeAgent ? 'claude-code' : 'codex',
             provider,
             suppressClaudeAuthErrorOutput: provider === 'claude',
             trackSuccessNullResult: true,
