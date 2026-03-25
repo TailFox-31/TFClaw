@@ -581,4 +581,109 @@ describe('GroupQueue', () => {
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
   });
+
+  // --- Run phase transitions ---
+
+  it('transitions running_messages → closing_messages → idle', async () => {
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
+    let releaseRun!: (value: boolean) => void;
+    const blocker = new Promise<boolean>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    const processMessages = vi.fn(async () => await blocker);
+    queue.setProcessMessagesFn(processMessages);
+
+    queue.enqueueMessageCheck('group1@g.us', ipcDir);
+    await vi.advanceTimersByTimeAsync(10);
+
+    // While running, phase should be running_messages
+    const duringRun = queue.getStatuses(['group1@g.us']);
+    expect(duringRun[0].runPhase).toBe('running_messages');
+
+    // closeStdin transitions to closing_messages
+    queue.closeStdin('group1@g.us');
+    const afterClose = queue.getStatuses(['group1@g.us']);
+    expect(afterClose[0].runPhase).toBe('closing_messages');
+
+    // sendMessage should fail in closing_messages
+    expect(queue.sendMessage('group1@g.us', 'test')).toBe(false);
+
+    // Complete the run — should go to idle
+    releaseRun(true);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const afterFinish = queue.getStatuses(['group1@g.us']);
+    expect(afterFinish[0].runPhase).toBe('idle');
+    expect(afterFinish[0].status).toBe('inactive');
+  });
+
+  it('closeStdin does not change phase during running_task', async () => {
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
+    let resolveTask!: () => void;
+    const blocker = new Promise<void>((resolve) => {
+      resolveTask = resolve;
+    });
+
+    queue.enqueueTask('group1@g.us', 'task-1', async () => {
+      // Register process so closeStdin has an ipcDir
+      queue.registerProcess('group1@g.us', {} as any, 'agent-1', ipcDir);
+      await blocker;
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    const duringTask = queue.getStatuses(['group1@g.us']);
+    expect(duringTask[0].runPhase).toBe('running_task');
+
+    // closeStdin during task — phase should stay running_task
+    queue.closeStdin('group1@g.us');
+    const afterClose = queue.getStatuses(['group1@g.us']);
+    expect(afterClose[0].runPhase).toBe('running_task');
+
+    resolveTask();
+    await vi.advanceTimersByTimeAsync(10);
+
+    const afterFinish = queue.getStatuses(['group1@g.us']);
+    expect(afterFinish[0].runPhase).toBe('idle');
+  });
+
+  it('sendMessage returns true only in running_messages phase', async () => {
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
+
+    // idle → false
+    expect(queue.sendMessage('group1@g.us', 'test')).toBe(false);
+
+    // running_task → false
+    let resolveTask!: () => void;
+    queue.enqueueTask('group1@g.us', 'task-1', async () => {
+      queue.registerProcess('group1@g.us', {} as any, 'agent-1', ipcDir);
+      await new Promise<void>((resolve) => {
+        resolveTask = resolve;
+      });
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(queue.sendMessage('group1@g.us', 'test')).toBe(false);
+    resolveTask();
+    await vi.advanceTimersByTimeAsync(10);
+
+    // running_messages → true
+    let releaseRun!: (value: boolean) => void;
+    const processMessages = vi.fn(async () => {
+      return await new Promise<boolean>((resolve) => {
+        releaseRun = resolve;
+      });
+    });
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us', ipcDir);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(queue.sendMessage('group1@g.us', 'msg')).toBe(true);
+
+    // closing_messages → false
+    queue.closeStdin('group1@g.us');
+    expect(queue.sendMessage('group1@g.us', 'msg')).toBe(false);
+
+    releaseRun(true);
+    await vi.advanceTimersByTimeAsync(10);
+  });
 });

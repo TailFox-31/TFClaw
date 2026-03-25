@@ -26,10 +26,19 @@ const MAX_CONCURRENT_TASKS =
 const POST_CLOSE_SIGTERM_DELAY_MS = 60_000;
 const POST_CLOSE_SIGKILL_DELAY_MS = 75_000;
 
+/**
+ * Run lifecycle phase — single axis for what the group is currently executing.
+ * Message retry backoff is tracked separately (retryCount / retryScheduledAt)
+ * because tasks can run independently of message retry state.
+ */
+type RunPhase =
+  | 'idle'
+  | 'running_messages'
+  | 'running_task'
+  | 'closing_messages';
+
 interface GroupState {
-  active: boolean;
-  closingStdin: boolean;
-  isTaskProcess: boolean;
+  runPhase: RunPhase;
   runningTaskId: string | null;
   currentRunId: string | null;
   pendingMessages: boolean;
@@ -45,9 +54,74 @@ interface GroupState {
   startedAt: number | null;
 }
 
+/** Reset all run-related fields to idle. Shared by runForGroup and runTask finally blocks. */
+function resetRunState(state: GroupState): void {
+  state.runPhase = 'idle';
+  state.currentRunId = null;
+  state.runningTaskId = null;
+  state.startedAt = null;
+  state.process = null;
+  state.processName = null;
+  state.ipcDir = null;
+}
+
+/** Validate that flat fields are consistent with runPhase. Called after every transition. */
+function assertRunPhaseInvariants(state: GroupState, groupJid: string): void {
+  switch (state.runPhase) {
+    case 'idle':
+      if (
+        state.currentRunId != null ||
+        state.runningTaskId != null ||
+        state.process != null ||
+        state.processName != null
+      ) {
+        logger.error(
+          {
+            groupJid,
+            runPhase: state.runPhase,
+            currentRunId: state.currentRunId,
+            runningTaskId: state.runningTaskId,
+            hasProcess: state.process != null,
+            processName: state.processName,
+          },
+          'Invariant violation: idle phase has stale run/task ID or process',
+        );
+      }
+      break;
+    case 'running_messages':
+    case 'closing_messages':
+      if (state.currentRunId == null || state.runningTaskId != null) {
+        logger.error(
+          {
+            groupJid,
+            runPhase: state.runPhase,
+            currentRunId: state.currentRunId,
+            runningTaskId: state.runningTaskId,
+          },
+          'Invariant violation: messages phase has missing runId or stale taskId',
+        );
+      }
+      break;
+    case 'running_task':
+      if (state.runningTaskId == null || state.currentRunId != null) {
+        logger.error(
+          {
+            groupJid,
+            runPhase: state.runPhase,
+            runningTaskId: state.runningTaskId,
+            currentRunId: state.currentRunId,
+          },
+          'Invariant violation: task phase has no taskId or has stale currentRunId',
+        );
+      }
+      break;
+  }
+}
+
 export interface GroupStatus {
   jid: string;
   status: 'processing' | 'waiting' | 'inactive';
+  runPhase: string;
   elapsedMs: number | null;
   pendingMessages: boolean;
   pendingTasks: number;
@@ -69,9 +143,7 @@ export class GroupQueue {
     let state = this.groups.get(groupJid);
     if (!state) {
       state = {
-        active: false,
-        closingStdin: false,
-        isTaskProcess: false,
+        runPhase: 'idle',
         runningTaskId: null,
         currentRunId: null,
         pendingMessages: false,
@@ -138,9 +210,12 @@ export class GroupQueue {
       state.ipcDir = ipcDir;
     }
 
-    if (state.active) {
+    if (state.runPhase !== 'idle') {
       state.pendingMessages = true;
-      logger.debug({ groupJid }, 'Agent active, message queued');
+      logger.debug(
+        { groupJid, runPhase: state.runPhase },
+        'Agent active, message queued',
+      );
       return;
     }
 
@@ -196,9 +271,12 @@ export class GroupQueue {
       return;
     }
 
-    if (state.active) {
+    if (state.runPhase !== 'idle') {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
-      logger.debug({ groupJid, taskId }, 'Agent active, task queued');
+      logger.debug(
+        { groupJid, taskId, runPhase: state.runPhase },
+        'Agent active, task queued',
+      );
       return;
     }
 
@@ -244,7 +322,7 @@ export class GroupQueue {
         runId: state.currentRunId,
         processName,
         ipcDir: state.ipcDir,
-        isTaskProcess: state.isTaskProcess,
+        runPhase: state.runPhase,
       },
       'Registered active process for group',
     );
@@ -252,20 +330,13 @@ export class GroupQueue {
 
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (
-      !state.active ||
-      !state.ipcDir ||
-      state.isTaskProcess ||
-      state.closingStdin
-    ) {
+    if (state.runPhase !== 'running_messages' || !state.ipcDir) {
       logger.debug(
         {
           groupJid,
           runId: state.currentRunId,
-          active: state.active,
+          runPhase: state.runPhase,
           ipcDir: state.ipcDir,
-          isTaskProcess: state.isTaskProcess,
-          closingStdin: state.closingStdin,
         },
         'Cannot pipe follow-up message to active agent',
       );
@@ -317,7 +388,7 @@ export class GroupQueue {
     reason: string,
   ): void {
     const proc = state.process;
-    if (!proc || !runId || state.isTaskProcess) {
+    if (!proc || !runId || state.runPhase === 'running_task') {
       return;
     }
 
@@ -392,8 +463,11 @@ export class GroupQueue {
     metadata?: { runId?: string; reason?: string },
   ): void {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.ipcDir) return;
-    state.closingStdin = true;
+    if (state.runPhase === 'idle' || !state.ipcDir) return;
+    if (state.runPhase === 'running_messages') {
+      state.runPhase = 'closing_messages';
+      assertRunPhaseInvariants(state, groupJid);
+    }
 
     try {
       writeCloseSentinel(state.ipcDir);
@@ -435,16 +509,21 @@ export class GroupQueue {
   ): Promise<void> {
     const state = this.getGroup(groupJid);
     const runId = this.createRunId();
-    state.active = true;
-    state.closingStdin = false;
-    state.isTaskProcess = false;
+    state.runPhase = 'running_messages';
     state.currentRunId = runId;
     state.pendingMessages = false;
     state.startedAt = Date.now();
+    assertRunPhaseInvariants(state, groupJid);
     this.activeCount++;
 
     logger.info(
-      { groupJid, runId, reason, activeCount: this.activeCount },
+      {
+        groupJid,
+        runId,
+        reason,
+        runPhase: state.runPhase,
+        activeCount: this.activeCount,
+      },
       'Starting group message run',
     );
 
@@ -473,6 +552,7 @@ export class GroupQueue {
     } finally {
       this.clearPostCloseTimers(state);
       const durationMs = state.startedAt ? Date.now() - state.startedAt : null;
+      const fromPhase = state.runPhase;
       logger.info(
         {
           groupJid,
@@ -480,18 +560,14 @@ export class GroupQueue {
           reason,
           outcome,
           durationMs,
+          transition: `${fromPhase} → idle`,
           pendingMessages: state.pendingMessages,
           pendingTasks: state.pendingTasks.length,
         },
         'Finished group message run',
       );
-      state.active = false;
-      state.startedAt = null;
-      state.closingStdin = false;
-      state.process = null;
-      state.processName = null;
-      state.ipcDir = null;
-      state.currentRunId = null;
+      resetRunState(state);
+      assertRunPhaseInvariants(state, groupJid);
       this.activeCount--;
       this.drainGroup(groupJid);
     }
@@ -499,19 +575,18 @@ export class GroupQueue {
 
   private async runTask(groupJid: string, task: QueuedTask): Promise<void> {
     const state = this.getGroup(groupJid);
-    state.active = true;
-    state.closingStdin = false;
-    state.isTaskProcess = true;
+    state.runPhase = 'running_task';
     state.runningTaskId = task.id;
     state.startedAt = Date.now();
+    assertRunPhaseInvariants(state, groupJid);
     this.activeCount++;
     this.activeTaskCount++;
 
     logger.info(
       {
-        transition: 'queue:task:start',
         groupJid,
         taskId: task.id,
+        runPhase: state.runPhase,
         activeCount: this.activeCount,
         activeTaskCount: this.activeTaskCount,
       },
@@ -529,7 +604,7 @@ export class GroupQueue {
       const durationMs = state.startedAt ? Date.now() - state.startedAt : null;
       logger.info(
         {
-          transition: 'queue:task:finish',
+          transition: 'running_task → idle',
           groupJid,
           taskId: task.id,
           outcome,
@@ -539,14 +614,8 @@ export class GroupQueue {
         },
         'Finished queued task',
       );
-      state.active = false;
-      state.isTaskProcess = false;
-      state.runningTaskId = null;
-      state.startedAt = null;
-      state.closingStdin = false;
-      state.process = null;
-      state.processName = null;
-      state.ipcDir = null;
+      resetRunState(state);
+      assertRunPhaseInvariants(state, groupJid);
       this.activeCount--;
       this.activeTaskCount--;
       this.drainGroup(groupJid);
@@ -686,13 +755,14 @@ export class GroupQueue {
         return {
           jid,
           status: 'inactive' as const,
+          runPhase: 'idle',
           elapsedMs: null,
           pendingMessages: false,
           pendingTasks: 0,
         };
       }
       let status: GroupStatus['status'];
-      if (state.active) {
+      if (state.runPhase !== 'idle') {
         status = 'processing';
       } else if (
         state.pendingMessages ||
@@ -706,6 +776,7 @@ export class GroupQueue {
       return {
         jid,
         status,
+        runPhase: state.runPhase,
         elapsedMs: state.startedAt ? now - state.startedAt : null,
         pendingMessages: state.pendingMessages,
         pendingTasks: state.pendingTasks.length,
@@ -758,7 +829,7 @@ export class GroupQueue {
           processName: state.processName,
         });
 
-        if (state.active && state.ipcDir && !state.closingStdin) {
+        if (state.runPhase === 'running_messages' && state.ipcDir) {
           this.closeStdin(groupJid, { reason: 'shutdown' });
         }
       }
