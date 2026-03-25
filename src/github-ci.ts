@@ -90,9 +90,7 @@ export function parseGitHubCiMetadata(
   };
 }
 
-export function serializeGitHubCiMetadata(
-  metadata: GitHubCiMetadata,
-): string {
+export function serializeGitHubCiMetadata(metadata: GitHubCiMetadata): string {
   return JSON.stringify(metadata);
 }
 
@@ -119,9 +117,7 @@ function formatConclusionLabel(conclusion: string | null | undefined): string {
   }
 }
 
-async function fetchFailedJobs(
-  metadata: GitHubCiMetadata,
-): Promise<string[]> {
+async function fetchFailedJobs(metadata: GitHubCiMetadata): Promise<string[]> {
   const stdout = await execGhApi([
     `repos/${metadata.repo}/actions/runs/${metadata.run_id}/jobs?per_page=100`,
   ]);

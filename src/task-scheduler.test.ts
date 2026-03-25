@@ -5,25 +5,24 @@ const {
   writeTasksSnapshotMock,
   loggerDebugMock,
   checkGitHubActionsRunMock,
-} =
-  vi.hoisted(() => ({
-    runAgentProcessMock: vi.fn(async () => ({
-      status: 'success' as const,
-      result: 'done',
-    })),
-    writeTasksSnapshotMock: vi.fn(),
-    loggerDebugMock: vi.fn(),
-    checkGitHubActionsRunMock: vi.fn(
-      async (): Promise<{
-        terminal: boolean;
-        resultSummary: string;
-        completionMessage?: string;
-      }> => ({
-        terminal: false,
-        resultSummary: 'GitHub Actions run 123 is in_progress',
-      }),
-    ),
-  }));
+} = vi.hoisted(() => ({
+  runAgentProcessMock: vi.fn(async () => ({
+    status: 'success' as const,
+    result: 'done',
+  })),
+  writeTasksSnapshotMock: vi.fn(),
+  loggerDebugMock: vi.fn(),
+  checkGitHubActionsRunMock: vi.fn(
+    async (): Promise<{
+      terminal: boolean;
+      resultSummary: string;
+      completionMessage?: string;
+    }> => ({
+      terminal: false,
+      resultSummary: 'GitHub Actions run 123 is in_progress',
+    }),
+  ),
+}));
 
 vi.mock('./provider-fallback.js', () => ({
   detectFallbackTrigger: vi.fn((error?: string | null) => {

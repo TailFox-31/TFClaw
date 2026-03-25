@@ -142,7 +142,9 @@ Managed by host-driven watcher.
 
     expect(result.terminal).toBe(true);
     expect(result.resultSummary).toContain('실패');
-    expect(result.completionMessage).toContain('CI 완료: GitHub Actions run 654321');
+    expect(result.completionMessage).toContain(
+      'CI 완료: GitHub Actions run 654321',
+    );
     expect(result.completionMessage).toContain('판정: 실패');
     expect(result.completionMessage).toContain('- 실패 job: test');
   });
