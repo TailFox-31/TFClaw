@@ -35,7 +35,10 @@ import {
   getCodexAccountCount,
   markCodexTokenHealthy,
 } from './codex-token-rotation.js';
-import type { AgentTriggerReason, CodexRotationReason } from './agent-error-detection.js';
+import type {
+  AgentTriggerReason,
+  CodexRotationReason,
+} from './agent-error-detection.js';
 import { getTokenCount } from './token-rotation.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -409,7 +412,8 @@ export async function runAgentForGroup(
         retryOutput.status !== 'error'
       ) {
         trigger = {
-          reason: retryAttempt.streamedTriggerReason.reason as CodexRotationReason,
+          reason: retryAttempt.streamedTriggerReason
+            .reason as CodexRotationReason,
         };
         lastRotationMessage =
           typeof retryOutput.result === 'string'
@@ -422,8 +426,8 @@ export async function runAgentForGroup(
         const retryTrigger = retryAttempt.streamedTriggerReason
           ? {
               shouldRotate: true,
-              reason:
-                retryAttempt.streamedTriggerReason.reason as CodexRotationReason,
+              reason: retryAttempt.streamedTriggerReason
+                .reason as CodexRotationReason,
             }
           : detectCodexRotationTrigger(retryOutput.error);
 
@@ -672,7 +676,8 @@ export async function runAgentForGroup(
   ) {
     return retryCodexWithRotation(
       {
-        reason: primaryAttempt.streamedTriggerReason.reason as CodexRotationReason,
+        reason: primaryAttempt.streamedTriggerReason
+          .reason as CodexRotationReason,
       },
       output.error ?? output.result ?? undefined,
     );

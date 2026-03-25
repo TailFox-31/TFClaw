@@ -54,12 +54,12 @@ export function evaluateStreamedOutput(
   ) {
     const triggerReason: AgentTriggerReason | undefined =
       isClaudeUsageExhaustedMessage(output.result)
-      ? 'usage-exhausted'
-      : isClaudeOrgAccessDeniedMessage(output.result)
-        ? 'org-access-denied'
-        : isClaudeAuthExpiredMessage(output.result)
-          ? 'auth-expired'
-          : undefined;
+        ? 'usage-exhausted'
+        : isClaudeOrgAccessDeniedMessage(output.result)
+          ? 'org-access-denied'
+          : isClaudeAuthExpiredMessage(output.result)
+            ? 'auth-expired'
+            : undefined;
 
     if (triggerReason) {
       const newTrigger = nextState.streamedTriggerReason
