@@ -58,16 +58,20 @@ function redactSecrets(text: string): string {
  *
  * When a model (especially Codex) enters a degenerate loop, it emits
  * tool-call intent as plaintext instead of actual tool calls.  The format is:
- *   to=functions.<name> <type> {<json>}
+ *   to=functions.<name> <arbitrary tokens> {<json>}
  * e.g. `to=functions.exec_command code {"cmd":"git status","yield_time_ms":1000}`
+ *
+ * The tokens between the function name and JSON body can include non-ASCII
+ * characters (CJK, etc.) when the model hallucinates. The regex allows one or
+ * more non-whitespace descriptor tokens before the JSON brace.
  *
  * This function removes such fragments so they never reach Discord.
  */
 export function stripToolCallLeaks(text: string): string {
-  // Match tool-call serialization: to=functions.<name> <word> {<json>}
+  // Match tool-call serialization: to=functions.<name> <descriptor tokens> {<json>}
   // Handles up to one level of nested braces in the JSON body.
   const stripped = text.replace(
-    /to=functions\.\w+\s+\w+\s+\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g,
+    /to=functions\.\w+(?:\s+[^\s{}]+)+\s+\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g,
     '',
   );
   // Collapse excessive blank lines left after stripping

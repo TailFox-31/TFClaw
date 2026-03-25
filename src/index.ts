@@ -70,10 +70,6 @@ import {
   stopTokenRefreshLoop,
 } from './token-refresh.js';
 
-// Re-export for backwards compatibility during refactor
-export { escapeXml, formatMessages } from './router.js';
-export { composeDashboardContent } from './dashboard-render.js';
-
 // Token rotation is initialized lazily on first use or at startup below
 
 export async function sendFormattedChannelMessage(

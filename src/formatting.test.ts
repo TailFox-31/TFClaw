@@ -272,6 +272,24 @@ describe('stripToolCallLeaks', () => {
   it('returns empty string for empty input', () => {
     expect(stripToolCallLeaks('')).toBe('');
   });
+
+  it('strips tool-call leaks with CJK/non-ASCII garbage between tokens', () => {
+    const cjkLeak =
+      'to=functions.exec_command  彩神争霸大发快三 json code {"cmd":"printf \'noop\\n\'","yield_time_ms":1000,"max_output_tokens":20}';
+    expect(stripToolCallLeaks(cjkLeak)).toBe('');
+  });
+
+  it('strips tool-call leaks with mixed non-ASCII and preserves surrounding text', () => {
+    const mixed =
+      '대기 중입니다.to=functions.exec_command  彩神争霸 json code {"cmd":"ls"}\n다음 작업';
+    expect(stripToolCallLeaks(mixed)).toBe('대기 중입니다.\n다음 작업');
+  });
+
+  it('strips tool-call leaks with multiple non-ASCII words before JSON', () => {
+    const leak =
+      'to=functions.read_file données café résumé code {"path":"/tmp/test"}';
+    expect(stripToolCallLeaks(leak)).toBe('');
+  });
 });
 
 describe('formatOutbound with tool-call leaks', () => {

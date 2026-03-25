@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  composeDashboardContent,
   editFormattedTrackedChannelMessage,
   sendFormattedChannelMessage,
   sendFormattedTrackedChannelMessage,
 } from './index.js';
+import { composeDashboardContent } from './dashboard-render.js';
 import { Channel } from './types.js';
 
 function makeChannel(overrides: Partial<Channel> = {}): Channel {
