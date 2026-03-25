@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { runAgentProcessMock, writeTasksSnapshotMock, loggerDebugMock } =
   vi.hoisted(() => ({
-  runAgentProcessMock: vi.fn(async () => ({
-    status: 'success' as const,
-    result: 'done',
-  })),
-  writeTasksSnapshotMock: vi.fn(),
-  loggerDebugMock: vi.fn(),
+    runAgentProcessMock: vi.fn(async () => ({
+      status: 'success' as const,
+      result: 'done',
+    })),
+    writeTasksSnapshotMock: vi.fn(),
+    loggerDebugMock: vi.fn(),
   }));
 
 vi.mock('./provider-fallback.js', () => ({
