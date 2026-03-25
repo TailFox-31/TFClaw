@@ -108,7 +108,10 @@ async function fetchUsageForToken(
 
     if (res.status === 401) {
       logger.warn(
-        { account: accountIndex != null ? accountIndex + 1 : '?', tokenKey: key },
+        {
+          account: accountIndex != null ? accountIndex + 1 : '?',
+          tokenKey: key,
+        },
         'Claude usage API: token expired or invalid (401)',
       );
       return null;
@@ -116,7 +119,11 @@ async function fetchUsageForToken(
     if (res.status === 429) {
       const staleMs = cached ? Date.now() - cached.fetchedAt : 0;
       logger.warn(
-        { account: accountIndex != null ? accountIndex + 1 : '?', tokenKey: key, staleMinutes: Math.round(staleMs / 60_000) },
+        {
+          account: accountIndex != null ? accountIndex + 1 : '?',
+          tokenKey: key,
+          staleMinutes: Math.round(staleMs / 60_000),
+        },
         'Claude usage API: rate limited (429), returning cached data',
       );
       // Record attempt time so we don't retry for MIN_FETCH_INTERVAL_MS
@@ -128,7 +135,11 @@ async function fetchUsageForToken(
     }
     if (!res.ok) {
       logger.warn(
-        { account: accountIndex != null ? accountIndex + 1 : '?', status: res.status, tokenKey: key },
+        {
+          account: accountIndex != null ? accountIndex + 1 : '?',
+          status: res.status,
+          tokenKey: key,
+        },
         `Claude usage API: unexpected status ${res.status}`,
       );
       if (cached) {
@@ -153,7 +164,11 @@ async function fetchUsageForToken(
     saveUsageDiskCache();
 
     logger.debug(
-      { tokenKey: key, h5: result.five_hour?.utilization, d7: result.seven_day?.utilization },
+      {
+        tokenKey: key,
+        h5: result.five_hour?.utilization,
+        d7: result.seven_day?.utilization,
+      },
       'Claude usage API: fetched successfully',
     );
 

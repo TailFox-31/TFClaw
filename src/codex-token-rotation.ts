@@ -344,7 +344,12 @@ export function updateCodexAccountUsage(
     saveCodexState();
 
     // Auto-rotate away from 7d-exhausted current account to avoid API billing
-    if (idx === currentIndex && d7Pct != null && d7Pct >= 100 && accounts.length > 1) {
+    if (
+      idx === currentIndex &&
+      d7Pct != null &&
+      d7Pct >= 100 &&
+      accounts.length > 1
+    ) {
       const nextIdx = findNextCodexAvailable(idx);
       if (nextIdx !== null && nextIdx !== idx) {
         logger.info(

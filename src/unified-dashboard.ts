@@ -558,8 +558,9 @@ async function buildUsageContent(): Promise<string> {
 
   // Codex usage: read from Codex service's own status snapshot.
   // Each service owns its usage data — no cross-service auth access needed.
-  const codexSnapshot = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS)
-    .find(s => s.agentType === 'codex');
+  const codexSnapshot = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS).find(
+    (s) => s.agentType === 'codex',
+  );
   rows.push(...extractCodexUsageRows(codexSnapshot, USAGE_SNAPSHOT_MAX_AGE_MS));
 
   if (rows.length > 0) {
@@ -720,7 +721,13 @@ function applyCodexUsageToAccount(
     : undefined;
   updateCodexAccountUsage(pct, resetStr, accountIndex, d7Pct, resetD7Str);
   logger.info(
-    { account: accountIndex + 1, bucket: effective.limitId, h5: pct, d7: d7Pct, reset: resetStr },
+    {
+      account: accountIndex + 1,
+      bucket: effective.limitId,
+      h5: pct,
+      d7: d7Pct,
+      reset: resetStr,
+    },
     `Codex account #${accountIndex + 1} usage: 5h=${pct}% 7d=${d7Pct}%`,
   );
 }
@@ -895,7 +902,9 @@ export async function startUnifiedDashboard(
   } else {
     // Codex service: fetch own usage and expose via status snapshot.
     // Active account every usageUpdateInterval; full scan on startup + hourly.
-    void refreshAllCodexAccountUsage().then(() => void refreshActiveCodexUsage());
+    void refreshAllCodexAccountUsage().then(
+      () => void refreshActiveCodexUsage(),
+    );
     setInterval(() => void refreshActiveCodexUsage(), opts.usageUpdateInterval);
     setInterval(
       () => void refreshAllCodexAccountUsage(),
