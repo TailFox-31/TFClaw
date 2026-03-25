@@ -35,6 +35,7 @@ import {
   getCodexAccountCount,
   markCodexTokenHealthy,
 } from './codex-token-rotation.js';
+import type { AgentTriggerReason, CodexRotationReason } from './agent-error-detection.js';
 import { getTokenCount } from './token-rotation.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -124,7 +125,7 @@ export async function runAgentForGroup(
     sawOutput: boolean;
     sawSuccessNullResultWithoutOutput: boolean;
     streamedTriggerReason?: {
-      reason: string;
+      reason: AgentTriggerReason;
       retryAfterMs?: number;
     };
   }> => {
@@ -293,7 +294,7 @@ export async function runAgentForGroup(
   };
 
   const runFallbackAttempt = async (
-    reason: string,
+    reason: AgentTriggerReason,
     retryAfterMs?: number,
   ): Promise<'success' | 'error'> => {
     const fallbackName = getFallbackProviderName();
@@ -347,7 +348,7 @@ export async function runAgentForGroup(
   };
 
   const retryCodexWithRotation = async (
-    initialTrigger: { reason: string },
+    initialTrigger: { reason: CodexRotationReason },
     rotationMessage?: string,
   ): Promise<'success' | 'error'> => {
     let trigger = initialTrigger;
@@ -407,7 +408,9 @@ export async function runAgentForGroup(
         retryAttempt.streamedTriggerReason &&
         retryOutput.status !== 'error'
       ) {
-        trigger = { reason: retryAttempt.streamedTriggerReason.reason };
+        trigger = {
+          reason: retryAttempt.streamedTriggerReason.reason as CodexRotationReason,
+        };
         lastRotationMessage =
           typeof retryOutput.result === 'string'
             ? retryOutput.result
@@ -419,7 +422,8 @@ export async function runAgentForGroup(
         const retryTrigger = retryAttempt.streamedTriggerReason
           ? {
               shouldRotate: true,
-              reason: retryAttempt.streamedTriggerReason.reason,
+              reason:
+                retryAttempt.streamedTriggerReason.reason as CodexRotationReason,
             }
           : detectCodexRotationTrigger(retryOutput.error);
 
@@ -451,7 +455,7 @@ export async function runAgentForGroup(
 
   const retryClaudeWithRotation = async (
     initialTrigger: {
-      reason: string;
+      reason: AgentTriggerReason;
       retryAfterMs?: number;
     },
     rotationMessage?: string,
@@ -667,7 +671,9 @@ export async function runAgentForGroup(
     getCodexAccountCount() > 1
   ) {
     return retryCodexWithRotation(
-      { reason: primaryAttempt.streamedTriggerReason.reason },
+      {
+        reason: primaryAttempt.streamedTriggerReason.reason as CodexRotationReason,
+      },
       output.error ?? output.result ?? undefined,
     );
   }

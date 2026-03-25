@@ -5,7 +5,11 @@
  * to eliminate the ~255-line structural duplication.
  */
 
-import { shouldRotateClaudeToken } from './agent-error-detection.js';
+import {
+  isNoFallbackCooldownReason,
+  shouldRotateClaudeToken,
+  type AgentTriggerReason,
+} from './agent-error-detection.js';
 import { logger } from './logger.js';
 import { getErrorMessage } from './utils.js';
 import {
@@ -21,7 +25,7 @@ import {
 // ── Types ────────────────────────────────────────────────────────
 
 export interface TriggerInfo {
-  reason: string;
+  reason: AgentTriggerReason;
   retryAfterMs?: number;
 }
 
@@ -163,11 +167,7 @@ export async function runClaudeRotationLoop(
   // ── All tokens exhausted ──
 
   // Usage/auth/org access failures: don't fall back to Kimi
-  if (
-    trigger.reason === 'usage-exhausted' ||
-    trigger.reason === 'auth-expired' ||
-    trigger.reason === 'org-access-denied'
-  ) {
+  if (isNoFallbackCooldownReason(trigger.reason)) {
     markPrimaryCooldown(trigger.reason, trigger.retryAfterMs);
     logger.info(
       { ...logContext, reason: trigger.reason },

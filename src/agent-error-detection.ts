@@ -68,9 +68,47 @@ export function isClaudeOrgAccessDeniedMessage(text: string): boolean {
 
 // ── Rotation decision ───────────────────────────────────────────
 
-export function shouldRotateClaudeToken(reason: string): boolean {
+export type AgentTriggerReason =
+  | '429'
+  | 'usage-exhausted'
+  | 'auth-expired'
+  | 'org-access-denied'
+  | 'overloaded'
+  | 'network-error'
+  | 'success-null-result';
+
+export type FallbackTriggerReason = Exclude<
+  AgentTriggerReason,
+  'usage-exhausted' | 'success-null-result'
+>;
+
+export type ClaudeRotationReason = Extract<
+  AgentTriggerReason,
+  '429' | 'usage-exhausted' | 'auth-expired' | 'org-access-denied'
+>;
+
+export type CodexRotationReason = FallbackTriggerReason;
+
+export type NoFallbackCooldownReason = Extract<
+  AgentTriggerReason,
+  'usage-exhausted' | 'auth-expired' | 'org-access-denied'
+>;
+
+export function shouldRotateClaudeToken(
+  reason: AgentTriggerReason,
+): reason is ClaudeRotationReason {
   return (
     reason === '429' ||
+    reason === 'usage-exhausted' ||
+    reason === 'auth-expired' ||
+    reason === 'org-access-denied'
+  );
+}
+
+export function isNoFallbackCooldownReason(
+  reason: AgentTriggerReason,
+): reason is NoFallbackCooldownReason {
+  return (
     reason === 'usage-exhausted' ||
     reason === 'auth-expired' ||
     reason === 'org-access-denied'
@@ -87,11 +125,37 @@ export type ErrorCategory =
   | 'network-error'
   | 'none';
 
-export interface AgentErrorClassification {
-  category: ErrorCategory;
-  reason: string; // '429' | 'auth-expired' | 'org-access-denied' | 'overloaded' | 'network-error' | ''
-  retryAfterMs?: number;
-}
+export type AgentErrorClassification =
+  | {
+      category: 'none';
+      reason: '';
+      retryAfterMs?: undefined;
+    }
+  | {
+      category: 'rate-limit';
+      reason: '429';
+      retryAfterMs?: number;
+    }
+  | {
+      category: 'auth-expired';
+      reason: 'auth-expired';
+      retryAfterMs?: undefined;
+    }
+  | {
+      category: 'org-access-denied';
+      reason: 'org-access-denied';
+      retryAfterMs?: undefined;
+    }
+  | {
+      category: 'overloaded';
+      reason: 'overloaded';
+      retryAfterMs?: undefined;
+    }
+  | {
+      category: 'network-error';
+      reason: 'network-error';
+      retryAfterMs?: undefined;
+    };
 
 const NONE: AgentErrorClassification = {
   category: 'none',

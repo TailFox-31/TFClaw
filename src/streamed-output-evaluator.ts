@@ -3,13 +3,14 @@ import {
   isClaudeAuthExpiredMessage,
   isClaudeOrgAccessDeniedMessage,
   isClaudeUsageExhaustedMessage,
+  type AgentTriggerReason,
 } from './agent-error-detection.js';
 import type { AgentOutput } from './agent-runner.js';
 import { detectCodexRotationTrigger } from './codex-token-rotation.js';
 import { detectFallbackTrigger } from './provider-fallback.js';
 
 export interface StreamedTriggerReason {
-  reason: string;
+  reason: AgentTriggerReason;
   retryAfterMs?: number;
 }
 
@@ -51,7 +52,8 @@ export function evaluateStreamedOutput(
     !state.sawOutput &&
     typeof output.result === 'string'
   ) {
-    const triggerReason = isClaudeUsageExhaustedMessage(output.result)
+    const triggerReason: AgentTriggerReason | undefined =
+      isClaudeUsageExhaustedMessage(output.result)
       ? 'usage-exhausted'
       : isClaudeOrgAccessDeniedMessage(output.result)
         ? 'org-access-denied'

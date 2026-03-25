@@ -49,6 +49,7 @@ import {
   getCodexAccountCount,
   markCodexTokenHealthy,
 } from './codex-token-rotation.js';
+import type { AgentTriggerReason, CodexRotationReason } from './agent-error-detection.js';
 import {
   getTokenCount,
   markTokenHealthy,
@@ -290,7 +291,7 @@ async function runTask(
       output: AgentOutput;
       sawOutput: boolean;
       streamedTriggerReason?: {
-        reason: string;
+        reason: AgentTriggerReason;
         retryAfterMs?: number;
       };
       attemptResult: string | null;
@@ -410,7 +411,7 @@ async function runTask(
     };
 
     const runFallbackTaskAttempt = async (
-      reason: string,
+      reason: AgentTriggerReason,
       retryAfterMs?: number,
     ): Promise<void> => {
       if (!canFallback) {
@@ -443,7 +444,7 @@ async function runTask(
 
     const retryClaudeTaskWithRotation = async (
       initialTrigger: {
-        reason: string;
+        reason: AgentTriggerReason;
         retryAfterMs?: number;
       },
       rotationMessage?: string,
@@ -489,7 +490,7 @@ async function runTask(
     };
 
     const retryCodexTaskWithRotation = async (
-      initialTrigger: { reason: string },
+      initialTrigger: { reason: CodexRotationReason },
       rotationMessage?: string,
     ): Promise<void> => {
       let trigger = initialTrigger;
@@ -518,7 +519,9 @@ async function runTask(
           retryAttempt.streamedTriggerReason &&
           retryAttempt.output.status !== 'error'
         ) {
-          trigger = { reason: retryAttempt.streamedTriggerReason.reason };
+          trigger = {
+            reason: retryAttempt.streamedTriggerReason.reason as CodexRotationReason,
+          };
           lastRotationMessage =
             typeof retryAttempt.output.result === 'string'
               ? retryAttempt.output.result
@@ -530,7 +533,8 @@ async function runTask(
           const retryTrigger = retryAttempt.streamedTriggerReason
             ? {
                 shouldRotate: true,
-                reason: retryAttempt.streamedTriggerReason.reason,
+                reason:
+                  retryAttempt.streamedTriggerReason.reason as CodexRotationReason,
               }
             : detectCodexRotationTrigger(
                 retryAttempt.attemptError || retryAttempt.output.error,
@@ -589,7 +593,9 @@ async function runTask(
         !attempt.sawOutput
       ) {
         await retryCodexTaskWithRotation(
-          { reason: attempt.streamedTriggerReason.reason },
+          {
+            reason: attempt.streamedTriggerReason.reason as CodexRotationReason,
+          },
           typeof attempt.output.error === 'string'
             ? attempt.output.error
             : undefined,
@@ -612,7 +618,7 @@ async function runTask(
         const trigger = attempt.streamedTriggerReason
           ? {
               shouldRotate: true,
-              reason: attempt.streamedTriggerReason.reason,
+              reason: attempt.streamedTriggerReason.reason as CodexRotationReason,
             }
           : detectCodexRotationTrigger(error);
         if (trigger.shouldRotate) {

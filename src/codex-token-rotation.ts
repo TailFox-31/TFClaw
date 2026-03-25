@@ -17,6 +17,7 @@ import path from 'path';
 import {
   classifyAgentError,
   classifyCodexAuthError,
+  type CodexRotationReason,
 } from './agent-error-detection.js';
 import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
@@ -42,10 +43,15 @@ interface CodexAccount {
   resetD7At?: string;
 }
 
-export interface CodexRotationTriggerResult {
-  shouldRotate: boolean;
-  reason: string;
-}
+export type CodexRotationTriggerResult =
+  | {
+      shouldRotate: false;
+      reason: '';
+    }
+  | {
+      shouldRotate: true;
+      reason: CodexRotationReason;
+    };
 
 function parseJwtAuth(idToken: string): {
   planType: string;

@@ -57,7 +57,6 @@ vi.mock('./provider-fallback.js', () => ({
   hasGroupProviderOverride: vi.fn(() => false),
   isFallbackEnabled: vi.fn(() => true),
   isPrimaryNoFallbackCooldownActive: vi.fn(() => false),
-  isUsageExhausted: vi.fn(() => false),
   markPrimaryCooldown: vi.fn(),
 }));
 

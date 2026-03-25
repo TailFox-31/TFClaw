@@ -17,6 +17,9 @@ import fs from 'fs';
 import {
   classifyAgentError,
   classifyClaudeAuthError,
+  isNoFallbackCooldownReason,
+  type AgentTriggerReason,
+  type FallbackTriggerReason,
 } from './agent-error-detection.js';
 import { fetchClaudeUsage, type ClaudeUsageData } from './claude-usage.js';
 import { getEnv } from './env.js';
@@ -27,16 +30,22 @@ import { rotateToken, getTokenCount } from './token-rotation.js';
 
 export type ProviderName = 'claude' | string; // fallback name is configurable
 
-export interface FallbackTriggerResult {
-  shouldFallback: boolean;
-  reason: string;
-  retryAfterMs?: number;
-}
+export type FallbackTriggerResult =
+  | {
+      shouldFallback: false;
+      reason: '';
+      retryAfterMs?: undefined;
+    }
+  | {
+      shouldFallback: true;
+      reason: FallbackTriggerReason;
+      retryAfterMs?: number;
+    };
 
 interface CooldownState {
   startedAt: number;
   expiresAt: number;
-  reason: string;
+  reason: AgentTriggerReason;
 }
 
 interface FallbackConfig {
@@ -59,11 +68,6 @@ let lastUsageAvailabilityCheck: {
 let usageAvailabilityCheckPromise: Promise<
   'available' | 'exhausted' | 'unknown'
 > | null = null;
-const NO_FALLBACK_COOLDOWN_REASONS = new Set([
-  'usage-exhausted',
-  'auth-expired',
-  'org-access-denied',
-]);
 
 const USAGE_RECOVERY_RECHECK_MS = 30_000;
 
@@ -290,7 +294,7 @@ export async function getActiveProvider(): Promise<string> {
  * the fallback provider until the cooldown expires.
  */
 export function markPrimaryCooldown(
-  reason: string,
+  reason: AgentTriggerReason,
   retryAfterMs?: number,
 ): void {
   const config = loadConfig();
@@ -331,14 +335,9 @@ export function clearPrimaryCooldown(): void {
   }
 }
 
-/** Check if Claude is currently in usage-exhausted cooldown. */
-export function isUsageExhausted(): boolean {
-  return cooldown?.reason === 'usage-exhausted';
-}
-
 /** Check whether the active primary cooldown should suppress fallback entirely. */
 export function isPrimaryNoFallbackCooldownActive(): boolean {
-  return cooldown ? NO_FALLBACK_COOLDOWN_REASONS.has(cooldown.reason) : false;
+  return cooldown ? isNoFallbackCooldownReason(cooldown.reason) : false;
 }
 
 /** Get current cooldown info (for diagnostics / status dashboard). */
