@@ -214,8 +214,7 @@ describe('stripToolCallLeaks', () => {
   });
 
   it('strips tool-call text surrounded by normal text', () => {
-    const input =
-      'Hello\nto=functions.exec_command code {"cmd":"ls"}\nWorld';
+    const input = 'Hello\nto=functions.exec_command code {"cmd":"ls"}\nWorld';
     expect(stripToolCallLeaks(input)).toBe('Hello\n\nWorld');
   });
 
@@ -239,8 +238,7 @@ describe('stripToolCallLeaks', () => {
   });
 
   it('preserves code blocks discussing tool calls', () => {
-    const input =
-      '```\nto=functions.exec_command code {"cmd":"ls"}\n```';
+    const input = '```\nto=functions.exec_command code {"cmd":"ls"}\n```';
     // The tool-call inside backticks still gets stripped — this is intentional.
     // Defense layer prioritizes safety over preserving code examples.
     expect(stripToolCallLeaks(input)).toBe('```\n\n```');
