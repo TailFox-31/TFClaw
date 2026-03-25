@@ -53,8 +53,31 @@ function redactSecrets(text: string): string {
   return result;
 }
 
+/**
+ * Strip leaked tool-call serialization text.
+ *
+ * When a model (especially Codex) enters a degenerate loop, it emits
+ * tool-call intent as plaintext instead of actual tool calls.  The format is:
+ *   to=functions.<name> <type> {<json>}
+ * e.g. `to=functions.exec_command code {"cmd":"git status","yield_time_ms":1000}`
+ *
+ * This function removes such fragments so they never reach Discord.
+ */
+export function stripToolCallLeaks(text: string): string {
+  // Match tool-call serialization: to=functions.<name> <word> {<json>}
+  // Handles up to one level of nested braces in the JSON body.
+  const stripped = text.replace(
+    /to=functions\.\w+\s+\w+\s+\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g,
+    '',
+  );
+  // Collapse excessive blank lines left after stripping
+  return stripped.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export function formatOutbound(rawText: string): string {
-  const text = stripInternalTags(rawText);
+  let text = stripInternalTags(rawText);
+  if (!text) return '';
+  text = stripToolCallLeaks(text);
   if (!text) return '';
   return redactSecrets(text);
 }

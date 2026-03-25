@@ -6,6 +6,7 @@ import {
   formatMessages,
   formatOutbound,
   stripInternalTags,
+  stripToolCallLeaks,
 } from './router.js';
 import { NewMessage } from './types.js';
 
@@ -200,6 +201,106 @@ describe('formatOutbound', () => {
     expect(
       formatOutbound('<internal>thinking</internal>The answer is 42'),
     ).toBe('The answer is 42');
+  });
+});
+
+// --- Tool-call leak stripping ---
+
+describe('stripToolCallLeaks', () => {
+  it('strips a single tool-call serialization line', () => {
+    const input =
+      'to=functions.exec_command code {"cmd":"git status","yield_time_ms":1000,"max_output_tokens":200}';
+    expect(stripToolCallLeaks(input)).toBe('');
+  });
+
+  it('strips tool-call text surrounded by normal text', () => {
+    const input =
+      'Hello\nto=functions.exec_command code {"cmd":"ls"}\nWorld';
+    expect(stripToolCallLeaks(input)).toBe('Hello\n\nWorld');
+  });
+
+  it('strips multiple consecutive tool-call lines', () => {
+    const call =
+      'to=functions.exec_command code {"cmd":"git status --short && git rev-parse --short HEAD","yield_time_ms":1000,"max_output_tokens":200}';
+    const input = `${call}\n${call}\n${call}`;
+    expect(stripToolCallLeaks(input)).toBe('');
+  });
+
+  it('strips tool-call with nested JSON braces', () => {
+    const input =
+      'to=functions.exec_command code {"cmd":"echo hello","options":{"verbose":true}}';
+    expect(stripToolCallLeaks(input)).toBe('');
+  });
+
+  it('preserves normal text mentioning functions in prose', () => {
+    const input = 'The model called to=functions but with wrong syntax';
+    // No match: missing the <word> <{json}> part
+    expect(stripToolCallLeaks(input)).toBe(input);
+  });
+
+  it('preserves code blocks discussing tool calls', () => {
+    const input =
+      '```\nto=functions.exec_command code {"cmd":"ls"}\n```';
+    // The tool-call inside backticks still gets stripped — this is intentional.
+    // Defense layer prioritizes safety over preserving code examples.
+    expect(stripToolCallLeaks(input)).toBe('```\n\n```');
+  });
+
+  it('collapses excessive blank lines after stripping', () => {
+    const input =
+      'Before\n\nto=functions.exec_command code {"cmd":"ls"}\n\n\n\nAfter';
+    const result = stripToolCallLeaks(input);
+    expect(result).toBe('Before\n\nAfter');
+  });
+
+  it('handles different function names', () => {
+    expect(
+      stripToolCallLeaks(
+        'to=functions.read_file code {"path":"/tmp/test.txt"}',
+      ),
+    ).toBe('');
+    expect(
+      stripToolCallLeaks(
+        'to=functions.write_file code {"path":"/tmp/out","content":"hi"}',
+      ),
+    ).toBe('');
+  });
+
+  it('returns original text when no tool-call patterns present', () => {
+    const input = 'This is a perfectly normal response with no issues.';
+    expect(stripToolCallLeaks(input)).toBe(input);
+  });
+
+  it('returns empty string for empty input', () => {
+    expect(stripToolCallLeaks('')).toBe('');
+  });
+});
+
+describe('formatOutbound with tool-call leaks', () => {
+  it('strips tool-call leaks and returns empty for pure garbage', () => {
+    const garbage =
+      'to=functions.exec_command code {"cmd":"git status","yield_time_ms":1000}';
+    expect(formatOutbound(garbage)).toBe('');
+  });
+
+  it('preserves legitimate text while stripping tool-call leaks', () => {
+    const mixed =
+      'Here is my answer.\nto=functions.exec_command code {"cmd":"ls"}\nHope this helps!';
+    expect(formatOutbound(mixed)).toBe(
+      'Here is my answer.\n\nHope this helps!',
+    );
+  });
+
+  it('strips internal tags AND tool-call leaks together', () => {
+    const input =
+      '<internal>thinking</internal>to=functions.exec_command code {"cmd":"ls"}Done!';
+    expect(formatOutbound(input)).toBe('Done!');
+  });
+
+  it('redacts secrets in remaining text after tool-call strip', () => {
+    const input =
+      'Key: sk-ant-XXXXXXXXXXXXXXXXXXXXXXXX\nto=functions.exec_command code {"cmd":"ls"}';
+    expect(formatOutbound(input)).toBe('Key: [REDACTED]');
   });
 });
 
