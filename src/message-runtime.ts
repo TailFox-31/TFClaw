@@ -345,33 +345,40 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       await turnController.start();
 
-      const output = await runAgent(group, prompt, chatJid, runId, (result) =>
-        turnController.handleOutput(result),
-      );
-
-      const { deliverySucceeded, visiblePhase } =
-        await turnController.finish(output);
-
-      if (!deliverySucceeded) {
-        logger.warn(
-          { chatJid, group: group.name, groupFolder: group.folder, runId },
-          'Persisted produced output for delivery retry without rerunning agent',
+      try {
+        const output = await runAgent(group, prompt, chatJid, runId, (result) =>
+          turnController.handleOutput(result),
         );
-        return false;
+
+        const { deliverySucceeded, visiblePhase } =
+          await turnController.finish(output);
+
+        if (!deliverySucceeded) {
+          logger.warn(
+            { chatJid, group: group.name, groupFolder: group.folder, runId },
+            'Persisted produced output for delivery retry without rerunning agent',
+          );
+          return false;
+        }
+
+        logger.info(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            visiblePhase,
+          },
+          'Queued run completed successfully',
+        );
+
+        return true;
+      } finally {
+        // Safety net: always clear typing even if runAgent() or finish() throws.
+        // Prevents stuck typing indicators when exceptions bypass the normal
+        // turnController.finish() → setTyping(false) path.
+        await channel.setTyping?.(chatJid, false);
       }
-
-      logger.info(
-        {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
-          visiblePhase,
-        },
-        'Queued run completed successfully',
-      );
-
-      return true;
     }
   };
 
@@ -523,7 +530,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                   endSeq,
                 );
               }
-              channel
+              await channel
                 .setTyping?.(chatJid, true)
                 ?.catch((err) =>
                   logger.warn(
