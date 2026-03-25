@@ -1,7 +1,11 @@
 import { execSync } from 'child_process';
 import os from 'os';
 
-import { STATUS_SHOW_ROOMS, USAGE_DASHBOARD_ENABLED } from './config.js';
+import {
+  STATUS_SHOW_ROOM_DETAILS,
+  STATUS_SHOW_ROOMS,
+  USAGE_DASHBOARD_ENABLED,
+} from './config.js';
 import {
   fetchAllClaudeUsage,
   fetchAllClaudeProfiles,
@@ -358,6 +362,10 @@ function buildStatusContent(): string {
     totalRooms,
     watchers: watcherSummary,
   });
+  if (!STATUS_SHOW_ROOM_DETAILS) {
+    return header;
+  }
+
   const sections = renderCategorizedRoomSections({
     lines: roomLines,
     showCategoryHeaders: channelMetaCache.size > 0,

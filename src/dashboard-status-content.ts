@@ -1,4 +1,4 @@
-import { STATUS_SHOW_ROOMS } from './config.js';
+import { STATUS_SHOW_ROOM_DETAILS, STATUS_SHOW_ROOMS } from './config.js';
 import {
   composeDashboardContent,
   type DashboardRoomLine,
@@ -50,12 +50,15 @@ export function buildStatusContent(opts: DashboardOptions): string {
     })
     .filter((line): line is DashboardRoomLine => Boolean(line));
 
+  const header = `**에이전트 상태** (${opts.assistantName}) — 활성 ${totalActive} | 큐대기 ${totalWaiting} | 전체 ${roomLines.length}`;
+  if (!STATUS_SHOW_ROOM_DETAILS) {
+    return composeDashboardContent([header]);
+  }
+
   return composeDashboardContent([
-    `**에이전트 상태** (${opts.assistantName}) — 활성 ${totalActive} | 큐대기 ${totalWaiting} | 전체 ${roomLines.length}\n\n${renderCategorizedRoomSections(
-      {
-        lines: roomLines,
-        showCategoryHeaders: false,
-      },
-    )}`,
+    `${header}\n\n${renderCategorizedRoomSections({
+      lines: roomLines,
+      showCategoryHeaders: false,
+    })}`,
   ]);
 }

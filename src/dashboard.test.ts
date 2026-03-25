@@ -38,16 +38,23 @@ function makeOptions(sessionId?: string): DashboardOptions {
 
 describe('buildStatusContent', () => {
   async function loadBuildStatusContent(
-    statusShowRooms = 'true',
+    options: {
+      statusShowRooms?: string;
+      statusShowRoomDetails?: string;
+    } = {},
   ): Promise<(opts: DashboardOptions) => string> {
     vi.resetModules();
-    process.env.STATUS_SHOW_ROOMS = statusShowRooms;
+    process.env.STATUS_SHOW_ROOMS = options.statusShowRooms ?? 'true';
+    if (options.statusShowRoomDetails !== undefined) {
+      process.env.STATUS_SHOW_ROOM_DETAILS = options.statusShowRoomDetails;
+    }
     const mod = await import('./dashboard-status-content.js');
     return mod.buildStatusContent;
   }
 
   afterEach(() => {
     delete process.env.STATUS_SHOW_ROOMS;
+    delete process.env.STATUS_SHOW_ROOM_DETAILS;
   });
 
   it('shows cleared sessions as empty', async () => {
@@ -63,7 +70,19 @@ describe('buildStatusContent', () => {
   });
 
   it('returns an empty string when room status display is disabled', async () => {
-    const buildStatusContent = await loadBuildStatusContent('false');
+    const buildStatusContent = await loadBuildStatusContent({
+      statusShowRooms: 'false',
+    });
     expect(buildStatusContent(makeOptions())).toBe('');
+  });
+
+  it('renders only the status header when room details are disabled', async () => {
+    const buildStatusContent = await loadBuildStatusContent({
+      statusShowRooms: 'true',
+      statusShowRoomDetails: 'false',
+    });
+
+    expect(buildStatusContent(makeOptions())).toContain('**에이전트 상태**');
+    expect(buildStatusContent(makeOptions())).not.toContain('**clone-test**');
   });
 });
