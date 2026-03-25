@@ -33,10 +33,6 @@ import {
 import { logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import {
-  isClaudeAuthExpiredMessage,
-  isClaudeUsageExhaustedMessage,
-} from './agent-error-detection.js';
-import {
   detectFallbackTrigger,
   getActiveProvider,
   getFallbackEnvOverrides,
@@ -63,6 +59,10 @@ import {
   formatSuspensionNotice,
   suspendTask,
 } from './task-suspension.js';
+import {
+  evaluateStreamedOutput,
+  type StreamedOutputState,
+} from './streamed-output-evaluator.js';
 import {
   getTaskQueueJid,
   getTaskRuntimeTaskId,
@@ -296,15 +296,12 @@ async function runTask(
       attemptResult: string | null;
       attemptError: string | null;
     }> => {
-      let sawOutput = false;
+      let streamedState: StreamedOutputState = {
+        sawOutput: false,
+        sawSuccessNullResultWithoutOutput: false,
+      };
       let attemptResult: string | null = null;
       let attemptError: string | null = null;
-      let streamedTriggerReason:
-        | {
-            reason: string;
-            retryAfterMs?: number;
-          }
-        | undefined;
 
       const output = await runAgentProcess(
         context.group,
@@ -330,62 +327,67 @@ async function runTask(
           if (streamedOutput.phase === 'progress') {
             return;
           }
+          const evaluation = evaluateStreamedOutput(streamedOutput, streamedState, {
+            agentType: isClaudeAgent ? 'claude' : 'codex',
+            provider,
+            shortCircuitTriggeredErrors: true,
+          });
+          streamedState = evaluation.state;
 
           if (
-            isClaudeAgent &&
-            provider === 'claude' &&
-            !sawOutput &&
-            streamedOutput.status === 'success' &&
+            evaluation.newTrigger &&
             typeof streamedOutput.result === 'string' &&
-            (isClaudeUsageExhaustedMessage(streamedOutput.result) ||
-              isClaudeAuthExpiredMessage(streamedOutput.result))
+            streamedOutput.status === 'success'
           ) {
-            if (!streamedTriggerReason) {
-              const reason = isClaudeUsageExhaustedMessage(
-                streamedOutput.result,
-              )
-                ? 'usage-exhausted'
-                : 'auth-expired';
-              logger.warn(
-                {
-                  taskId: task.id,
-                  taskChatJid: task.chat_jid,
-                  group: context.group.name,
-                  groupFolder: task.group_folder,
-                  reason,
-                  resultPreview: streamedOutput.result.slice(0, 120),
-                },
-                'Detected Claude fallback trigger during scheduled task output',
-              );
+            logger.warn(
+              {
+                taskId: task.id,
+                taskChatJid: task.chat_jid,
+                group: context.group.name,
+                groupFolder: task.group_folder,
+                reason: evaluation.newTrigger.reason,
+                resultPreview: streamedOutput.result.slice(0, 120),
+              },
+              'Detected Claude fallback trigger during scheduled task output',
+            );
+          } else if (
+            evaluation.newTrigger &&
+            typeof streamedOutput.error === 'string'
+          ) {
+            logger.warn(
+              {
+                taskId: task.id,
+                taskChatJid: task.chat_jid,
+                group: context.group.name,
+                groupFolder: task.group_folder,
+                reason: evaluation.newTrigger.reason,
+                errorPreview: streamedOutput.error.slice(0, 120),
+              },
+              provider === 'claude'
+                ? 'Detected Claude fallback trigger during scheduled task error output'
+                : 'Detected Codex rotation trigger during scheduled task error output',
+            );
+          }
+
+          if (!evaluation.shouldForwardOutput) {
+            if (streamedOutput.status === 'error') {
+              attemptError = streamedOutput.error || 'Unknown error';
             }
-            streamedTriggerReason = {
-              reason: isClaudeUsageExhaustedMessage(streamedOutput.result)
-                ? 'usage-exhausted'
-                : 'auth-expired',
-            };
             return;
           }
 
           if (streamedOutput.result) {
-            sawOutput = true;
             attemptResult = streamedOutput.result;
             await deps.sendMessage(task.chat_jid, streamedOutput.result);
           }
 
           if (streamedOutput.status === 'error') {
             attemptError = streamedOutput.error || 'Unknown error';
-            if (!sawOutput && !streamedTriggerReason) {
-              const trigger = detectFallbackTrigger(streamedOutput.error);
-              if (trigger.shouldFallback) {
-                streamedTriggerReason = {
-                  reason: trigger.reason,
-                  retryAfterMs: trigger.retryAfterMs,
-                };
-              }
-            }
           }
         },
-        provider === 'claude' ? undefined : getFallbackEnvOverrides(),
+        isClaudeAgent && provider !== 'claude'
+          ? getFallbackEnvOverrides()
+          : undefined,
       );
 
       if (output.status === 'error' && !attemptError) {
@@ -396,8 +398,8 @@ async function runTask(
 
       return {
         output,
-        sawOutput,
-        streamedTriggerReason,
+        sawOutput: streamedState.sawOutput,
+        streamedTriggerReason: streamedState.streamedTriggerReason,
         attemptResult,
         attemptError,
       };
@@ -482,10 +484,78 @@ async function runTask(
       }
     };
 
-    const provider = canFallback ? await getActiveProvider() : 'claude';
+    const retryCodexTaskWithRotation = async (
+      initialTrigger: { reason: string },
+      rotationMessage?: string,
+    ): Promise<void> => {
+      let trigger = initialTrigger;
+      let lastRotationMessage = rotationMessage;
+
+      while (
+        getCodexAccountCount() > 1 &&
+        rotateCodexToken(lastRotationMessage)
+      ) {
+        logger.info(
+          {
+            taskId: task.id,
+            group: context.group.name,
+            groupFolder: task.group_folder,
+            reason: trigger.reason,
+          },
+          'Codex account unhealthy, retrying scheduled task with rotated account',
+        );
+
+        const retryAttempt = await runTaskAttempt('codex');
+        result = retryAttempt.attemptResult;
+        error = retryAttempt.attemptError;
+
+        if (
+          !retryAttempt.sawOutput &&
+          retryAttempt.streamedTriggerReason &&
+          retryAttempt.output.status !== 'error'
+        ) {
+          trigger = { reason: retryAttempt.streamedTriggerReason.reason };
+          lastRotationMessage =
+            typeof retryAttempt.output.result === 'string'
+              ? retryAttempt.output.result
+              : undefined;
+          continue;
+        }
+
+        if (retryAttempt.output.status === 'error') {
+          const retryTrigger = retryAttempt.streamedTriggerReason
+            ? {
+                shouldRotate: true,
+                reason: retryAttempt.streamedTriggerReason.reason,
+              }
+            : detectCodexRotationTrigger(
+                retryAttempt.attemptError || retryAttempt.output.error,
+              );
+
+          if (retryTrigger.shouldRotate) {
+            trigger = { reason: retryTrigger.reason };
+            lastRotationMessage =
+              retryAttempt.attemptError || retryAttempt.output.error || undefined;
+            continue;
+          }
+          return;
+        }
+
+        markCodexTokenHealthy();
+        error = null;
+        return;
+      }
+    };
+
+    const provider =
+      context.taskAgentType === 'codex'
+        ? 'codex'
+        : canFallback
+          ? await getActiveProvider()
+          : 'claude';
 
     // Already in usage-exhausted cooldown — skip task instead of running on Kimi
-    if (provider !== 'claude' && isUsageExhausted()) {
+    if (isClaudeAgent && provider !== 'claude' && isUsageExhausted()) {
       logger.info(
         { taskId: task.id, group: context.group.name, provider },
         'Claude usage exhausted (cooldown active), skipping scheduled task',
@@ -503,6 +573,17 @@ async function runTask(
         !attempt.sawOutput
       ) {
         await retryClaudeTaskWithRotation(attempt.streamedTriggerReason);
+      } else if (
+        provider === 'codex' &&
+        attempt.streamedTriggerReason &&
+        !attempt.sawOutput
+      ) {
+        await retryCodexTaskWithRotation(
+          { reason: attempt.streamedTriggerReason.reason },
+          typeof attempt.output.error === 'string'
+            ? attempt.output.error
+            : undefined,
+        );
       } else if (attempt.output.status === 'error' && provider === 'claude') {
         const trigger = attempt.streamedTriggerReason
           ? {
@@ -516,6 +597,19 @@ async function runTask(
             reason: trigger.reason,
             retryAfterMs: trigger.retryAfterMs,
           });
+        }
+      } else if (attempt.output.status === 'error' && provider === 'codex') {
+        const trigger = attempt.streamedTriggerReason
+          ? {
+              shouldRotate: true,
+              reason: attempt.streamedTriggerReason.reason,
+            }
+          : detectCodexRotationTrigger(error);
+        if (trigger.shouldRotate) {
+          await retryCodexTaskWithRotation(
+            { reason: trigger.reason },
+            error || undefined,
+          );
         }
       } else if (attempt.output.status === 'error') {
         error = attempt.attemptError || 'Unknown error';

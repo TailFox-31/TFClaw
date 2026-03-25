@@ -72,6 +72,7 @@ vi.mock('./agent-runner.js', async () => {
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import * as providerFallback from './provider-fallback.js';
+import * as codexTokenRotation from './codex-token-rotation.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import * as tokenRotation from './token-rotation.js';
@@ -99,6 +100,10 @@ describe('task scheduler', () => {
     vi.mocked(tokenRotation.markTokenHealthy).mockClear();
     vi.mocked(tokenRotation.rotateToken).mockClear();
     vi.mocked(tokenRotation.rotateToken).mockReturnValue(false);
+    vi.mocked(codexTokenRotation.rotateCodexToken).mockClear();
+    vi.mocked(codexTokenRotation.rotateCodexToken).mockReturnValue(false);
+    vi.mocked(codexTokenRotation.getCodexAccountCount).mockReturnValue(1);
+    vi.mocked(codexTokenRotation.markCodexTokenHealthy).mockClear();
     vi.useFakeTimers();
   });
 
@@ -485,6 +490,101 @@ Check the run.
     expect(sendMessage).toHaveBeenCalledWith(
       'shared@g.us',
       'rotated scheduled task auth response',
+    );
+  });
+
+  it('retries Codex scheduled tasks with a rotated account on streamed auth expiry', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-codex-auth-expired',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      prompt: 'codex task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    vi.mocked(codexTokenRotation.getCodexAccountCount).mockReturnValue(2);
+    vi.mocked(codexTokenRotation.rotateCodexToken).mockReturnValueOnce(true);
+
+    (runAgentProcessMock as any)
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'error',
+            error:
+              'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
+            result: null,
+          });
+          return {
+            status: 'error',
+            error:
+              'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
+            result: null,
+          };
+        },
+      )
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            result: 'rotated codex scheduled task response',
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
+        },
+      );
+
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+    const sendMessage = vi.fn(async () => {});
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runAgentProcessMock).toHaveBeenCalledTimes(2);
+    expect(codexTokenRotation.rotateCodexToken).toHaveBeenCalledTimes(1);
+    expect(codexTokenRotation.markCodexTokenHealthy).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      'rotated codex scheduled task response',
     );
   });
 

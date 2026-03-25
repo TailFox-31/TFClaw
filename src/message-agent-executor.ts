@@ -14,11 +14,6 @@ import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
 import {
-  isClaudeAuthError,
-  isClaudeAuthExpiredMessage,
-  isClaudeUsageExhaustedMessage,
-} from './agent-error-detection.js';
-import {
   detectFallbackTrigger,
   getActiveProvider,
   getFallbackEnvOverrides,
@@ -30,6 +25,10 @@ import {
 } from './provider-fallback.js';
 import { runClaudeRotationLoop } from './provider-retry.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import {
+  evaluateStreamedOutput,
+  type StreamedOutputState,
+} from './streamed-output-evaluator.js';
 import {
   detectCodexRotationTrigger,
   rotateCodexToken,
@@ -130,14 +129,10 @@ export async function runAgentForGroup(
     };
   }> => {
     const persistSessionIds = provider === 'claude';
-    let sawOutput = false;
-    let sawSuccessNullResultWithoutOutput = false;
-    let streamedTriggerReason:
-      | {
-          reason: string;
-          retryAfterMs?: number;
-        }
-      | undefined;
+    let streamedState: StreamedOutputState = {
+      sawOutput: false,
+      sawSuccessNullResultWithoutOutput: false,
+    };
 
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
@@ -151,92 +146,69 @@ export async function runAgentForGroup(
           ) {
             resetSessionRequested = true;
           }
+          const evaluation = evaluateStreamedOutput(output, streamedState, {
+            agentType: isClaudeCodeAgent ? 'claude' : 'codex',
+            provider,
+            suppressClaudeAuthErrorOutput: provider === 'claude',
+            trackSuccessNullResult: true,
+            shortCircuitTriggeredErrors:
+              provider === 'claude'
+                ? canFallback || canRotateToken
+                : getCodexAccountCount() > 1,
+          });
+          streamedState = evaluation.state;
+
           if (
-            isClaudeCodeAgent &&
-            provider === 'claude' &&
-            output.status === 'success' &&
-            !sawOutput &&
+            evaluation.newTrigger &&
             typeof output.result === 'string' &&
-            (isClaudeUsageExhaustedMessage(output.result) ||
-              isClaudeAuthExpiredMessage(output.result))
-          ) {
-            if (!streamedTriggerReason) {
-              const reason = isClaudeUsageExhaustedMessage(output.result)
-                ? 'usage-exhausted'
-                : 'auth-expired';
-              logger.warn(
-                {
-                  chatJid,
-                  group: group.name,
-                  runId,
-                  reason,
-                  resultPreview: output.result.slice(0, 120),
-                },
-                'Detected Claude fallback trigger in successful output',
-              );
-            }
-            streamedTriggerReason = {
-              reason: isClaudeUsageExhaustedMessage(output.result)
-                ? 'usage-exhausted'
-                : 'auth-expired',
-            };
-            return;
-          }
-          // 401 auth errors — suppress from chat, log only
-          if (
-            provider === 'claude' &&
-            output.status === 'success' &&
-            !sawOutput &&
-            typeof output.result === 'string' &&
-            isClaudeAuthError(output.result)
+            output.status === 'success'
           ) {
             logger.warn(
               {
                 chatJid,
                 group: group.name,
                 runId,
+                reason: evaluation.newTrigger.reason,
                 resultPreview: output.result.slice(0, 120),
+              },
+              'Detected Claude fallback trigger in successful output',
+            );
+          } else if (
+            evaluation.newTrigger &&
+            typeof output.error === 'string'
+          ) {
+            logger.warn(
+              {
+                chatJid,
+                group: group.name,
+                runId,
+                reason: evaluation.newTrigger.reason,
+                errorPreview: output.error.slice(0, 120),
+              },
+              provider === 'claude'
+                ? 'Detected Claude fallback trigger in streamed error output'
+                : 'Detected Codex rotation trigger in streamed error output',
+            );
+          }
+
+          if (evaluation.suppressedAuthError) {
+            logger.warn(
+              {
+                chatJid,
+                group: group.name,
+                runId,
+                resultPreview:
+                  typeof output.result === 'string'
+                    ? output.result.slice(0, 120)
+                    : undefined,
               },
               'Suppressed Claude 401 auth error from chat output',
             );
             return;
           }
-          if (output.result !== null && output.result !== undefined) {
-            sawOutput = true;
-          } else if (
-            provider === 'claude' &&
-            output.status === 'success' &&
-            !sawOutput
-          ) {
-            sawSuccessNullResultWithoutOutput = true;
-          }
-          if (
-            output.status === 'error' &&
-            !sawOutput &&
-            !streamedTriggerReason
-          ) {
-            if (provider === 'claude') {
-              const trigger = detectFallbackTrigger(output.error);
-              if (trigger.shouldFallback) {
-                streamedTriggerReason = {
-                  reason: trigger.reason,
-                  retryAfterMs: trigger.retryAfterMs,
-                };
-                if (canFallback || canRotateToken) {
-                  return;
-                }
-              }
-            } else {
-              const trigger = detectCodexRotationTrigger(output.error);
-              if (trigger.shouldRotate) {
-                streamedTriggerReason = {
-                  reason: trigger.reason,
-                };
-                if (getCodexAccountCount() > 1) {
-                  return;
-                }
-              }
-            }
+
+          if (!evaluation.shouldForwardOutput) {
+            return;
           }
           await onOutput(output);
         }
@@ -280,7 +252,9 @@ export async function runAgentForGroup(
         (proc, processName, ipcDir) =>
           deps.queue.registerProcess(chatJid, proc, processName, ipcDir),
         wrappedOnOutput,
-        provider === 'claude' ? undefined : getFallbackEnvOverrides(),
+        isClaudeCodeAgent && provider !== 'claude'
+          ? getFallbackEnvOverrides()
+          : undefined,
       );
 
       if (persistSessionIds && output.newSessionId) {
@@ -295,23 +269,25 @@ export async function runAgentForGroup(
           runId,
           provider,
           status: output.status,
-          sawOutput,
+          sawOutput: streamedState.sawOutput,
         },
         `Provider response completed (provider: ${provider})`,
       );
 
       return {
         output,
-        sawOutput,
-        sawSuccessNullResultWithoutOutput,
-        streamedTriggerReason,
+        sawOutput: streamedState.sawOutput,
+        sawSuccessNullResultWithoutOutput:
+          streamedState.sawSuccessNullResultWithoutOutput,
+        streamedTriggerReason: streamedState.streamedTriggerReason,
       };
     } catch (error) {
       return {
         error,
-        sawOutput,
-        sawSuccessNullResultWithoutOutput,
-        streamedTriggerReason,
+        sawOutput: streamedState.sawOutput,
+        sawSuccessNullResultWithoutOutput:
+          streamedState.sawSuccessNullResultWithoutOutput,
+        streamedTriggerReason: streamedState.streamedTriggerReason,
       };
     }
   };
