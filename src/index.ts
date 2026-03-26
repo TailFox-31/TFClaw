@@ -66,6 +66,7 @@ import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
 import { initTokenRotation } from './token-rotation.js';
 import {
+  shouldStartTokenRefreshLoop,
   startTokenRefreshLoop,
   stopTokenRefreshLoop,
 } from './token-refresh.js';
@@ -300,8 +301,16 @@ async function main(): Promise<void> {
   initTokenRotation();
   initCodexTokenRotation();
 
-  // Start OAuth token auto-refresh (before subsystems that spawn agents)
-  startTokenRefreshLoop();
+  // Only the Claude service owns Claude OAuth refresh to avoid
+  // cross-service refresh-token races on shared credentials.
+  if (shouldStartTokenRefreshLoop(SERVICE_AGENT_TYPE)) {
+    startTokenRefreshLoop();
+  } else {
+    logger.info(
+      { serviceAgentType: SERVICE_AGENT_TYPE },
+      'Skipping Claude OAuth token auto-refresh for non-Claude service',
+    );
+  }
 
   loadState();
 

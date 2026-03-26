@@ -19,6 +19,7 @@ import path from 'path';
 import { logger } from './logger.js';
 import { DATA_DIR } from './config.js';
 import { getAllTokens, updateTokenValue } from './token-rotation.js';
+import type { AgentType } from './types.js';
 
 const TOKEN_URL = 'https://api.anthropic.com/v1/oauth/token';
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
@@ -33,6 +34,12 @@ const DEFAULT_SCOPES = [
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const REFRESH_BEFORE_EXPIRY_MS = 30 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 15_000;
+
+export function shouldStartTokenRefreshLoop(
+  serviceAgentType: AgentType,
+): boolean {
+  return serviceAgentType === 'claude-code';
+}
 
 interface OAuthCredentials {
   accessToken: string;
