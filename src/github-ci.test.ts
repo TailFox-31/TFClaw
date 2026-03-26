@@ -62,9 +62,6 @@ describe('github-ci helpers', () => {
 Watch target:
 GitHub Actions run 123456
 
-Task ID:
-task-github
-
 Check instructions:
 Managed by host-driven watcher.
         `.trim(),
@@ -127,9 +124,6 @@ Managed by host-driven watcher.
 
 Watch target:
 GitHub Actions run 654321
-
-Task ID:
-task-github
 
 Check instructions:
 Managed by host-driven watcher.

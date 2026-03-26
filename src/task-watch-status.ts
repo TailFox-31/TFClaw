@@ -27,7 +27,7 @@ export function isTaskStatusControlMessage(content: string): boolean {
 }
 
 export function extractWatchCiTarget(prompt: string): string | null {
-  const match = prompt.match(/Watch target:\n([\s\S]*?)\n\nTask ID:/);
+  const match = prompt.match(/Watch target:\n([\s\S]*?)\n\nCheck instructions:/);
   return match?.[1]?.trim() || null;
 }
 

@@ -10,7 +10,6 @@ export interface NormalizeWatchCiIntervalOptions {
 }
 
 export interface BuildCiWatchPromptArgs {
-  taskId: string;
   target: string;
   checkInstructions: string;
 }
@@ -48,7 +47,6 @@ export function normalizeWatchCiIntervalSeconds(
 }
 
 export function buildCiWatchPrompt({
-  taskId,
   target,
   checkInstructions,
 }: BuildCiWatchPromptArgs): string {
@@ -59,9 +57,6 @@ You are running as an EJClaw background CI watcher.
 
 Watch target:
 ${target}
-
-Task ID:
-${taskId}
 
 Check instructions:
 ${checkInstructions}
@@ -81,7 +76,7 @@ Rules:
   4. Adapt the content to the specific CI. Do not invent fixed fields when they do not fit.
   5. Avoid tables unless they are clearly the shortest readable format.
   6. Keep the message compact and easy for other agents to parse.
-  7. Call \`cancel_task\` with task_id "${taskId}" so this watcher stops itself.
+  7. Call \`cancel_task\` (no arguments needed) so this watcher stops itself.
 - If you hit a transient problem such as a rate limit, network issue, or temporary auth failure, send no visible message and leave the task active for the next retry.
 - Prefer no normal final response. Use \`send_message\` for the completion message, and keep any non-user-facing notes inside \`<internal>\` tags if needed.
 - Do not claim continued monitoring after you cancel the task.

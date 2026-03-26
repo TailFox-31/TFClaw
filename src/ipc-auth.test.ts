@@ -563,9 +563,6 @@ describe('schedule_task schedule types', () => {
 Watch target:
 GitHub Actions run 123456
 
-Task ID:
-task-watch-ci
-
 Check instructions:
 Check the run.
         `.trim(),
@@ -597,9 +594,6 @@ Check the run.
 
 Watch target:
 GitHub Actions run 654321
-
-Task ID:
-task-watch-github
 
 Check instructions:
 Managed by host-driven watcher.

@@ -10,14 +10,13 @@ import {
 describe('watch-ci helpers', () => {
   it('builds a self-cancelling CI watch prompt', () => {
     const prompt = buildCiWatchPrompt({
-      taskId: 'task-123',
       target: 'PR #42 checks',
       checkInstructions:
         'Use gh pr checks 42 and summarize only terminal results.',
     });
 
     expect(prompt).toContain('PR #42 checks');
-    expect(prompt).toContain('task-123');
+    expect(prompt).not.toContain('Task ID:');
     expect(prompt).toContain('cancel_task');
     expect(prompt).toContain('send_message');
     expect(prompt).toContain('gh pr checks 42');

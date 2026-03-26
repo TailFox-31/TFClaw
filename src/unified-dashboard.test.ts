@@ -10,17 +10,17 @@ describe('summarizeWatcherTasks', () => {
     const summary = summarizeWatcherTasks([
       {
         prompt:
-          '[BACKGROUND CI WATCH]\n\nWatch target:\nGitHub Actions run 1\n\nTask ID:\na',
+          '[BACKGROUND CI WATCH]\n\nWatch target:\nGitHub Actions run 1\n\nCheck instructions:\na',
         status: 'active',
       },
       {
         prompt:
-          '[BACKGROUND CI WATCH]\n\nWatch target:\nGitHub Actions run 2\n\nTask ID:\nb',
+          '[BACKGROUND CI WATCH]\n\nWatch target:\nGitHub Actions run 2\n\nCheck instructions:\nb',
         status: 'paused',
       },
       {
         prompt:
-          '[BACKGROUND CI WATCH]\n\nWatch target:\nGitHub Actions run 3\n\nTask ID:\nc',
+          '[BACKGROUND CI WATCH]\n\nWatch target:\nGitHub Actions run 3\n\nCheck instructions:\nc',
         status: 'completed',
       },
       {

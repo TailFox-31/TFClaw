@@ -936,6 +936,25 @@ export function getTaskById(id: string): ScheduledTask | undefined {
     | undefined;
 }
 
+/**
+ * Find an existing active/paused CI watcher for the same channel + provider + metadata.
+ * Used to prevent duplicate watchers when both agents register for the same CI run.
+ */
+export function findDuplicateCiWatcher(
+  chatJid: string,
+  ciProvider: string,
+  ciMetadata: string,
+): ScheduledTask | undefined {
+  return db
+    .prepare(
+      `SELECT * FROM scheduled_tasks
+       WHERE chat_jid = ? AND ci_provider = ? AND ci_metadata = ?
+         AND status IN ('active', 'paused')
+       LIMIT 1`,
+    )
+    .get(chatJid, ciProvider, ciMetadata) as ScheduledTask | undefined;
+}
+
 export function getTasksForGroup(
   groupFolder: string,
   agentType?: AgentType,

@@ -27,6 +27,7 @@ const chatJid = process.env.EJCLAW_CHAT_JID!;
 const groupFolder = process.env.EJCLAW_GROUP_FOLDER!;
 const isMain = process.env.EJCLAW_IS_MAIN === '1';
 const agentType = process.env.EJCLAW_AGENT_TYPE || 'claude-code';
+const runtimeTaskId = process.env.EJCLAW_RUNTIME_TASK_ID;
 const allowGenericScheduling = agentType !== 'codex';
 
 function writeIpcFile(dir: string, data: object): string {
@@ -299,7 +300,6 @@ server.tool(
       isMain && args.target_group_jid ? args.target_group_jid : chatJid;
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const prompt = buildCiWatchPrompt({
-      taskId,
       target,
       checkInstructions,
     });
@@ -329,7 +329,7 @@ server.tool(
       content: [
         {
           type: 'text' as const,
-          text: `CI watcher scheduled: ${taskId} (${pollSeconds}s)`,
+          text: `CI watcher scheduled for ${target} (${pollSeconds}s interval)`,
         },
       ],
     };
@@ -414,12 +414,20 @@ server.tool(
 
 server.tool(
   'cancel_task',
-  'Cancel and delete a scheduled task.',
-  { task_id: z.string().describe('The task ID to cancel') },
-  async (args: { task_id: string }) => {
+  'Cancel and delete a scheduled task. If no task_id is provided, cancels the current task (for background watchers).',
+  { task_id: z.string().optional().describe('The task ID to cancel. Omit to cancel the current task.') },
+  async (args: { task_id?: string }) => {
+    const resolvedId = args.task_id || runtimeTaskId;
+    if (!resolvedId) {
+      return {
+        content: [{ type: 'text' as const, text: 'No task_id provided and no current task context available.' }],
+        isError: true,
+      };
+    }
+
     const data = {
       type: 'cancel_task',
-      taskId: args.task_id,
+      taskId: resolvedId,
       groupFolder,
       isMain,
       timestamp: new Date().toISOString(),
@@ -427,7 +435,7 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} cancellation requested.` }] };
+    return { content: [{ type: 'text' as const, text: `Task cancellation requested.` }] };
   },
 );
 

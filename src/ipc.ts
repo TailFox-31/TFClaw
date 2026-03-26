@@ -11,7 +11,13 @@ import {
 } from './config.js';
 import { readJsonFile } from './utils.js';
 import { AvailableGroup } from './agent-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import {
+  createTask,
+  deleteTask,
+  findDuplicateCiWatcher,
+  getTaskById,
+  updateTask,
+} from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -392,6 +398,28 @@ export async function processTaskIpc(
             break;
           }
           nextRun = date.toISOString();
+        }
+
+        // Deduplicate CI watchers: if another agent already watches the same
+        // channel + provider + run, skip creation to avoid duplicate notifications.
+        if (data.ci_provider && data.ci_metadata) {
+          const existing = findDuplicateCiWatcher(
+            resolvedTargetJid,
+            data.ci_provider,
+            data.ci_metadata as string,
+          );
+          if (existing) {
+            logger.info(
+              {
+                existingTaskId: existing.id,
+                existingAgentType: existing.agent_type,
+                ciProvider: data.ci_provider,
+                sourceGroup,
+              },
+              'Duplicate CI watcher skipped — another agent already watches this run',
+            );
+            break;
+          }
         }
 
         const taskId =

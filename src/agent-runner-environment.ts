@@ -70,6 +70,7 @@ function buildBaseRunnerEnv(args: {
   groupSessionsDir: string;
   agentType: AgentType;
   envVars: Record<string, string>;
+  runtimeTaskId?: string;
 }): Record<string, string> {
   const cleanEnv = { ...(process.env as Record<string, string>) };
   for (const [key, value] of Object.entries(args.envVars)) {
@@ -103,6 +104,9 @@ function buildBaseRunnerEnv(args: {
     EJCLAW_IS_MAIN: args.isMain ? '1' : '0',
     EJCLAW_AGENT_TYPE: args.agentType,
     CLAUDE_CONFIG_DIR: args.groupSessionsDir,
+    ...(args.runtimeTaskId
+      ? { EJCLAW_RUNTIME_TASK_ID: args.runtimeTaskId }
+      : {}),
   };
 }
 
@@ -422,6 +426,7 @@ export function prepareGroupEnvironment(
     groupSessionsDir,
     agentType,
     envVars,
+    runtimeTaskId,
   });
 
   if (agentType === 'codex') {

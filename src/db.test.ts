@@ -469,9 +469,6 @@ describe('task CRUD', () => {
 Watch target:
 cleanup
 
-Task ID:
-task-cleanup
-
 Check instructions:
 Check the run.
       `.trim(),

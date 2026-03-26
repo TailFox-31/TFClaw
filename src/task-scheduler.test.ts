@@ -326,9 +326,6 @@ describe('task scheduler', () => {
 Watch target:
 GitHub Actions run 123456
 
-Task ID:
-task-watch-group
-
 Check instructions:
 Check the run.
       `.trim(),
@@ -890,9 +887,6 @@ Check the run.
 Watch target:
 GitHub Actions run 654321
 
-Task ID:
-task-watch-immediate
-
 Check instructions:
 Check the run.
       `.trim(),
@@ -927,9 +921,6 @@ Check the run.
 
 Watch target:
 GitHub Actions run 123456
-
-Task ID:
-task-watch-runtime
 
 Check instructions:
 Check the run.
@@ -1003,9 +994,6 @@ Check the run.
 
 Watch target:
 GitHub Actions run 123456
-
-Task ID:
-task-github-running
 
 Check instructions:
 Managed by host-driven watcher.
@@ -1082,9 +1070,6 @@ Managed by host-driven watcher.
 Watch target:
 GitHub Actions run 654321
 
-Task ID:
-task-github-complete
-
 Check instructions:
 Managed by host-driven watcher.
       `.trim(),
@@ -1148,9 +1133,6 @@ Managed by host-driven watcher.
 
 Watch target:
 GitHub Actions run 222222
-
-Task ID:
-task-github-backoff
 
 Check instructions:
 Managed by host-driven watcher.
@@ -1220,9 +1202,6 @@ Managed by host-driven watcher.
 Watch target:
 GitHub Actions run 333333
 
-Task ID:
-task-github-pause
-
 Check instructions:
 Managed by host-driven watcher.
       `.trim(),
@@ -1283,9 +1262,6 @@ Managed by host-driven watcher.
 
 Watch target:
 GitHub Actions run 999999
-
-Task ID:
-task-watch-expired
 
 Check instructions:
 Check the run.
@@ -1389,9 +1365,6 @@ Check the run.
 Watch target:
 GitHub Actions run 123456
 
-Task ID:
-task-123
-
 Check instructions:
 Check the run.
 `.trim();
@@ -1428,9 +1401,6 @@ Check the run.
 Watch target:
 GitHub Actions run 123456
 
-Task ID:
-task-123
-
 Check instructions:
 Check the run.
 `.trim();
@@ -1462,9 +1432,6 @@ Check the run.
 
 Watch target:
 GitHub Actions run 123456
-
-Task ID:
-task-watch-status
 
 Check instructions:
 Check the run.
@@ -1526,9 +1493,6 @@ Check the run.
 
 Watch target:
 PR #77 checks
-
-Task ID:
-task-watch-status-edit-fail
 
 Check instructions:
 Check the run.
