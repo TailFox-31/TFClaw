@@ -177,7 +177,9 @@ describe('evaluateStreamedOutput', () => {
       );
 
       const result = evaluateStreamedOutput(
-        successOutput('API Error: 502 <html><center>cloudflare</center></html>'),
+        successOutput(
+          'API Error: 502 <html><center>cloudflare</center></html>',
+        ),
         freshState(),
         claudeOpts,
       );
