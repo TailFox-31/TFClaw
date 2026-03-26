@@ -1,11 +1,11 @@
 ---
 name: customize
-description: Customize Discord-only NanoClaw behavior, routing, integrations, prompts, or commands.
+description: Customize Discord-only EJClaw behavior, routing, integrations, prompts, or commands.
 ---
 
-# NanoClaw Customization
+# EJClaw Customization
 
-이 스킬은 현재 디스코드 전용 NanoClaw를 기준으로 동작합니다. 새 채널 추가보다 기존 디스코드 흐름, 러너, 프롬프트, 스케줄링, 도구 연결을 직접 수정하는 쪽을 우선합니다.
+이 스킬은 현재 디스코드 전용 EJClaw를 기준으로 동작합니다. 새 채널 추가보다 기존 디스코드 흐름, 러너, 프롬프트, 스케줄링, 도구 연결을 직접 수정하는 쪽을 우선합니다.
 
 ## 진행 순서
 

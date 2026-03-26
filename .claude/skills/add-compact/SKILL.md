@@ -1,11 +1,11 @@
 ---
 name: add-compact
-description: Verify or port the existing /compact session command in current NanoClaw.
+description: Verify or port the existing /compact session command in current EJClaw.
 ---
 
 # Add /compact Command
 
-현재 NanoClaw에는 `/compact`가 이미 들어 있습니다. 이 스킬은 새로 브랜치를 머지하는 용도보다, 오래된 포크에 같은 기능을 옮기거나 리팩터링 뒤 동작을 검증하는 체크리스트로 씁니다.
+현재 EJClaw에는 `/compact`가 이미 들어 있습니다. 이 스킬은 새로 브랜치를 머지하는 용도보다, 오래된 포크에 같은 기능을 옮기거나 리팩터링 뒤 동작을 검증하는 체크리스트로 씁니다.
 
 ## 관련 파일
 

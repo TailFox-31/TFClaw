@@ -34,7 +34,7 @@ npm run setup -- --step service
 등록된 디스코드 채널에 음성 메시지나 오디오 첨부를 보냅니다. 정상이라면 에이전트 입력에 전사 텍스트가 포함됩니다.
 
 ```bash
-tail -f logs/nanoclaw.log | grep -iE 'transcri|audio'
+tail -f logs/ejclaw.log | grep -iE 'transcri|audio'
 ```
 
 성공 신호:
