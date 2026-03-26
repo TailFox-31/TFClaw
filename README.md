@@ -8,6 +8,7 @@
 Dual-agent AI assistant (Claude Code + Codex) over Discord.
 
 Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now maintained as EJClaw for personal production use.
+Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros), adapted for EJClaw's Discord and dual-service workflow.
 
 ## Overview
 
