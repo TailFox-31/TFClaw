@@ -137,37 +137,45 @@ function syncToSessionDirs(credsPath: string): void {
 /**
  * Update CLAUDE_CODE_OAUTH_TOKENS in .env so refreshed tokens survive restarts.
  */
+export function applyUpdatedTokensToEnvContent(
+  content: string,
+  tokens: string[],
+): string {
+  if (tokens.length === 0) return content;
+  const multiValue = tokens.join(',');
+  const multiLineRe = /^CLAUDE_CODE_OAUTH_TOKENS=.*/m;
+  const singleLineRe = /^CLAUDE_CODE_OAUTH_TOKEN=.*/m;
+
+  let next = content;
+  if (multiLineRe.test(next)) {
+    next = next.replace(multiLineRe, `CLAUDE_CODE_OAUTH_TOKENS=${multiValue}`);
+  } else {
+    next = `${next.replace(/\s*$/, '')}\nCLAUDE_CODE_OAUTH_TOKENS=${multiValue}\n`;
+  }
+
+  if (singleLineRe.test(next)) {
+    next = next.replace(singleLineRe, `CLAUDE_CODE_OAUTH_TOKEN=${tokens[0]}`);
+  }
+
+  return next;
+}
+
 function updateEnvTokens(): void {
   const envFile = path.join(process.cwd(), '.env');
   try {
     if (!fs.existsSync(envFile)) return;
-    let content = fs.readFileSync(envFile, 'utf-8');
+    const content = fs.readFileSync(envFile, 'utf-8');
 
     const allTokens = getAllTokens();
     if (allTokens.length === 0) return;
 
-    const newValue = allTokens.map((t) => t.token).join(',');
-
-    // Replace existing CLAUDE_CODE_OAUTH_TOKENS line, or append if missing
-    const tokenLineRe = /^CLAUDE_CODE_OAUTH_TOKENS=.*/m;
-    if (tokenLineRe.test(content)) {
-      content = content.replace(
-        tokenLineRe,
-        `CLAUDE_CODE_OAUTH_TOKENS=${newValue}`,
-      );
-    } else {
-      // Also update the single-token var if present
-      const singleLineRe = /^CLAUDE_CODE_OAUTH_TOKEN=.*/m;
-      if (singleLineRe.test(content)) {
-        content = content.replace(
-          singleLineRe,
-          `CLAUDE_CODE_OAUTH_TOKEN=${allTokens[0].token}`,
-        );
-      }
-    }
+    const nextContent = applyUpdatedTokensToEnvContent(
+      content,
+      allTokens.map((t) => t.token),
+    );
 
     const tempPath = `${envFile}.tmp`;
-    fs.writeFileSync(tempPath, content, { mode: 0o600 });
+    fs.writeFileSync(tempPath, nextContent, { mode: 0o600 });
     fs.renameSync(tempPath, envFile);
     logger.debug('Updated .env with refreshed tokens');
   } catch (err) {

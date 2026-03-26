@@ -71,9 +71,41 @@ function saveUsageDiskCache(): void {
   }
 }
 
-function cacheKey(token: string): string {
+function legacyTokenCacheKey(token: string): string {
   // Use last 8 chars — prefix is always "sk-ant-oat01-" for all tokens
   return token.slice(-8);
+}
+
+function accountCacheKey(accountIndex: number): string {
+  return `account-${accountIndex}`;
+}
+
+export function getUsageCacheWriteKey(
+  token: string,
+  accountIndex?: number,
+): string {
+  return accountIndex != null
+    ? accountCacheKey(accountIndex)
+    : legacyTokenCacheKey(token);
+}
+
+export function getUsageCacheReadKeys(
+  token: string,
+  accountIndex?: number,
+  credentialsAccessToken?: string | null,
+): string[] {
+  const keys: string[] = [];
+  if (accountIndex != null) keys.push(accountCacheKey(accountIndex));
+
+  if (credentialsAccessToken) {
+    const credsKey = legacyTokenCacheKey(credentialsAccessToken);
+    if (!keys.includes(credsKey)) keys.push(credsKey);
+  }
+
+  const tokenKey = legacyTokenCacheKey(token);
+  if (!keys.includes(tokenKey)) keys.push(tokenKey);
+
+  return keys;
 }
 
 // Rate limit: at most one API call per token per 5 minutes
@@ -86,8 +118,26 @@ async function fetchUsageForToken(
   loadUsageDiskCache();
 
   // Return cached data if attempted recently (avoid API rate-limit)
-  const key = cacheKey(token);
-  const cached = usageDiskCache[key];
+  const writeKey = getUsageCacheWriteKey(token, accountIndex);
+  const readKeys = getUsageCacheReadKeys(
+    token,
+    accountIndex,
+    accountIndex != null ? readCredentialsAccessToken(accountIndex) : null,
+  );
+  let cachedKey: string | null = null;
+  let cached: UsageCacheEntry | undefined;
+  for (const key of readKeys) {
+    const entry = usageDiskCache[key];
+    if (!entry) continue;
+    cachedKey = key;
+    cached = entry;
+    break;
+  }
+  if (cached && cachedKey && cachedKey !== writeKey && !usageDiskCache[writeKey]) {
+    usageDiskCache[writeKey] = { ...cached };
+    cached = usageDiskCache[writeKey];
+    saveUsageDiskCache();
+  }
   const lastAttempt = cached?.lastAttemptAt ?? cached?.fetchedAt ?? 0;
   if (cached && Date.now() - lastAttempt < MIN_FETCH_INTERVAL_MS) {
     return cached.usage;
@@ -110,7 +160,8 @@ async function fetchUsageForToken(
       logger.warn(
         {
           account: accountIndex != null ? accountIndex + 1 : '?',
-          tokenKey: key,
+          tokenKey: legacyTokenCacheKey(token),
+          cacheKey: writeKey,
         },
         'Claude usage API: token expired or invalid (401)',
       );
@@ -121,7 +172,8 @@ async function fetchUsageForToken(
       logger.warn(
         {
           account: accountIndex != null ? accountIndex + 1 : '?',
-          tokenKey: key,
+          tokenKey: legacyTokenCacheKey(token),
+          cacheKey: writeKey,
           staleMinutes: Math.round(staleMs / 60_000),
         },
         'Claude usage API: rate limited (429), returning cached data',
@@ -138,7 +190,8 @@ async function fetchUsageForToken(
         {
           account: accountIndex != null ? accountIndex + 1 : '?',
           status: res.status,
-          tokenKey: key,
+          tokenKey: legacyTokenCacheKey(token),
+          cacheKey: writeKey,
         },
         `Claude usage API: unexpected status ${res.status}`,
       );
@@ -160,12 +213,18 @@ async function fetchUsageForToken(
 
     // Persist to disk cache — success: update both fetchedAt and lastAttemptAt
     const now = Date.now();
-    usageDiskCache[key] = { usage: result, fetchedAt: now, lastAttemptAt: now };
+    usageDiskCache[writeKey] = {
+      usage: result,
+      fetchedAt: now,
+      lastAttemptAt: now,
+    };
     saveUsageDiskCache();
 
     logger.debug(
       {
-        tokenKey: key,
+        account: accountIndex != null ? accountIndex + 1 : '?',
+        tokenKey: legacyTokenCacheKey(token),
+        cacheKey: writeKey,
         h5: result.five_hour?.utilization,
         d7: result.seven_day?.utilization,
       },
@@ -175,9 +234,24 @@ async function fetchUsageForToken(
     return result;
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
-      logger.warn({ tokenKey: key }, 'Claude usage API: request timed out');
+      logger.warn(
+        {
+          account: accountIndex != null ? accountIndex + 1 : '?',
+          tokenKey: legacyTokenCacheKey(token),
+          cacheKey: writeKey,
+        },
+        'Claude usage API: request timed out',
+      );
     } else {
-      logger.warn({ err, tokenKey: key }, 'Claude usage API: fetch failed');
+      logger.warn(
+        {
+          err,
+          account: accountIndex != null ? accountIndex + 1 : '?',
+          tokenKey: legacyTokenCacheKey(token),
+          cacheKey: writeKey,
+        },
+        'Claude usage API: fetch failed',
+      );
     }
     // Record attempt time so we back off on persistent failures
     if (cached) {
@@ -231,6 +305,27 @@ function readCredentialsPlanType(accountIndex: number): string | null {
       claudeAiOauth?: { subscriptionType?: string };
     }>(credsPath);
     return data?.claudeAiOauth?.subscriptionType || null;
+  } catch {
+    return null;
+  }
+}
+
+function readCredentialsAccessToken(accountIndex: number): string | null {
+  try {
+    const credsPath =
+      accountIndex === 0
+        ? path.join(os.homedir(), '.claude', '.credentials.json')
+        : path.join(
+            os.homedir(),
+            '.claude-accounts',
+            String(accountIndex),
+            '.credentials.json',
+          );
+    if (!fs.existsSync(credsPath)) return null;
+    const data = readJsonFile<{
+      claudeAiOauth?: { accessToken?: string };
+    }>(credsPath);
+    return data?.claudeAiOauth?.accessToken || null;
   } catch {
     return null;
   }

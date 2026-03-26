@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ClaudeUsageData } from './claude-usage.js';
+import {
+  getUsageCacheReadKeys,
+  getUsageCacheWriteKey,
+  type ClaudeUsageData,
+} from './claude-usage.js';
 
 describe('ClaudeUsageData', () => {
   it('represents the API response structure correctly', () => {
@@ -27,5 +31,24 @@ describe('ClaudeUsageData', () => {
 
     expect(data.five_hour?.utilization).toBe(10);
     expect(data.seven_day).toBeUndefined();
+  });
+
+  it('prefers account-based cache keys and falls back to token suffixes', () => {
+    expect(
+      getUsageCacheReadKeys(
+        'sk-ant-oat01-currentHNCJmAAA',
+        0,
+        'sk-ant-oat01-credsEqnOPAAA',
+      ),
+    ).toEqual(['account-0', 'EqnOPAAA', 'HNCJmAAA']);
+  });
+
+  it('writes cache under account key when account index is known', () => {
+    expect(getUsageCacheWriteKey('sk-ant-oat01-currentHNCJmAAA', 0)).toBe(
+      'account-0',
+    );
+    expect(getUsageCacheWriteKey('sk-ant-oat01-currentHNCJmAAA')).toBe(
+      'HNCJmAAA',
+    );
   });
 });
