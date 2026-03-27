@@ -5,6 +5,8 @@
  * to eliminate the ~255-line structural duplication.
  */
 
+import type { AgentOutput } from './agent-runner.js';
+import { getAgentOutputText } from './agent-output.js';
 import {
   classifyRotationTrigger,
   shouldRotateClaudeToken,
@@ -26,7 +28,7 @@ export interface TriggerInfo {
 }
 
 export interface RotationAttemptResult {
-  output?: { status: string; result?: string | null; error?: string | null };
+  output?: Pick<AgentOutput, 'status' | 'result' | 'output' | 'error'>;
   thrownError?: unknown;
   sawOutput: boolean;
   sawSuccessNullResult?: boolean;
@@ -115,8 +117,7 @@ export async function runClaudeRotationLoop(
         reason: attempt.streamedTriggerReason.reason,
         retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
       };
-      lastRotationMessage =
-        typeof output.result === 'string' ? output.result : undefined;
+      lastRotationMessage = getAgentOutputText(output) ?? undefined;
       continue;
     }
 

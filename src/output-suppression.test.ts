@@ -54,7 +54,10 @@ describe('classifySuppressTokenOutput', () => {
 
   it('treats a truncated structured silent envelope as mixed', () => {
     expect(
-      classifySuppressTokenOutput('{"ejclaw":{"visibility":"silent"', undefined),
+      classifySuppressTokenOutput(
+        '{"ejclaw":{"visibility":"silent"',
+        undefined,
+      ),
     ).toBe('mixed');
   });
 

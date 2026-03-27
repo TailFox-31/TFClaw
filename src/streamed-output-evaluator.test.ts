@@ -138,6 +138,21 @@ describe('evaluateStreamedOutput', () => {
       expect(result.shouldForwardOutput).toBe(true);
       expect(result.state.sawOutput).toBe(false);
     });
+
+    it('treats structured silent final output as output, not success-null-result', () => {
+      const result = evaluateStreamedOutput(
+        {
+          status: 'success',
+          result: null,
+          output: { visibility: 'silent' },
+        },
+        freshState(),
+        { ...claudeOpts, trackSuccessNullResult: true },
+      );
+      expect(result.shouldForwardOutput).toBe(true);
+      expect(result.state.sawOutput).toBe(true);
+      expect(result.state.sawSuccessNullResultWithoutOutput).toBe(false);
+    });
   });
 
   describe('Claude usage-exhausted banner', () => {
@@ -179,6 +194,28 @@ describe('evaluateStreamedOutput', () => {
       );
       expect(result.shouldForwardOutput).toBe(true);
       expect(result.newTrigger).toBeUndefined();
+    });
+
+    it('detects a structured public usage-exhausted banner too', () => {
+      vi.mocked(isClaudeUsageExhaustedMessage).mockReturnValue(true);
+
+      const result = evaluateStreamedOutput(
+        {
+          status: 'success',
+          result: null,
+          output: {
+            visibility: 'public',
+            text: "You're out of extra usage. Resets at 5pm.",
+          },
+        },
+        freshState(),
+        claudeOpts,
+      );
+      expect(result.shouldForwardOutput).toBe(false);
+      expect(result.newTrigger).toEqual({ reason: 'usage-exhausted' });
+      expect(result.state.streamedTriggerReason).toEqual({
+        reason: 'usage-exhausted',
+      });
     });
   });
 

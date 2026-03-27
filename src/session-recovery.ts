@@ -1,3 +1,4 @@
+import { getAgentOutputText } from './agent-output.js';
 import type { AgentOutput } from './agent-runner.js';
 
 const SESSION_RESET_PATTERNS = [
@@ -28,18 +29,24 @@ function toText(value: string | object | null | undefined): string[] {
 }
 
 export function shouldResetSessionOnAgentFailure(
-  output: Pick<AgentOutput, 'result' | 'error'>,
+  output: Pick<AgentOutput, 'result' | 'output' | 'error'>,
 ): boolean {
-  const texts = [...toText(output.result), ...toText(output.error)];
+  const texts = [
+    ...toText(getAgentOutputText(output)),
+    ...toText(output.error),
+  ];
   return texts.some((text) =>
     SESSION_RESET_PATTERNS.some((pattern) => pattern.test(text)),
   );
 }
 
 export function shouldRetryFreshSessionOnAgentFailure(
-  output: Pick<AgentOutput, 'result' | 'error'>,
+  output: Pick<AgentOutput, 'result' | 'output' | 'error'>,
 ): boolean {
-  const texts = [...toText(output.result), ...toText(output.error)];
+  const texts = [
+    ...toText(getAgentOutputText(output)),
+    ...toText(output.error),
+  ];
   return texts.some((text) =>
     SESSION_RETRY_PATTERNS.some((pattern) => pattern.test(text)),
   );

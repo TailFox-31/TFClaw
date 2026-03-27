@@ -1,4 +1,9 @@
 import {
+  getAgentOutputText,
+  hasAgentOutputPayload,
+  isSilentAgentOutput,
+} from './agent-output.js';
+import {
   classifyClaudeAuthError,
   classifyRotationTrigger,
   detectClaudeProviderFailureMessage,
@@ -53,6 +58,8 @@ export function evaluateStreamedOutput(
     options.agentType === 'codex' && options.provider === 'codex';
   const countsAsFinalOutput =
     output.phase === undefined || output.phase === 'final';
+  const outputText = getAgentOutputText(output);
+  const silentOutput = isSilentAgentOutput(output);
 
   if (
     isPrimaryClaude &&
@@ -71,19 +78,19 @@ export function evaluateStreamedOutput(
     isPrimaryClaude &&
     output.status === 'success' &&
     !state.sawOutput &&
-    typeof output.result === 'string'
+    typeof outputText === 'string'
   ) {
-    const authClassification = classifyClaudeAuthError(output.result);
+    const authClassification = classifyClaudeAuthError(outputText);
     const triggerReason: AgentTriggerReason | undefined =
-      isClaudeUsageExhaustedMessage(output.result)
+      isClaudeUsageExhaustedMessage(outputText)
         ? 'usage-exhausted'
-        : isClaudeOrgAccessDeniedMessage(output.result) ||
+        : isClaudeOrgAccessDeniedMessage(outputText) ||
             authClassification.category === 'org-access-denied'
           ? 'org-access-denied'
-          : isClaudeAuthExpiredMessage(output.result) ||
+          : isClaudeAuthExpiredMessage(outputText) ||
               authClassification.category === 'auth-expired'
             ? 'auth-expired'
-            : detectClaudeProviderFailureMessage(output.result) || undefined;
+            : detectClaudeProviderFailureMessage(outputText) || undefined;
 
     if (triggerReason) {
       const newTrigger = nextState.streamedTriggerReason
@@ -100,7 +107,7 @@ export function evaluateStreamedOutput(
 
     if (
       options.suppressClaudeAuthErrorOutput &&
-      isClaudeAuthError(output.result)
+      isClaudeAuthError(outputText)
     ) {
       return {
         state: nextState,
@@ -112,15 +119,15 @@ export function evaluateStreamedOutput(
 
   if (
     countsAsFinalOutput &&
-    output.result !== null &&
-    output.result !== undefined
+    hasAgentOutputPayload(output)
   ) {
     nextState.sawOutput = true;
   } else if (
     options.trackSuccessNullResult &&
     isPrimaryClaude &&
     output.status === 'success' &&
-    !state.sawOutput
+    !state.sawOutput &&
+    !silentOutput
   ) {
     nextState.sawSuccessNullResultWithoutOutput = true;
   }

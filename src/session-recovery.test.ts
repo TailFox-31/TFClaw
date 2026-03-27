@@ -44,6 +44,19 @@ describe('shouldResetSessionOnAgentFailure', () => {
       }),
     ).toBe(true);
   });
+
+  it('matches structured public output text too', () => {
+    expect(
+      shouldResetSessionOnAgentFailure({
+        result: null,
+        output: {
+          visibility: 'public',
+          text: 'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.11.content.0: Invalid `signature` in `thinking` block"}}',
+        },
+        error: undefined,
+      }),
+    ).toBe(true);
+  });
 });
 
 describe('shouldRetryFreshSessionOnAgentFailure', () => {
@@ -71,6 +84,16 @@ describe('shouldRetryFreshSessionOnAgentFailure', () => {
       shouldRetryFreshSessionOnAgentFailure({
         result:
           'An image in the conversation exceeds the dimension limit for many-image requests (2000px). Start a new session with fewer images.',
+        error: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it('does not treat structured silent output as a retryable session failure', () => {
+    expect(
+      shouldRetryFreshSessionOnAgentFailure({
+        result: null,
+        output: { visibility: 'silent' },
         error: undefined,
       }),
     ).toBe(false);

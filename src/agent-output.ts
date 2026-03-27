@@ -26,6 +26,16 @@ export function getAgentOutputText(output: {
   return stringifyLegacyAgentResult(output.result);
 }
 
+export function hasAgentOutputPayload(output: {
+  output?: StructuredAgentOutput;
+  result?: string | object | null;
+}): boolean {
+  if (output.output) {
+    return true;
+  }
+  return output.result !== null && output.result !== undefined;
+}
+
 export function isSilentAgentOutput(output: {
   output?: StructuredAgentOutput;
 }): boolean {

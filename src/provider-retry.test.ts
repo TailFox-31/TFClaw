@@ -83,4 +83,42 @@ describe('runClaudeRotationLoop', () => {
       trigger: { reason: 'success-null-result' },
     });
   });
+
+  it('uses structured public output text as the next rotation message', async () => {
+    vi.mocked(getTokenCount).mockReturnValue(2);
+    vi.mocked(rotateToken)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    let attempts = 0;
+    const outcome = await runClaudeRotationLoop(
+      { reason: '429' },
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            output: {
+              status: 'success',
+              result: null,
+              output: { visibility: 'public', text: 'retry with next token' },
+            },
+            sawOutput: false,
+            streamedTriggerReason: { reason: 'usage-exhausted' },
+          };
+        }
+
+        return {
+          output: { status: 'success', result: 'ok' },
+          sawOutput: true,
+        };
+      },
+      { runId: 'structured-rotation-message' },
+    );
+
+    expect(outcome).toEqual({
+      type: 'error',
+      trigger: { reason: 'usage-exhausted' },
+    });
+    expect(rotateToken).toHaveBeenNthCalledWith(2, 'retry with next token');
+  });
 });
