@@ -258,10 +258,17 @@ function prepareCodexSessionEnvironment(args: {
   const sessionAgents = (
     args.useFailoverPromptPack
       ? [
+          readOptionalPromptFile(args.projectRoot, 'owner-common-platform.md'),
           readOptionalPromptFile(
             args.projectRoot,
             'codex-review-failover-platform.md',
           ),
+          args.isPairedRoom
+            ? readOptionalPromptFile(
+                args.projectRoot,
+                'owner-common-paired-room.md',
+              )
+            : undefined,
           args.isPairedRoom
             ? readOptionalPromptFile(
                 args.projectRoot,
@@ -427,7 +434,14 @@ export function prepareGroupEnvironment(
     effectiveLease.explicit &&
     effectiveLease.owner_service_id === CODEX_REVIEW_SERVICE_ID;
 
+  const ownerCommonPlatformPrompt = readOptionalPromptFile(
+    projectRoot,
+    'owner-common-platform.md',
+  );
   const claudePlatformPrompt = readPlatformPrompt('claude-code', projectRoot);
+  const ownerCommonPairedRoomPrompt = isPairedRoom
+    ? readOptionalPromptFile(projectRoot, 'owner-common-paired-room.md')
+    : undefined;
   const claudePairedRoomPrompt = isPairedRoom
     ? readPairedRoomPrompt('claude-code', projectRoot)
     : undefined;
@@ -436,7 +450,9 @@ export function prepareGroupEnvironment(
       ? fs.readFileSync(globalClaudeMdPath, 'utf-8').trim()
       : undefined;
   const sessionClaudeMd = [
+    ownerCommonPlatformPrompt,
     claudePlatformPrompt,
+    ownerCommonPairedRoomPrompt,
     claudePairedRoomPrompt,
     globalClaudeMemory,
     options?.memoryBriefing,

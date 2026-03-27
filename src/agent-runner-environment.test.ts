@@ -223,6 +223,14 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       'review paired prompt\n',
     );
     fs.writeFileSync(
+      path.join(promptsDir, 'owner-common-platform.md'),
+      'owner common platform prompt\n',
+    );
+    fs.writeFileSync(
+      path.join(promptsDir, 'owner-common-paired-room.md'),
+      'owner common paired prompt\n',
+    );
+    fs.writeFileSync(
       path.join(promptsDir, 'codex-review-failover-platform.md'),
       'failover platform prompt\n',
     );
@@ -253,8 +261,55 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     const segments = agents.trim().split('\n\n---\n\n');
 
     expect(segments).toEqual([
+      'owner common platform prompt',
       'failover platform prompt',
+      'owner common paired prompt',
       'failover paired prompt',
+      'memory briefing',
+    ]);
+  });
+
+  it('adds the shared owner prompt fragments to Claude session prompts', () => {
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    mockReadEnvFile.mockReturnValue({});
+
+    const promptsDir = path.join(tempRoot, 'prompts');
+    fs.mkdirSync(promptsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(promptsDir, 'owner-common-platform.md'),
+      'owner common platform prompt\n',
+    );
+    fs.writeFileSync(
+      path.join(promptsDir, 'owner-common-paired-room.md'),
+      'owner common paired prompt\n',
+    );
+
+    prepareGroupEnvironment(
+      { ...group, agentType: 'claude-code' },
+      false,
+      'dc:test',
+      {
+        memoryBriefing: 'memory briefing',
+      },
+    );
+
+    const claudePath = path.join(
+      tempRoot,
+      'sessions',
+      group.folder,
+      'services',
+      'codex-main',
+      '.claude',
+      'CLAUDE.md',
+    );
+    const claude = fs.readFileSync(claudePath, 'utf-8');
+    const segments = claude.trim().split('\n\n---\n\n');
+
+    expect(segments).toEqual([
+      'owner common platform prompt',
+      'platform prompt',
+      'owner common paired prompt',
+      'paired room prompt',
       'memory briefing',
     ]);
   });

@@ -92,5 +92,16 @@ describe('buildStructuredOutputPrompt', () => {
     expect(buildStructuredOutputPrompt('hello')).toContain(
       'If you have no user-visible content to send for this turn, output exactly this JSON and nothing else: {"ejclaw":{"visibility":"silent"}}',
     );
+    expect(buildStructuredOutputPrompt('hello')).toContain(
+      'If you have already emitted any visible progress, status update, or partial answer earlier in this turn, do not end with the JSON object. Finish with a short visible final conclusion for the user instead.',
+    );
+  });
+
+  it('tightens the reviewer silent rule when reviewer mode is enabled', () => {
+    expect(
+      buildStructuredOutputPrompt('hello', { reviewerMode: true }),
+    ).toContain(
+      'If you have not already emitted any visible progress, status update, or partial answer in this turn and you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the JSON object.',
+    );
   });
 });

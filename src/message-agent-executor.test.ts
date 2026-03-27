@@ -222,8 +222,8 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        prompt: expect.stringContaining(
-          'If you have no user-visible content to send for this turn, output exactly this JSON and nothing else: {"ejclaw":{"visibility":"silent"}}',
+        prompt: expect.stringMatching(
+          /If you have no user-visible content to send for this turn, output exactly this JSON and nothing else: \{"ejclaw":\{"visibility":"silent"\}\}[\s\S]*If you have already emitted any visible progress, status update, or partial answer earlier in this turn, do not end with the JSON object\. Finish with a short visible final conclusion for the user instead\./,
         ),
       }),
       expect.any(Function),
@@ -253,8 +253,8 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        prompt: expect.stringContaining(
-          'If you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the JSON object.',
+        prompt: expect.stringMatching(
+          /If you have already emitted any visible progress, status update, or partial answer earlier in this turn, do not end with the JSON object\. Finish with a short visible final conclusion for the user instead\.[\s\S]*If you have not already emitted any visible progress, status update, or partial answer in this turn and you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the JSON object\./,
         ),
       }),
       expect.any(Function),

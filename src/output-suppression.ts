@@ -92,11 +92,12 @@ export function buildStructuredOutputPrompt(
     `If you have no user-visible content to send for this turn, output exactly this JSON and nothing else: ${STRUCTURED_SILENT_OUTPUT_ENVELOPE}`,
     'Do not wrap the JSON in backticks or code fences.',
     'Do not combine the JSON with any other text.',
+    'If you have already emitted any visible progress, status update, or partial answer earlier in this turn, do not end with the JSON object. Finish with a short visible final conclusion for the user instead.',
   ];
 
   if (options?.reviewerMode) {
     lines.push(
-      'If you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the JSON object.',
+      'If you have not already emitted any visible progress, status update, or partial answer in this turn and you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the JSON object.',
     );
   }
 
