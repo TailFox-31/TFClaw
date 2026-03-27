@@ -1,6 +1,8 @@
+import { getAgentOutputText } from './agent-output.js';
 import type { NewMessage } from './types.js';
 import { logger } from './logger.js';
 import { formatOutbound } from './router.js';
+import type { StructuredAgentOutput } from './types.js';
 
 const SESSION_COMMAND_CONTROL_PATTERNS = [
   /^Current session cleared\. The next message will start a new conversation\.$/,
@@ -48,6 +50,7 @@ export function isSessionCommandControlMessage(content: string): boolean {
 export interface AgentResult {
   status: 'success' | 'error';
   result?: string | object | null;
+  output?: StructuredAgentOutput;
 }
 
 /** Dependencies injected by the orchestrator. */
@@ -71,6 +74,14 @@ function resultToText(result: string | object | null | undefined): string {
   if (!result) return '';
   const raw = typeof result === 'string' ? result : JSON.stringify(result);
   return formatOutbound(raw);
+}
+
+function agentResultToText(result: AgentResult): string {
+  const raw = getAgentOutputText({
+    result: result.result ?? null,
+    output: result.output,
+  });
+  return raw ? formatOutbound(raw) : '';
 }
 
 /**
@@ -149,7 +160,7 @@ export async function handleSessionCommand(opts: {
 
     const preResult = await deps.runAgent(prePrompt, async (result) => {
       if (result.status === 'error') hadPreError = true;
-      const text = resultToText(result.result);
+      const text = agentResultToText(result);
       if (text) {
         await deps.sendMessage(text);
         preOutputSent = true;
@@ -185,7 +196,7 @@ export async function handleSessionCommand(opts: {
   let hadCmdError = false;
   const cmdOutput = await deps.runAgent(command, async (result) => {
     if (result.status === 'error') hadCmdError = true;
-    const text = resultToText(result.result);
+    const text = agentResultToText(result);
     if (text) await deps.sendMessage(text);
   });
 

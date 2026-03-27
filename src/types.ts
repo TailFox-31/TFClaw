@@ -21,6 +21,17 @@ export type AgentOutputPhase =
 /** Phase as visible in the UI (mapped from AgentOutputPhase). */
 export type VisiblePhase = 'silent' | 'progress' | 'final';
 
+export type AgentVisibility = 'public' | 'silent';
+
+export type StructuredAgentOutput =
+  | {
+      visibility: 'public';
+      text: string;
+    }
+  | {
+      visibility: 'silent';
+    };
+
 export function normalizeAgentOutputPhase(
   phase?: AgentOutputPhase,
 ): AgentOutputPhase {

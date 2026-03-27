@@ -1,5 +1,6 @@
 import { getErrorMessage } from './utils.js';
 
+import { getAgentOutputText } from './agent-output.js';
 import {
   AgentOutput,
   runAgentProcess,
@@ -26,7 +27,7 @@ import {
   SERVICE_SESSION_SCOPE,
 } from './config.js';
 import {
-  buildSuppressTokenPrompt,
+  buildStructuredOutputPrompt,
   classifySuppressTokenOutput,
 } from './output-suppression.js';
 import {
@@ -120,7 +121,7 @@ export async function runAgentForGroup(
   const currentLease = getEffectiveChannelLease(chatJid);
   const reviewerMode =
     currentLease.reviewer_service_id === SERVICE_SESSION_SCOPE;
-  const effectivePrompt = buildSuppressTokenPrompt(prompt, suppressToken, {
+  const effectivePrompt = buildStructuredOutputPrompt(prompt, {
     reviewerMode,
   });
 
@@ -229,9 +230,10 @@ export async function runAgentForGroup(
           });
           streamedState = evaluation.state;
 
+          const outputText = getAgentOutputText(output);
           if (
             evaluation.newTrigger &&
-            typeof output.result === 'string' &&
+            typeof outputText === 'string' &&
             output.status === 'success'
           ) {
             logger.warn(
@@ -240,7 +242,7 @@ export async function runAgentForGroup(
                 group: group.name,
                 runId,
                 reason: evaluation.newTrigger.reason,
-                resultPreview: output.result.slice(0, 120),
+                resultPreview: outputText.slice(0, 120),
               },
               'Detected Claude rotation trigger in successful output',
             );
@@ -269,8 +271,8 @@ export async function runAgentForGroup(
                 group: group.name,
                 runId,
                 resultPreview:
-                  typeof output.result === 'string'
-                    ? output.result.slice(0, 120)
+                  typeof outputText === 'string'
+                    ? outputText.slice(0, 120)
                     : undefined,
               },
               'Suppressed Claude 401 auth error from chat output',
@@ -285,8 +287,8 @@ export async function runAgentForGroup(
                 group: group.name,
                 runId,
                 resultPreview:
-                  typeof output.result === 'string'
-                    ? output.result.slice(0, 160)
+                  typeof outputText === 'string'
+                    ? outputText.slice(0, 160)
                     : output.error?.slice(0, 160),
               },
               'Suppressed retryable Claude session failure from chat output',
@@ -298,12 +300,12 @@ export async function runAgentForGroup(
             return;
           }
           const suppressState =
-            typeof output.result === 'string'
-              ? classifySuppressTokenOutput(output.result, suppressToken)
+            typeof outputText === 'string'
+              ? classifySuppressTokenOutput(outputText, suppressToken)
               : 'none';
           if (
-            typeof output.result === 'string' &&
-            output.result.length > 0 &&
+            typeof outputText === 'string' &&
+            outputText.length > 0 &&
             suppressState === 'none'
           ) {
             streamedState = {

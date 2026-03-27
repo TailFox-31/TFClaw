@@ -40,6 +40,10 @@ interface ContainerOutput {
   agentLabel?: string;
   agentDone?: boolean;
   result: string | null;
+  output?: {
+    visibility: 'public' | 'silent';
+    text?: string;
+  };
   newSessionId?: string;
   error?: string;
 }
@@ -189,6 +193,48 @@ function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
   console.log(OUTPUT_END_MARKER);
+}
+
+function normalizeStructuredOutput(result: string | null): {
+  result: string | null;
+  output?: ContainerOutput['output'];
+} {
+  if (typeof result !== 'string' || result.length === 0) {
+    return { result };
+  }
+
+  const trimmed = result.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      ejclaw?: { visibility?: unknown; text?: unknown };
+    };
+    const envelope = parsed?.ejclaw;
+    if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
+      if (envelope.visibility === 'silent') {
+        return {
+          result: null,
+          output: { visibility: 'silent' },
+        };
+      }
+      if (
+        envelope.visibility === 'public' &&
+        typeof envelope.text === 'string' &&
+        envelope.text.length > 0
+      ) {
+        return {
+          result: envelope.text,
+          output: { visibility: 'public', text: envelope.text },
+        };
+      }
+    }
+  } catch {
+    // fall through to legacy string output
+  }
+
+  return {
+    result,
+    output: { visibility: 'public', text: result },
+  };
 }
 
 function log(message: string): void {
@@ -715,10 +761,11 @@ async function runQuery(
       const description = typeof tp.description === 'string' ? tp.description : '';
       if (description && description.length <= 80) {
         // Short tool description → show as sub-line in progress
+        const normalized = normalizeStructuredOutput(description);
         writeOutput({
           status: 'success',
           phase: 'tool-activity',
-          result: description,
+          ...normalized,
           agentId: taskId,
           newSessionId,
         });
@@ -733,10 +780,11 @@ async function runQuery(
       const desc = ts.description || '';
       log(`Subagent started: task=${ts.task_id} desc=${desc.slice(0, 200)}`);
       if (desc) {
+        const normalized = normalizeStructuredOutput(`🔄 ${desc}`);
         writeOutput({
           status: 'success',
           phase: 'progress',
-          result: `🔄 ${desc}`,
+          ...normalized,
           agentId: ts.task_id,
           agentLabel: desc,
           newSessionId,
@@ -751,10 +799,11 @@ async function runQuery(
       };
       const label = `${tp.tool_name} (${Math.round(tp.elapsed_time_seconds)}s)`;
       log(`Tool progress: ${label}`);
+      const normalized = normalizeStructuredOutput(label);
       writeOutput({
         status: 'success',
         phase: 'progress',
-        result: label,
+        ...normalized,
         newSessionId,
       });
     }
@@ -762,10 +811,11 @@ async function runQuery(
     if (message.type === 'tool_use_summary') {
       const ts = message as { summary: string };
       log(`Tool use summary: ${ts.summary.slice(0, 200)}`);
+      const normalized = normalizeStructuredOutput(ts.summary);
       writeOutput({
         status: 'success',
         phase: 'progress',
-        result: ts.summary,
+        ...normalized,
         newSessionId,
       });
     }
@@ -806,9 +856,10 @@ async function runQuery(
           error: errorText || `Agent error: ${message.subtype}`,
         });
       } else {
+        const normalized = normalizeStructuredOutput(textResult || null);
         writeOutput({
           status: 'success',
-          result: textResult || null,
+          ...normalized,
           newSessionId
         });
       }
@@ -837,7 +888,7 @@ async function runQuery(
         );
         writeOutput({
           status: 'success',
-          result: textResult,
+          ...normalizeStructuredOutput(textResult),
           newSessionId,
         });
         terminalResultObserved = true;
@@ -852,10 +903,11 @@ async function runQuery(
       if (stopReason !== 'end_turn' && textResult) {
         // Flush previous pending as a regular message (not progress heading)
         if (pendingProgressText) {
+          const normalized = normalizeStructuredOutput(pendingProgressText);
           writeOutput({
             status: 'success',
             phase: 'intermediate',
-            result: pendingProgressText,
+            ...normalized,
             newSessionId,
           });
         }

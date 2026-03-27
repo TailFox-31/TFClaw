@@ -171,7 +171,7 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        prompt: 'hello',
+        prompt: expect.stringContaining('hello'),
         sessionId: undefined,
         memoryBriefing: '## Shared Room Memory\n- remembered context',
       }),
@@ -199,7 +199,7 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        prompt: 'hello again',
+        prompt: expect.stringContaining('hello again'),
         sessionId: 'session-existing',
         memoryBriefing: undefined,
       }),
@@ -208,7 +208,7 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
-  it('injects suppress token instructions into the agent prompt', async () => {
+  it('injects structured silent-output instructions into the agent prompt', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
 
     await runAgentForGroup(makeDeps(), {
@@ -223,7 +223,7 @@ describe('runAgentForGroup room memory', () => {
       group,
       expect.objectContaining({
         prompt: expect.stringContaining(
-          'If you have no user-visible content to send for this turn, output exactly this token and nothing else: __TEST_SUPPRESS__',
+          'If you have no user-visible content to send for this turn, output exactly this JSON and nothing else: {"ejclaw":{"visibility":"silent"}}',
         ),
       }),
       expect.any(Function),
@@ -254,7 +254,7 @@ describe('runAgentForGroup room memory', () => {
       group,
       expect.objectContaining({
         prompt: expect.stringContaining(
-          'If you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the token.',
+          'If you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the JSON object.',
         ),
       }),
       expect.any(Function),

@@ -1424,6 +1424,65 @@ describe('createMessageRuntime', () => {
     expect(channel.setTyping).not.toHaveBeenCalledWith(chatJid, true);
   });
 
+  it('does not emit a visible message when the final output is structured silent output', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: null,
+      output: { visibility: 'silent' },
+      newSessionId: 'session-structured-silent-run',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-structured-silent-only',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+    expect(channel.setTyping).not.toHaveBeenCalledWith(chatJid, true);
+  });
+
   it('defers typing-on until the first visible output for suppress-capable turns', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');

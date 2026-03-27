@@ -36,6 +36,10 @@ interface ContainerInput {
 interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
+  output?: {
+    visibility: 'public' | 'silent';
+    text?: string;
+  };
   phase?: 'progress' | 'final';
   newSessionId?: string;
   error?: string;
@@ -66,6 +70,48 @@ function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
   console.log(OUTPUT_END_MARKER);
+}
+
+function normalizeStructuredOutput(result: string | null): {
+  result: string | null;
+  output?: ContainerOutput['output'];
+} {
+  if (typeof result !== 'string' || result.length === 0) {
+    return { result };
+  }
+
+  const trimmed = result.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      ejclaw?: { visibility?: unknown; text?: unknown };
+    };
+    const envelope = parsed?.ejclaw;
+    if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
+      if (envelope.visibility === 'silent') {
+        return {
+          result: null,
+          output: { visibility: 'silent' },
+        };
+      }
+      if (
+        envelope.visibility === 'public' &&
+        typeof envelope.text === 'string' &&
+        envelope.text.length > 0
+      ) {
+        return {
+          result: envelope.text,
+          output: { visibility: 'public', text: envelope.text },
+        };
+      }
+    }
+  } catch {
+    // fall through to legacy string output
+  }
+
+  return {
+    result,
+    output: { visibility: 'public', text: result },
+  };
 }
 
 function log(message: string): void {
@@ -206,7 +252,7 @@ async function executeAppServerTurn(
       writeOutput({
         status: 'success',
         phase: 'progress',
-        result: trimmed,
+        ...normalizeStructuredOutput(trimmed),
         newSessionId: threadId,
       });
     },
@@ -351,17 +397,19 @@ async function runAppServerSession(
     const { result, error } = await executeAppServerTurn(client, threadId, prompt);
 
     if (error) {
+      const normalized = normalizeStructuredOutput(result || null);
       log(`App-server turn error: ${error}`);
       writeOutput({
         status: 'error',
-        result: result || null,
+        ...normalized,
         newSessionId: threadId,
         error,
       });
     } else {
+      const normalized = normalizeStructuredOutput(result || null);
       writeOutput({
         status: 'success',
-        result: result || null,
+        ...normalized,
         ...(result ? { phase: 'final' as const } : {}),
         newSessionId: threadId,
       });

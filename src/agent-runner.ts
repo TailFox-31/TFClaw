@@ -20,7 +20,12 @@ export {
 } from './agent-runner-snapshot.js';
 import { logger } from './logger.js';
 import { OUTPUT_END_MARKER, OUTPUT_START_MARKER } from './agent-protocol.js';
-import { AgentOutputPhase, AgentType, RegisteredGroup } from './types.js';
+import {
+  AgentOutputPhase,
+  AgentType,
+  RegisteredGroup,
+  StructuredAgentOutput,
+} from './types.js';
 
 export interface AgentInput {
   prompt: string;
@@ -40,6 +45,7 @@ export interface AgentInput {
 export interface AgentOutput {
   status: 'success' | 'error';
   result: string | null;
+  output?: StructuredAgentOutput;
   phase?: AgentOutputPhase;
   agentId?: string;
   agentLabel?: string;

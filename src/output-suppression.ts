@@ -5,9 +5,12 @@ import {
   CODEX_REVIEW_SERVICE_ID,
   normalizeServiceId,
 } from './config.js';
+import type { StructuredAgentOutput } from './types.js';
 
 const ANY_SUPPRESS_TOKEN_PATTERN = /__EJ_SUPPRESS_[a-f0-9]{24,}(?:__)?/g;
 const EXACT_ANY_SUPPRESS_TOKEN_PATTERN = /^__EJ_SUPPRESS_[a-f0-9]{24,}(?:__)?$/;
+export const STRUCTURED_SILENT_OUTPUT_ENVELOPE =
+  '{"ejclaw":{"visibility":"silent"}}';
 
 export function createSuppressToken(): string {
   return `__EJ_SUPPRESS_${randomBytes(12).toString('hex')}__`;
@@ -28,9 +31,11 @@ export function classifySuppressTokenOutput(
   suppressToken: string | undefined,
 ): 'exact' | 'mixed' | 'none' {
   const trimmed = rawText.trim();
+  const structured = parseStructuredOutputEnvelope(trimmed);
   if (
     (suppressToken && trimmed === suppressToken) ||
-    EXACT_ANY_SUPPRESS_TOKEN_PATTERN.test(trimmed)
+    EXACT_ANY_SUPPRESS_TOKEN_PATTERN.test(trimmed) ||
+    structured?.visibility === 'silent'
   ) {
     return 'exact';
   }
@@ -41,25 +46,50 @@ export function classifySuppressTokenOutput(
   return ANY_SUPPRESS_TOKEN_PATTERN.test(rawText) ? 'mixed' : 'none';
 }
 
-export function buildSuppressTokenPrompt(
+export function parseStructuredOutputEnvelope(
+  rawText: string,
+): StructuredAgentOutput | null {
+  try {
+    const parsed = JSON.parse(rawText) as {
+      ejclaw?: { visibility?: unknown; text?: unknown };
+    };
+    const envelope = parsed?.ejclaw;
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
+      return null;
+    }
+    if (envelope.visibility === 'silent') {
+      return { visibility: 'silent' };
+    }
+    if (
+      envelope.visibility === 'public' &&
+      typeof envelope.text === 'string' &&
+      envelope.text.length > 0
+    ) {
+      return { visibility: 'public', text: envelope.text };
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+export function buildStructuredOutputPrompt(
   prompt: string,
-  suppressToken: string | undefined,
   options?: {
     reviewerMode?: boolean;
   },
 ): string {
-  if (!suppressToken) return prompt;
-
   const lines = [
     '[OUTPUT CONTROL]',
-    `If you have no user-visible content to send for this turn, output exactly this token and nothing else: ${suppressToken}`,
-    'Do not wrap the token in backticks or code fences.',
-    'Do not combine the token with any other text.',
+    `If you have no user-visible content to send for this turn, output exactly this JSON and nothing else: ${STRUCTURED_SILENT_OUTPUT_ENVELOPE}`,
+    'Do not wrap the JSON in backticks or code fences.',
+    'Do not combine the JSON with any other text.',
   ];
 
   if (options?.reviewerMode) {
     lines.push(
-      'If you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the token.',
+      'If you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the JSON object.',
     );
   }
 

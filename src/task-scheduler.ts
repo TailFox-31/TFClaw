@@ -1,6 +1,7 @@
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
+import { getAgentOutputText } from './agent-output.js';
 import { getErrorMessage } from './utils.js';
 
 import {
@@ -398,9 +399,10 @@ async function runTask(
             return;
           }
 
-          if (streamedOutput.result) {
-            attemptResult = streamedOutput.result;
-            await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          const outputText = getAgentOutputText(streamedOutput);
+          if (outputText) {
+            attemptResult = outputText;
+            await deps.sendMessage(task.chat_jid, outputText);
           }
 
           if (streamedOutput.status === 'error') {
@@ -412,8 +414,11 @@ async function runTask(
 
       if (output.status === 'error' && !attemptError) {
         attemptError = output.error || 'Unknown error';
-      } else if (output.result && !attemptResult) {
-        attemptResult = output.result;
+      } else {
+        const outputText = getAgentOutputText(output);
+        if (outputText && !attemptResult) {
+          attemptResult = outputText;
+        }
       }
 
       return {

@@ -1,4 +1,5 @@
 import { type AgentOutput } from './agent-runner.js';
+import { getAgentOutputText, isSilentAgentOutput } from './agent-output.js';
 import { logger } from './logger.js';
 import { classifySuppressTokenOutput } from './output-suppression.js';
 import { formatOutbound } from './router.js';
@@ -124,15 +125,13 @@ export class MessageTurnController {
       );
     }
 
-    const raw =
-      result.result === null || result.result === undefined
-        ? null
-        : typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
+    const raw = getAgentOutputText(result);
+    const silentOutput = isSilentAgentOutput(result);
     const suppressState =
       raw && this.options.suppressToken
         ? classifySuppressTokenOutput(raw, this.options.suppressToken)
+        : raw
+          ? classifySuppressTokenOutput(raw, undefined)
         : 'none';
     const text = raw && suppressState === 'none' ? formatOutbound(raw) : null;
 
@@ -311,7 +310,7 @@ export class MessageTurnController {
         await this.finalizeProgressMessage();
         await this.deliverFinalText(text);
       }
-    } else if (suppressState !== 'none') {
+    } else if (silentOutput || suppressState !== 'none') {
       await this.finalizeProgressMessage();
       this.latestProgressTextForFinal = null;
     } else if (raw) {
