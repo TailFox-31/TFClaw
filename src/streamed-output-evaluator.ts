@@ -117,10 +117,7 @@ export function evaluateStreamedOutput(
     }
   }
 
-  if (
-    countsAsFinalOutput &&
-    hasAgentOutputPayload(output)
-  ) {
+  if (countsAsFinalOutput && hasAgentOutputPayload(output)) {
     nextState.sawOutput = true;
   } else if (
     options.trackSuccessNullResult &&

@@ -1483,6 +1483,100 @@ describe('createMessageRuntime', () => {
     expect(channel.setTyping).not.toHaveBeenCalledWith(chatJid, true);
   });
 
+  it('promotes the last visible progress to a final message when the final output is structured silent', async () => {
+    vi.useFakeTimers();
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
+      },
+    ]);
+
+    vi.mocked(channel.sendAndTrack!).mockResolvedValueOnce('progress-1');
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '첫 번째 진행상황입니다.',
+          newSessionId: 'session-progress-structured-silent',
+        });
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '두 번째 진행상황입니다.',
+          newSessionId: 'session-progress-structured-silent',
+        });
+        await vi.runOnlyPendingTimersAsync();
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: null,
+          output: { visibility: 'silent' },
+          newSessionId: 'session-progress-structured-silent',
+        });
+
+        return {
+          status: 'success',
+          result: null,
+          output: { visibility: 'silent' },
+          newSessionId: 'session-progress-structured-silent',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    try {
+      const result = await runtime.processGroupMessages(chatJid, {
+        runId: 'run-progress-structured-silent',
+        reason: 'messages',
+      });
+
+      expect(result).toBe(true);
+      expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        chatJid,
+        '첫 번째 진행상황입니다.',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('defers typing-on until the first visible output for suppress-capable turns', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');

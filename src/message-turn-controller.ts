@@ -311,8 +311,13 @@ export class MessageTurnController {
         await this.deliverFinalText(text);
       }
     } else if (silentOutput || suppressState !== 'none') {
+      const shouldPromoteVisibleProgressToFinal =
+        this.visiblePhase === 'progress' &&
+        typeof this.latestProgressTextForFinal === 'string';
       await this.finalizeProgressMessage();
-      this.latestProgressTextForFinal = null;
+      if (!shouldPromoteVisibleProgressToFinal) {
+        this.latestProgressTextForFinal = null;
+      }
     } else if (raw) {
       logger.info(
         {

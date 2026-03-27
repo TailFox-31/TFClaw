@@ -86,9 +86,7 @@ describe('runClaudeRotationLoop', () => {
 
   it('uses structured public output text as the next rotation message', async () => {
     vi.mocked(getTokenCount).mockReturnValue(2);
-    vi.mocked(rotateToken)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false);
+    vi.mocked(rotateToken).mockReturnValueOnce(true).mockReturnValueOnce(false);
 
     let attempts = 0;
     const outcome = await runClaudeRotationLoop(
