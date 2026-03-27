@@ -1480,7 +1480,8 @@ describe('createMessageRuntime', () => {
     expect(result).toBe(true);
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(channel.sendAndTrack).not.toHaveBeenCalled();
-    expect(channel.setTyping).not.toHaveBeenCalledWith(chatJid, true);
+    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
+    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
   });
 
   it('promotes the last visible progress to a final message when the final output is structured silent', async () => {
@@ -1577,7 +1578,7 @@ describe('createMessageRuntime', () => {
     }
   });
 
-  it('defers typing-on until the first visible output for suppress-capable turns', async () => {
+  it('starts typing immediately for suppress-capable turns with visible output', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
     const channel = makeChannel(chatJid);

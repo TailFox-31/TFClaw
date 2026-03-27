@@ -30,7 +30,6 @@ interface MessageTurnControllerOptions {
   idleTimeout: number;
   failureFinalText: string;
   isClaudeCodeAgent: boolean;
-  deferTypingUntilVisible?: boolean;
   suppressToken?: string;
   clearSession: () => void;
   requestClose: (reason: string) => void;
@@ -83,9 +82,6 @@ export class MessageTurnController {
 
   async start(): Promise<void> {
     this.resetIdleTimer();
-    if (this.options.deferTypingUntilVisible) {
-      return;
-    }
     await this.activateTyping('turn:start');
   }
 

@@ -279,7 +279,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       isClaudeService() || isReviewService()
         ? createSuppressToken()
         : undefined;
-    const deferTypingUntilVisible = Boolean(suppressToken) && isClaudeService();
 
     const turnController = new MessageTurnController({
       chatJid,
@@ -289,7 +288,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       idleTimeout: deps.idleTimeout,
       failureFinalText: FAILURE_FINAL_TEXT,
       isClaudeCodeAgent,
-      deferTypingUntilVisible,
       suppressToken,
       clearSession: () => deps.clearSession(group.folder),
       requestClose: (reason) =>
