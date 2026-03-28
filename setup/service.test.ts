@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { buildStackRestartSystemdUnit } from './service.js';
 import { getServiceDefs } from './service-defs.js';
 
 /**
@@ -201,5 +202,19 @@ describe('service definitions', () => {
       'ejclaw-codex',
       'ejclaw-review',
     ]);
+  });
+
+  it('generates a oneshot stack restart unit', () => {
+    const unit = buildStackRestartSystemdUnit(
+      '/srv/ejclaw',
+      '/usr/bin/node',
+      '/home/user',
+    );
+
+    expect(unit).toContain('Description=EJClaw Stack Restart Orchestrator');
+    expect(unit).toContain('Type=oneshot');
+    expect(unit).toContain(
+      'ExecStart=/bin/bash /srv/ejclaw/scripts/restart-ejclaw-stack.sh --direct',
+    );
   });
 });

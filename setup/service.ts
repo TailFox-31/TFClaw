@@ -19,6 +19,7 @@ import {
   getServiceManager,
   isRoot,
 } from './platform.js';
+import { STACK_RESTART_UNIT_NAME } from './restart-stack.js';
 import { getServiceDefs, type ServiceDef } from './service-defs.js';
 import { emitStatus } from './status.js';
 
@@ -256,6 +257,7 @@ function setupSystemdAll(
   for (const def of serviceDefs) {
     setupSystemdUnit(def, projectRoot, nodePath, homeDir, runningAsRoot);
   }
+  setupSystemdStackRestartUnit(projectRoot, nodePath, homeDir, runningAsRoot);
 
   // Reload daemon once after all units are written
   try {
@@ -364,6 +366,50 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
 
   fs.writeFileSync(unitPath, unit);
   logger.info({ unitPath, service: def.name }, 'Wrote systemd unit');
+}
+
+export function buildStackRestartSystemdUnit(
+  projectRoot: string,
+  nodePath: string,
+  homeDir: string,
+): string {
+  const envLines = [
+    `Environment=HOME=${homeDir}`,
+    `Environment=PATH=${path.dirname(nodePath)}:/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:${homeDir}/.npm-global/bin`,
+  ];
+
+  return `[Unit]
+Description=EJClaw Stack Restart Orchestrator
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=${projectRoot}
+${envLines.join('\n')}
+ExecStart=/bin/bash ${projectRoot}/scripts/restart-ejclaw-stack.sh --direct
+`;
+}
+
+function setupSystemdStackRestartUnit(
+  projectRoot: string,
+  nodePath: string,
+  homeDir: string,
+  runningAsRoot: boolean,
+): void {
+  const unitPath = getUnitPath(
+    STACK_RESTART_UNIT_NAME.replace(/\.service$/, ''),
+    homeDir,
+    runningAsRoot,
+  );
+  fs.mkdirSync(path.dirname(unitPath), { recursive: true });
+  fs.writeFileSync(
+    unitPath,
+    buildStackRestartSystemdUnit(projectRoot, nodePath, homeDir),
+  );
+  logger.info(
+    { unitPath, service: STACK_RESTART_UNIT_NAME },
+    'Wrote stack restart systemd unit',
+  );
 }
 
 /* ------------------------------------------------------------------ */

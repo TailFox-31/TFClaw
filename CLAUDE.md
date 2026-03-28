@@ -51,6 +51,9 @@ systemctl --user status ejclaw                    # Check status
 journalctl --user -u ejclaw -f                    # Follow logs
 ```
 
+`npm run restart:stack` is an external deploy/operator entrypoint. Do not invoke it from inside a managed EJClaw service process.
+If you pulled this slice onto an existing install, run `npm run setup -- --step service` once so `ejclaw-stack-restart.service` is installed.
+
 Deploy to server: `scp dist/*.js clone-ej@100.64.185.108:~/EJClaw/dist/`
 
 ## Service Stack Architecture

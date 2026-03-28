@@ -117,6 +117,9 @@ journalctl --user -u ejclaw-codex -f
 journalctl --user -u ejclaw-review -f
 ```
 
+Use `npm run restart:stack` from an external shell or deploy wrapper, not from inside one of the managed EJClaw services.
+On existing installs, run `npm run setup -- --step service` once after pulling this slice so the `ejclaw-stack-restart.service` unit is installed.
+
 ## Development
 
 ```bash
