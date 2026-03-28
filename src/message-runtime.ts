@@ -41,6 +41,8 @@ import {
 import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
 import { createSuppressToken } from './output-suppression.js';
+import { markRoomReviewReady } from './paired-execution-context.js';
+import { buildRoomRoleContext } from './room-role-context.js';
 import {
   extractSessionCommand,
   handleSessionCommand,
@@ -50,7 +52,10 @@ import {
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { resolveGroupIpcPath } from './group-folder.js';
-import { shouldServiceProcessChat } from './service-routing.js';
+import {
+  getEffectiveChannelLease,
+  shouldServiceProcessChat,
+} from './service-routing.js';
 
 /**
  * Check if a message is a duplicate of the last bot final message in a paired room.
@@ -556,6 +561,27 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 (msg.is_from_me ||
                   isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
             );
+          },
+          markReviewReady: async () => {
+            const lease = getEffectiveChannelLease(chatJid);
+            const roomRoleContext = buildRoomRoleContext(
+              lease,
+              lease.owner_service_id,
+            );
+            const result = markRoomReviewReady({
+              group,
+              chatJid,
+              roomRoleContext,
+            });
+            if (!result) {
+              return null;
+            }
+            return [
+              'Review snapshot updated.',
+              `- Task: ${result.task.id}`,
+              `- Owner workspace: ${result.ownerWorkspace.workspace_dir}`,
+              `- Reviewer snapshot: ${result.reviewerWorkspace.workspace_dir}`,
+            ].join('\n');
           },
         },
       });

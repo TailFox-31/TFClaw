@@ -23,6 +23,10 @@ import {
   prependRoomRoleHeader,
   type RoomRoleContext,
 } from './room-role-context.js';
+import {
+  buildReviewerGitGuardEnv,
+  isReviewerRuntime,
+} from './reviewer-runtime.js';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -358,9 +362,13 @@ async function runAppServerSession(
   containerInput: ContainerInput,
   prompt: string,
 ): Promise<void> {
+  const reviewerRuntime =
+    process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
+    isReviewerRuntime(containerInput.roomRoleContext);
+  const clientEnv = buildReviewerGitGuardEnv(process.env, reviewerRuntime);
   const client = new CodexAppServerClient({
     cwd: EFFECTIVE_CWD,
-    env: process.env,
+    env: clientEnv,
     log,
   });
 

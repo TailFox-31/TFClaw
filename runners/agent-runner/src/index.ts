@@ -25,6 +25,11 @@ import {
   prependRoomRoleHeader,
   type RoomRoleContext,
 } from './room-role-context.js';
+import {
+  buildReviewerGitGuardEnv,
+  isReviewerMutatingShellCommand,
+  isReviewerRuntime,
+} from './reviewer-runtime.js';
 
 interface ContainerInput {
   prompt: string;
@@ -466,6 +471,25 @@ function createSanitizeBashHook(): HookCallback {
   };
 }
 
+function createReviewerBashGuardHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const command = (preInput.tool_input as { command?: string })?.command;
+    if (!command || !isReviewerMutatingShellCommand(command)) {
+      return {};
+    }
+
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason:
+          'EJClaw reviewer runtime blocks mutating shell commands in paired review mode.',
+      },
+    };
+  };
+}
+
 function sanitizeFilename(summary: string): string {
   return summary
     .toLowerCase()
@@ -595,6 +619,7 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
+  reviewerRuntime: boolean,
 ): Promise<{
   newSessionId?: string;
   closedDuringQuery: boolean;
@@ -658,6 +683,28 @@ async function runQuery(
   if (model) log(`Using model: ${model}`);
   if (thinking) log(`Thinking config: ${JSON.stringify(thinking)}`);
   if (effort) log(`Effort: ${effort}`);
+  if (reviewerRuntime) log('Reviewer runtime restrictions enabled');
+
+  const allowedTools = reviewerRuntime
+    ? [
+        'Bash',
+        'Read', 'Glob', 'Grep',
+        'WebSearch', 'WebFetch',
+        'Task', 'TaskOutput', 'TaskStop',
+        'TeamCreate', 'TeamDelete', 'SendMessage',
+        'TodoWrite', 'ToolSearch', 'Skill',
+        'mcp__ejclaw__*',
+      ]
+    : [
+        'Bash',
+        'Read', 'Write', 'Edit', 'Glob', 'Grep',
+        'WebSearch', 'WebFetch',
+        'Task', 'TaskOutput', 'TaskStop',
+        'TeamCreate', 'TeamDelete', 'SendMessage',
+        'TodoWrite', 'ToolSearch', 'Skill',
+        'NotebookEdit',
+        'mcp__ejclaw__*'
+      ];
 
   for await (const message of query({
     prompt: stream,
@@ -668,16 +715,7 @@ async function runQuery(
       effort,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
-      allowedTools: [
-        'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
-        'NotebookEdit',
-        'mcp__ejclaw__*'
-      ],
+      allowedTools,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
@@ -715,7 +753,14 @@ async function runQuery(
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
+        PreToolUse: [
+          {
+            matcher: 'Bash',
+            hooks: reviewerRuntime
+              ? [createReviewerBashGuardHook(), createSanitizeBashHook()]
+              : [createSanitizeBashHook()],
+          },
+        ],
       },
       agentProgressSummaries: true,
     }
@@ -954,6 +999,10 @@ async function main(): Promise<void> {
   for (const [key, value] of Object.entries(containerInput.secrets || {})) {
     sdkEnv[key] = value;
   }
+  const reviewerRuntime =
+    process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
+    isReviewerRuntime(containerInput.roomRoleContext);
+  const guardedSdkEnv = buildReviewerGitGuardEnv(sdkEnv, reviewerRuntime);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
@@ -1001,7 +1050,7 @@ async function main(): Promise<void> {
           resume: sessionId,
           systemPrompt: undefined,
           allowedTools: [],
-          env: sdkEnv,
+          env: guardedSdkEnv,
           permissionMode: 'bypassPermissions' as const,
           allowDangerouslySkipPermissions: true,
           settingSources: ['project', 'user'] as const,
@@ -1088,7 +1137,8 @@ async function main(): Promise<void> {
       sessionId,
       mcpServerPath,
       containerInput,
-      sdkEnv,
+      guardedSdkEnv,
+      reviewerRuntime,
     );
     if (queryResult.newSessionId) {
       sessionId = queryResult.newSessionId;

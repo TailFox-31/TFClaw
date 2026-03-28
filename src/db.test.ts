@@ -6,6 +6,10 @@ import {
   _initTestDatabase,
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
+  createPairedApproval,
+  createPairedArtifact,
+  createPairedExecution,
+  createPairedTask,
   createTask,
   createServiceHandoff,
   createProducedWorkItem,
@@ -22,10 +26,17 @@ import {
   getRegisteredAgentTypesForJid,
   getMessagesSince,
   getNewMessages,
+  getPairedExecutionById,
+  getPairedProject,
+  getPairedTaskById,
+  getPairedWorkspace,
   getRouterStateForService,
   isPairedRoomJid,
   getSession,
   getTaskById,
+  listPairedApprovalsForTask,
+  listPairedArtifactsForTask,
+  listPairedWorkspacesForTask,
   markWorkItemDelivered,
   markWorkItemDeliveryRetry,
   setSession,
@@ -33,6 +44,10 @@ import {
   setRouterStateForService,
   storeChatMetadata,
   storeMessage,
+  updatePairedExecution,
+  updatePairedTask,
+  upsertPairedProject,
+  upsertPairedWorkspace,
   updateTask,
 } from './db.js';
 import {
@@ -526,6 +541,156 @@ Check the run.
       'task-claude',
     ]);
     expect(getDueTasks('codex').map((task) => task.id)).toEqual(['task-codex']);
+  });
+});
+
+describe('paired task state', () => {
+  it('stores project, task, execution, workspace, approval, and artifact state', () => {
+    upsertPairedProject({
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      canonical_work_dir: '/tmp/paired-room',
+      workspace_topology: 'shadow-snapshot',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    createPairedTask({
+      id: 'paired-task-1',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: 'wire up workspaces',
+      source_ref: 'HEAD',
+      review_requested_at: null,
+      status: 'draft',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    createPairedExecution({
+      id: 'paired-exec-1',
+      task_id: 'paired-task-1',
+      service_id: 'codex-main',
+      role: 'owner',
+      workspace_id: null,
+      status: 'pending',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: null,
+      completed_at: null,
+    });
+
+    upsertPairedWorkspace({
+      id: 'paired-task-1:owner',
+      task_id: 'paired-task-1',
+      role: 'owner',
+      workspace_dir: '/tmp/paired-room/owner',
+      snapshot_source_dir: null,
+      status: 'ready',
+      snapshot_refreshed_at: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    const approvalId = createPairedApproval({
+      task_id: 'paired-task-1',
+      service_id: 'codex-review',
+      role: 'reviewer',
+      status: 'pending',
+      note: 'needs snapshot',
+      created_at: '2026-03-28T00:00:01.000Z',
+    });
+
+    const artifactId = createPairedArtifact({
+      task_id: 'paired-task-1',
+      execution_id: 'paired-exec-1',
+      service_id: 'codex-review',
+      artifact_type: 'report',
+      title: 'review notes',
+      content: 'looks fine',
+      file_path: null,
+      created_at: '2026-03-28T00:00:02.000Z',
+    });
+
+    expect(getPairedProject('dc:paired')?.canonical_work_dir).toBe(
+      '/tmp/paired-room',
+    );
+    expect(getPairedTaskById('paired-task-1')?.status).toBe('draft');
+    expect(getPairedExecutionById('paired-exec-1')?.status).toBe('pending');
+    expect(getPairedWorkspace('paired-task-1', 'owner')?.workspace_dir).toBe(
+      '/tmp/paired-room/owner',
+    );
+    expect(listPairedApprovalsForTask('paired-task-1')[0]?.id).toBe(approvalId);
+    expect(listPairedArtifactsForTask('paired-task-1')[0]?.id).toBe(artifactId);
+  });
+
+  it('updates task and execution state and keeps one workspace per role', () => {
+    createPairedTask({
+      id: 'paired-task-2',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: null,
+      review_requested_at: null,
+      status: 'draft',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    createPairedExecution({
+      id: 'paired-exec-2',
+      task_id: 'paired-task-2',
+      service_id: 'codex-review',
+      role: 'reviewer',
+      workspace_id: null,
+      status: 'pending',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: null,
+      completed_at: null,
+    });
+
+    updatePairedTask('paired-task-2', {
+      status: 'review_ready',
+      review_requested_at: '2026-03-28T00:10:00.000Z',
+      updated_at: '2026-03-28T00:10:00.000Z',
+    });
+    updatePairedExecution('paired-exec-2', {
+      status: 'running',
+      started_at: '2026-03-28T00:11:00.000Z',
+    });
+
+    upsertPairedWorkspace({
+      id: 'paired-task-2:reviewer',
+      task_id: 'paired-task-2',
+      role: 'reviewer',
+      workspace_dir: '/tmp/reviewer-v1',
+      snapshot_source_dir: '/tmp/owner',
+      status: 'ready',
+      snapshot_refreshed_at: '2026-03-28T00:10:00.000Z',
+      created_at: '2026-03-28T00:10:00.000Z',
+      updated_at: '2026-03-28T00:10:00.000Z',
+    });
+    upsertPairedWorkspace({
+      id: 'paired-task-2:reviewer',
+      task_id: 'paired-task-2',
+      role: 'reviewer',
+      workspace_dir: '/tmp/reviewer-v2',
+      snapshot_source_dir: '/tmp/owner',
+      status: 'ready',
+      snapshot_refreshed_at: '2026-03-28T00:12:00.000Z',
+      created_at: '2026-03-28T00:10:00.000Z',
+      updated_at: '2026-03-28T00:12:00.000Z',
+    });
+
+    expect(getPairedTaskById('paired-task-2')?.status).toBe('review_ready');
+    expect(getPairedExecutionById('paired-exec-2')?.status).toBe('running');
+    expect(
+      listPairedWorkspacesForTask('paired-task-2').map((workspace) => workspace.workspace_dir),
+    ).toEqual(['/tmp/reviewer-v2']);
   });
 });
 

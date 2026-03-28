@@ -10,6 +10,8 @@ const SESSION_COMMAND_CONTROL_PATTERNS = [
   /^Failed to process messages before \/compact\. Try again\.$/,
   /^\/compact failed\. The session is unchanged\.$/,
   /^Conversation compacted\.$/,
+  /^Review snapshot updated\.$/,
+  /^Review-ready is unavailable for this room\./,
 ];
 
 /**
@@ -24,6 +26,7 @@ export function extractSessionCommand(
   text = text.replace(triggerPattern, '').trim();
   if (text === '/compact') return '/compact';
   if (text === '/clear') return '/clear';
+  if (text === '/review-ready') return '/review-ready';
   return null;
 }
 
@@ -68,6 +71,7 @@ export interface SessionCommandDeps {
   isAdminSender: (msg: NewMessage) => boolean;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
+  markReviewReady: () => Promise<string | null>;
 }
 
 function resultToText(result: string | object | null | undefined): string {
@@ -145,6 +149,16 @@ export async function handleSessionCommand(opts: {
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       'Current session cleared. The next message will start a new conversation.',
+    );
+    return { handled: true, success: true };
+  }
+
+  if (command === '/review-ready') {
+    const result = await deps.markReviewReady();
+    deps.advanceCursor(cmdMsg.timestamp);
+    await deps.sendMessage(
+      result ??
+        'Review-ready is unavailable for this room. Paired workspaces require a configured project workDir.',
     );
     return { handled: true, success: true };
   }

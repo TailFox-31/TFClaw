@@ -12,6 +12,10 @@ import { createServiceHandoff, getAllTasks } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
+import {
+  completePairedExecutionContext,
+  preparePairedExecutionContext,
+} from './paired-execution-context.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import {
   classifyRotationTrigger,
@@ -126,9 +130,17 @@ export async function runAgentForGroup(
     currentLease,
     SERVICE_SESSION_SCOPE,
   );
+  const pairedExecutionContext = preparePairedExecutionContext({
+    group,
+    chatJid,
+    runId,
+    roomRoleContext,
+  });
   const effectivePrompt = buildStructuredOutputPrompt(prompt, {
     reviewerMode,
   });
+  let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
+  let pairedExecutionSummary: string | null = null;
 
   const shouldHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -188,6 +200,36 @@ export async function runAgentForGroup(
     roomRoleContext,
   };
 
+  if (pairedExecutionContext?.blockMessage) {
+    pairedExecutionSummary = pairedExecutionContext.blockMessage.slice(0, 500);
+    logger.warn(
+      {
+        chatJid,
+        group: group.name,
+        groupFolder: group.folder,
+        runId,
+        serviceId: roomRoleContext?.serviceId,
+        role: roomRoleContext?.role,
+      },
+      'Blocked reviewer execution before review-ready snapshot was available',
+    );
+    await onOutput?.({
+      status: 'success',
+      result: null,
+      output: {
+        visibility: 'public',
+        text: pairedExecutionContext.blockMessage,
+      },
+      phase: 'final',
+    });
+    completePairedExecutionContext({
+      executionId: pairedExecutionContext.execution.id,
+      status: pairedExecutionStatus,
+      summary: pairedExecutionSummary,
+    });
+    return 'success';
+  }
+
   const runAttempt = async (
     provider: string,
   ): Promise<{
@@ -237,6 +279,11 @@ export async function runAgentForGroup(
           streamedState = evaluation.state;
 
           const outputText = getAgentOutputText(output);
+          if (typeof outputText === 'string' && outputText.length > 0) {
+            pairedExecutionSummary = outputText.slice(0, 500);
+          } else if (typeof output.error === 'string' && output.error.length > 0) {
+            pairedExecutionSummary = output.error.slice(0, 500);
+          }
           if (
             evaluation.newTrigger &&
             typeof outputText === 'string' &&
@@ -345,6 +392,7 @@ export async function runAgentForGroup(
         (proc, processName, ipcDir) =>
           deps.queue.registerProcess(chatJid, proc, processName, ipcDir),
         wrappedOnOutput,
+        pairedExecutionContext?.envOverrides,
       );
 
       if (provider === 'claude' && output.newSessionId) {
@@ -545,7 +593,8 @@ export async function runAgentForGroup(
 
   const provider = 'claude';
 
-  let primaryAttempt = await runAttempt(provider);
+  try {
+    let primaryAttempt = await runAttempt(provider);
 
   const isRetryableClaudeSessionFailure = (
     attempt: Awaited<ReturnType<typeof runAttempt>>,
@@ -605,6 +654,9 @@ export async function runAgentForGroup(
         if (result === 'error') {
           return maybeHandoffAfterError(trigger.reason, primaryAttempt);
         }
+        if (result === 'success') {
+          pairedExecutionStatus = 'succeeded';
+        }
         return result;
       }
     }
@@ -613,7 +665,14 @@ export async function runAgentForGroup(
       const errMsg = getErrorMessage(primaryAttempt.error);
       const trigger = detectCodexRotationTrigger(errMsg);
       if (trigger.shouldRotate && getCodexAccountCount() > 1) {
-        return retryCodexWithRotation({ reason: trigger.reason }, errMsg);
+        const result = await retryCodexWithRotation(
+          { reason: trigger.reason },
+          errMsg,
+        );
+        if (result === 'success') {
+          pairedExecutionStatus = 'succeeded';
+        }
+        return result;
       }
     }
 
@@ -644,6 +703,17 @@ export async function runAgentForGroup(
       'Agent produced no output object',
     );
     return 'error';
+  }
+
+  if (!pairedExecutionSummary) {
+    const finalOutputText = getAgentOutputText(output);
+    pairedExecutionSummary =
+      (typeof finalOutputText === 'string' && finalOutputText.length > 0
+        ? finalOutputText.slice(0, 500)
+        : null) ??
+      (typeof output.error === 'string' && output.error.length > 0
+        ? output.error.slice(0, 500)
+        : null);
   }
 
   if (
@@ -697,6 +767,9 @@ export async function runAgentForGroup(
         if (result === 'error') {
           return maybeHandoffAfterError(trigger.reason, primaryAttempt);
         }
+        if (result === 'success') {
+          pairedExecutionStatus = 'succeeded';
+        }
         return result;
       }
     }
@@ -704,10 +777,14 @@ export async function runAgentForGroup(
     if (!isClaudeCodeAgent && getCodexAccountCount() > 1) {
       const trigger = detectCodexRotationTrigger(output.error);
       if (trigger.shouldRotate) {
-        return retryCodexWithRotation(
+        const result = await retryCodexWithRotation(
           { reason: trigger.reason },
           output.error ?? undefined,
         );
+        if (result === 'success') {
+          pairedExecutionStatus = 'succeeded';
+        }
+        return result;
       }
     }
 
@@ -729,13 +806,17 @@ export async function runAgentForGroup(
     primaryAttempt.streamedTriggerReason &&
     getCodexAccountCount() > 1
   ) {
-    return retryCodexWithRotation(
+    const result = await retryCodexWithRotation(
       {
         reason: primaryAttempt.streamedTriggerReason
           .reason as CodexRotationReason,
       },
       output.error ?? output.result ?? undefined,
     );
+    if (result === 'success') {
+      pairedExecutionStatus = 'succeeded';
+    }
+    return result;
   }
 
   // Unresolved streamed trigger — rotation was unavailable or output was
@@ -771,5 +852,15 @@ export async function runAgentForGroup(
     return 'error';
   }
 
-  return 'success';
+    pairedExecutionStatus = 'succeeded';
+    return 'success';
+  } finally {
+    if (pairedExecutionContext) {
+      completePairedExecutionContext({
+        executionId: pairedExecutionContext.execution.id,
+        status: pairedExecutionStatus,
+        summary: pairedExecutionSummary,
+      });
+    }
+  }
 }

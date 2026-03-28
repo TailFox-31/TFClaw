@@ -25,6 +25,12 @@ import { getTaskRuntimeTaskId } from './task-watch-status.js';
 import {
   NewMessage,
   AgentType,
+  PairedApproval,
+  PairedArtifact,
+  PairedExecution,
+  PairedProject,
+  PairedTask,
+  PairedWorkspace,
   RegisteredGroup,
   ScheduledTask,
   TaskRunLog,
@@ -230,6 +236,100 @@ function createSchema(database: Database.Database): void {
       PRIMARY KEY (jid, agent_type),
       UNIQUE (folder, agent_type)
     );
+    CREATE TABLE IF NOT EXISTS paired_projects (
+      chat_jid TEXT PRIMARY KEY,
+      group_folder TEXT NOT NULL,
+      canonical_work_dir TEXT NOT NULL,
+      workspace_topology TEXT NOT NULL DEFAULT 'shadow-snapshot',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (workspace_topology IN ('shadow-snapshot', 'reviewer-cow'))
+    );
+    CREATE TABLE IF NOT EXISTS paired_tasks (
+      id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      owner_service_id TEXT NOT NULL,
+      reviewer_service_id TEXT NOT NULL,
+      title TEXT,
+      source_ref TEXT,
+      review_requested_at TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (
+        status IN (
+          'draft',
+          'review_ready',
+          'in_review',
+          'changes_requested',
+          'merge_ready',
+          'merged',
+          'discarded',
+          'failed'
+        )
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
+      ON paired_tasks(chat_jid, status, updated_at);
+    CREATE TABLE IF NOT EXISTS paired_executions (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      service_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      workspace_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      summary TEXT,
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      completed_at TEXT,
+      CHECK (role IN ('owner', 'reviewer')),
+      CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_executions_task
+      ON paired_executions(task_id, created_at);
+    CREATE TABLE IF NOT EXISTS paired_workspaces (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      workspace_dir TEXT NOT NULL,
+      snapshot_source_dir TEXT,
+      status TEXT NOT NULL DEFAULT 'provisioning',
+      snapshot_refreshed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (role IN ('owner', 'reviewer')),
+      CHECK (status IN ('provisioning', 'ready', 'stale', 'failed', 'archived'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_paired_workspaces_task_role
+      ON paired_workspaces(task_id, role);
+    CREATE TABLE IF NOT EXISTS paired_approvals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      service_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      note TEXT,
+      created_at TEXT NOT NULL,
+      CHECK (role IN ('owner', 'reviewer')),
+      CHECK (status IN ('pending', 'approved', 'rejected'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_approvals_task
+      ON paired_approvals(task_id, created_at);
+    CREATE TABLE IF NOT EXISTS paired_artifacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      execution_id TEXT,
+      service_id TEXT NOT NULL,
+      artifact_type TEXT NOT NULL,
+      title TEXT,
+      content TEXT,
+      file_path TEXT,
+      created_at TEXT NOT NULL,
+      CHECK (artifact_type IN ('comment', 'report', 'patch'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_artifacts_task
+      ON paired_artifacts(task_id, created_at);
     CREATE TABLE IF NOT EXISTS channel_owner (
       chat_jid TEXT PRIMARY KEY,
       owner_service_id TEXT NOT NULL,
@@ -1636,6 +1736,347 @@ export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
 export function isPairedRoomJid(jid: string): boolean {
   const types = getRegisteredAgentTypesForJid(jid);
   return types.includes('claude-code') && types.includes('codex');
+}
+
+// --- Paired task/project/workspace state ---
+
+export function upsertPairedProject(project: PairedProject): void {
+  db.prepare(
+    `
+      INSERT INTO paired_projects (
+        chat_jid,
+        group_folder,
+        canonical_work_dir,
+        workspace_topology,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(chat_jid) DO UPDATE SET
+        group_folder = excluded.group_folder,
+        canonical_work_dir = excluded.canonical_work_dir,
+        workspace_topology = excluded.workspace_topology,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    project.chat_jid,
+    project.group_folder,
+    project.canonical_work_dir,
+    project.workspace_topology,
+    project.created_at,
+    project.updated_at,
+  );
+}
+
+export function getPairedProject(chatJid: string): PairedProject | undefined {
+  return db
+    .prepare('SELECT * FROM paired_projects WHERE chat_jid = ?')
+    .get(chatJid) as PairedProject | undefined;
+}
+
+export function createPairedTask(task: PairedTask): void {
+  db.prepare(
+    `
+      INSERT INTO paired_tasks (
+        id,
+        chat_jid,
+        group_folder,
+        owner_service_id,
+        reviewer_service_id,
+        title,
+        source_ref,
+        review_requested_at,
+        status,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    task.id,
+    task.chat_jid,
+    task.group_folder,
+    task.owner_service_id,
+    task.reviewer_service_id,
+    task.title,
+    task.source_ref,
+    task.review_requested_at,
+    task.status,
+    task.created_at,
+    task.updated_at,
+  );
+}
+
+export function getPairedTaskById(id: string): PairedTask | undefined {
+  return db
+    .prepare('SELECT * FROM paired_tasks WHERE id = ?')
+    .get(id) as PairedTask | undefined;
+}
+
+export function getLatestOpenPairedTaskForChat(
+  chatJid: string,
+): PairedTask | undefined {
+  return db
+    .prepare(
+      `
+        SELECT *
+          FROM paired_tasks
+         WHERE chat_jid = ?
+           AND status NOT IN ('merged', 'discarded', 'failed')
+         ORDER BY updated_at DESC
+         LIMIT 1
+      `,
+    )
+    .get(chatJid) as PairedTask | undefined;
+}
+
+export function updatePairedTask(
+  id: string,
+  updates: Partial<
+    Pick<
+      PairedTask,
+      'title' | 'source_ref' | 'review_requested_at' | 'status' | 'updated_at'
+    >
+  >,
+): void {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (updates.title !== undefined) {
+    fields.push('title = ?');
+    values.push(updates.title);
+  }
+  if (updates.source_ref !== undefined) {
+    fields.push('source_ref = ?');
+    values.push(updates.source_ref);
+  }
+  if (updates.review_requested_at !== undefined) {
+    fields.push('review_requested_at = ?');
+    values.push(updates.review_requested_at);
+  }
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.updated_at !== undefined) {
+    fields.push('updated_at = ?');
+    values.push(updates.updated_at);
+  }
+
+  if (fields.length === 0) return;
+
+  values.push(id);
+  db.prepare(`UPDATE paired_tasks SET ${fields.join(', ')} WHERE id = ?`).run(
+    ...values,
+  );
+}
+
+export function createPairedExecution(execution: PairedExecution): void {
+  db.prepare(
+    `
+      INSERT INTO paired_executions (
+        id,
+        task_id,
+        service_id,
+        role,
+        workspace_id,
+        status,
+        summary,
+        created_at,
+        started_at,
+        completed_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  ).run(
+    execution.id,
+    execution.task_id,
+    execution.service_id,
+    execution.role,
+    execution.workspace_id,
+    execution.status,
+    execution.summary,
+    execution.created_at,
+    execution.started_at,
+    execution.completed_at,
+  );
+}
+
+export function getPairedExecutionById(
+  id: string,
+): PairedExecution | undefined {
+  return db
+    .prepare('SELECT * FROM paired_executions WHERE id = ?')
+    .get(id) as PairedExecution | undefined;
+}
+
+export function updatePairedExecution(
+  id: string,
+  updates: Partial<
+    Pick<
+      PairedExecution,
+      'workspace_id' | 'status' | 'summary' | 'started_at' | 'completed_at'
+    >
+  >,
+): void {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (updates.workspace_id !== undefined) {
+    fields.push('workspace_id = ?');
+    values.push(updates.workspace_id);
+  }
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.summary !== undefined) {
+    fields.push('summary = ?');
+    values.push(updates.summary);
+  }
+  if (updates.started_at !== undefined) {
+    fields.push('started_at = ?');
+    values.push(updates.started_at);
+  }
+  if (updates.completed_at !== undefined) {
+    fields.push('completed_at = ?');
+    values.push(updates.completed_at);
+  }
+
+  if (fields.length === 0) return;
+
+  values.push(id);
+  db.prepare(
+    `UPDATE paired_executions SET ${fields.join(', ')} WHERE id = ?`,
+  ).run(...values);
+}
+
+export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
+  db.prepare(
+    `
+      INSERT INTO paired_workspaces (
+        id,
+        task_id,
+        role,
+        workspace_dir,
+        snapshot_source_dir,
+        status,
+        snapshot_refreshed_at,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        workspace_dir = excluded.workspace_dir,
+        snapshot_source_dir = excluded.snapshot_source_dir,
+        status = excluded.status,
+        snapshot_refreshed_at = excluded.snapshot_refreshed_at,
+        updated_at = excluded.updated_at
+    `,
+  ).run(
+    workspace.id,
+    workspace.task_id,
+    workspace.role,
+    workspace.workspace_dir,
+    workspace.snapshot_source_dir,
+    workspace.status,
+    workspace.snapshot_refreshed_at,
+    workspace.created_at,
+    workspace.updated_at,
+  );
+}
+
+export function getPairedWorkspace(
+  taskId: string,
+  role: PairedWorkspace['role'],
+): PairedWorkspace | undefined {
+  return db
+    .prepare('SELECT * FROM paired_workspaces WHERE task_id = ? AND role = ?')
+    .get(taskId, role) as PairedWorkspace | undefined;
+}
+
+export function listPairedWorkspacesForTask(taskId: string): PairedWorkspace[] {
+  return db
+    .prepare(
+      'SELECT * FROM paired_workspaces WHERE task_id = ? ORDER BY created_at',
+    )
+    .all(taskId) as PairedWorkspace[];
+}
+
+export function createPairedApproval(
+  approval: Omit<PairedApproval, 'id'>,
+): number {
+  const result = db
+    .prepare(
+      `
+        INSERT INTO paired_approvals (
+          task_id,
+          service_id,
+          role,
+          status,
+          note,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(
+      approval.task_id,
+      approval.service_id,
+      approval.role,
+      approval.status,
+      approval.note,
+      approval.created_at,
+    );
+  return Number(result.lastInsertRowid);
+}
+
+export function listPairedApprovalsForTask(taskId: string): PairedApproval[] {
+  return db
+    .prepare(
+      'SELECT * FROM paired_approvals WHERE task_id = ? ORDER BY created_at, id',
+    )
+    .all(taskId) as PairedApproval[];
+}
+
+export function createPairedArtifact(
+  artifact: Omit<PairedArtifact, 'id'>,
+): number {
+  const result = db
+    .prepare(
+      `
+        INSERT INTO paired_artifacts (
+          task_id,
+          execution_id,
+          service_id,
+          artifact_type,
+          title,
+          content,
+          file_path,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(
+      artifact.task_id,
+      artifact.execution_id,
+      artifact.service_id,
+      artifact.artifact_type,
+      artifact.title,
+      artifact.content,
+      artifact.file_path,
+      artifact.created_at,
+    );
+  return Number(result.lastInsertRowid);
+}
+
+export function listPairedArtifactsForTask(taskId: string): PairedArtifact[] {
+  return db
+    .prepare(
+      'SELECT * FROM paired_artifacts WHERE task_id = ? ORDER BY created_at, id',
+    )
+    .all(taskId) as PairedArtifact[];
 }
 
 /**

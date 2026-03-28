@@ -23,6 +23,12 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('/clear', trigger)).toBe('/clear');
   });
 
+  it('detects bare /review-ready', () => {
+    expect(extractSessionCommand('/review-ready', trigger)).toBe(
+      '/review-ready',
+    );
+  });
+
   it('rejects /compact with extra text', () => {
     expect(extractSessionCommand('/compact now please', trigger)).toBeNull();
   });
@@ -120,6 +126,7 @@ function makeDeps(
     formatMessages: vi.fn().mockReturnValue('<formatted>'),
     isAdminSender: vi.fn().mockReturnValue(false),
     canSenderInteract: vi.fn().mockReturnValue(true),
+    markReviewReady: vi.fn().mockResolvedValue('Review snapshot updated.'),
     ...overrides,
   };
 }
@@ -175,6 +182,31 @@ describe('handleSessionCommand', () => {
     expect(deps.runAgent).not.toHaveBeenCalled();
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Current session cleared. The next message will start a new conversation.',
+    );
+  });
+
+  it('handles authorized /review-ready without invoking the agent', async () => {
+    const deps = makeDeps({
+      markReviewReady: vi.fn().mockResolvedValue(
+        'Review snapshot updated.\n- Task: paired-task-1',
+      ),
+    });
+
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/review-ready')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.markReviewReady).toHaveBeenCalledTimes(1);
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Review snapshot updated.\n- Task: paired-task-1',
     );
   });
 

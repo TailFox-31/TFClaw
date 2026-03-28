@@ -129,3 +129,32 @@ export function resolveServiceTaskSessionsPath(
   ensureWithinBase(sessionsBaseDir, sessionsPath);
   return sessionsPath;
 }
+
+export function resolvePairedTaskWorkspaceRoot(
+  folder: string,
+  taskId: string,
+): string {
+  assertValidGroupFolder(folder);
+  assertValidRuntimeSegment(taskId, 'task ID');
+  const workspacesBaseDir = path.resolve(DATA_DIR, 'workspaces');
+  const workspacesPath = path.resolve(
+    workspacesBaseDir,
+    folder,
+    'tasks',
+    taskId,
+  );
+  ensureWithinBase(workspacesBaseDir, workspacesPath);
+  return workspacesPath;
+}
+
+export function resolvePairedTaskWorkspacePath(
+  folder: string,
+  taskId: string,
+  role: 'owner' | 'reviewer',
+): string {
+  assertValidRuntimeSegment(role, 'workspace role');
+  const workspaceRoot = resolvePairedTaskWorkspaceRoot(folder, taskId);
+  const workspacePath = path.resolve(workspaceRoot, role);
+  ensureWithinBase(workspaceRoot, workspacePath);
+  return workspacePath;
+}

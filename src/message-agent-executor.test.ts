@@ -108,11 +108,18 @@ vi.mock('./memento-client.js', () => ({
   buildRoomMemoryBriefing: vi.fn(),
 }));
 
+vi.mock('./paired-execution-context.js', () => ({
+  completePairedExecutionContext: vi.fn(),
+  markRoomReviewReady: vi.fn(),
+  preparePairedExecutionContext: vi.fn(() => undefined),
+}));
+
 import * as agentRunner from './agent-runner.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import * as db from './db.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
 import { runAgentForGroup } from './message-agent-executor.js';
+import * as pairedExecutionContext from './paired-execution-context.js';
 import * as sessionRecovery from './session-recovery.js';
 import * as serviceRouting from './service-routing.js';
 import * as tokenRotation from './token-rotation.js';
@@ -180,6 +187,7 @@ describe('runAgentForGroup room memory', () => {
       }),
       expect.any(Function),
       undefined,
+      undefined,
     );
   });
 
@@ -208,6 +216,7 @@ describe('runAgentForGroup room memory', () => {
       }),
       expect.any(Function),
       undefined,
+      undefined,
     );
   });
 
@@ -230,6 +239,7 @@ describe('runAgentForGroup room memory', () => {
         ),
       }),
       expect.any(Function),
+      undefined,
       undefined,
     );
   });
@@ -256,6 +266,7 @@ describe('runAgentForGroup room memory', () => {
         },
       }),
       expect.any(Function),
+      undefined,
       undefined,
     );
   });
@@ -288,7 +299,178 @@ describe('runAgentForGroup room memory', () => {
       }),
       expect.any(Function),
       undefined,
+      undefined,
     );
+  });
+
+  it('passes paired workspace env overrides into the runner when execution metadata exists', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      workDir: '/repo/canonical',
+    };
+
+    vi.mocked(pairedExecutionContext.preparePairedExecutionContext).mockReturnValue(
+      {
+        task: {
+          id: 'paired-task-1',
+          chat_jid: 'group@test',
+          group_folder: 'test-group',
+          owner_service_id: 'claude',
+          reviewer_service_id: 'codex-main',
+          title: null,
+          source_ref: 'HEAD',
+          review_requested_at: null,
+          status: 'draft',
+          created_at: '2026-03-28T00:00:00.000Z',
+          updated_at: '2026-03-28T00:00:00.000Z',
+        },
+        execution: {
+          id: 'run-room-role:claude',
+          task_id: 'paired-task-1',
+          service_id: 'claude',
+          role: 'owner',
+          workspace_id: 'paired-task-1:owner',
+          status: 'running',
+          summary: null,
+          created_at: '2026-03-28T00:00:00.000Z',
+          started_at: '2026-03-28T00:00:00.000Z',
+          completed_at: null,
+        },
+        workspace: {
+          id: 'paired-task-1:owner',
+          task_id: 'paired-task-1',
+          role: 'owner',
+          workspace_dir: '/tmp/paired/owner',
+          snapshot_source_dir: null,
+          status: 'ready',
+          snapshot_refreshed_at: null,
+          created_at: '2026-03-28T00:00:00.000Z',
+          updated_at: '2026-03-28T00:00:00.000Z',
+        },
+        envOverrides: {
+          EJCLAW_WORK_DIR: '/tmp/paired/owner',
+          EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
+          EJCLAW_PAIRED_EXECUTION_ID: 'run-room-role:claude',
+          EJCLAW_PAIRED_ROLE: 'owner',
+        },
+      },
+    );
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-room-role',
+    });
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        roomRoleContext: expect.any(Object),
+      }),
+      expect.any(Function),
+      undefined,
+      expect.objectContaining({
+        EJCLAW_WORK_DIR: '/tmp/paired/owner',
+        EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
+        EJCLAW_PAIRED_EXECUTION_ID: 'run-room-role:claude',
+        EJCLAW_PAIRED_ROLE: 'owner',
+      }),
+    );
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).toHaveBeenCalledWith({
+      executionId: 'run-room-role:claude',
+      status: 'succeeded',
+      summary: 'ok',
+    });
+  });
+
+  it('blocks reviewer execution before review-ready and does not spawn the runner', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      workDir: '/repo/canonical',
+    };
+    const outputs: Array<{ text?: string; result?: string | null }> = [];
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(pairedExecutionContext.preparePairedExecutionContext).mockReturnValue(
+      {
+        task: {
+          id: 'paired-task-1',
+          chat_jid: 'group@test',
+          group_folder: 'test-group',
+          owner_service_id: 'codex-main',
+          reviewer_service_id: 'claude',
+          title: null,
+          source_ref: 'HEAD',
+          review_requested_at: null,
+          status: 'draft',
+          created_at: '2026-03-28T00:00:00.000Z',
+          updated_at: '2026-03-28T00:00:00.000Z',
+        },
+        execution: {
+          id: 'run-blocked-reviewer:claude',
+          task_id: 'paired-task-1',
+          service_id: 'claude',
+          role: 'reviewer',
+          workspace_id: null,
+          status: 'running',
+          summary: null,
+          created_at: '2026-03-28T00:00:00.000Z',
+          started_at: '2026-03-28T00:00:00.000Z',
+          completed_at: null,
+        },
+        workspace: null,
+        envOverrides: {
+          EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
+          EJCLAW_PAIRED_EXECUTION_ID: 'run-blocked-reviewer:claude',
+          EJCLAW_PAIRED_ROLE: 'reviewer',
+          EJCLAW_REVIEWER_RUNTIME: '1',
+        },
+        blockMessage:
+          'Review snapshot is not ready yet. Ask the owner to run /review-ready after preparing changes.',
+      },
+    );
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-blocked-reviewer',
+      onOutput: async (output) => {
+        outputs.push({
+          text: output.output && 'text' in output.output ? output.output.text : undefined,
+          result: output.result,
+        });
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(outputs).toEqual([
+      {
+        text: 'Review snapshot is not ready yet. Ask the owner to run /review-ready after preparing changes.',
+        result: null,
+      },
+    ]);
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).toHaveBeenCalledWith({
+      executionId: 'run-blocked-reviewer:claude',
+      status: 'failed',
+      summary:
+        'Review snapshot is not ready yet. Ask the owner to run /review-ready after preparing changes.',
+    });
   });
 });
 
