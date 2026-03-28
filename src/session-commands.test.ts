@@ -27,6 +27,12 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('/review', trigger)).toBe('/review');
   });
 
+  it('detects bare /deploy-complete', () => {
+    expect(extractSessionCommand('/deploy-complete', trigger)).toBe(
+      '/deploy-complete',
+    );
+  });
+
   it('normalizes /review-ready to /review', () => {
     expect(extractSessionCommand('/review-ready', trigger)).toBe('/review');
   });
@@ -146,6 +152,14 @@ describe('isSessionCommandControlMessage', () => {
     ).toBe(true);
   });
 
+  it('matches deployment finalized output', () => {
+    expect(
+      isSessionCommandControlMessage(
+        'Deployment finalized.\n- Task: task-1\n- Checkpoint: abc123',
+      ),
+    ).toBe(true);
+  });
+
   it('does not match regular bot conversation', () => {
     expect(
       isSessionCommandControlMessage(
@@ -184,6 +198,7 @@ function makeDeps(
     isAdminSender: vi.fn().mockReturnValue(false),
     canSenderInteract: vi.fn().mockReturnValue(true),
     markReviewReady: vi.fn().mockResolvedValue('Review snapshot updated.'),
+    finalizeDeployment: vi.fn().mockResolvedValue('Deployment finalized.'),
     setTaskRiskLevel: vi.fn().mockResolvedValue('Task risk updated.'),
     recordPlan: vi.fn().mockResolvedValue('Plan recorded.'),
     approvePlan: vi.fn().mockResolvedValue('Plan approved.'),
@@ -244,6 +259,23 @@ describe('handleSessionCommand', () => {
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Current session cleared. The next message will start a new conversation.',
     );
+  });
+
+  it('handles authorized /deploy-complete without invoking the agent', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/deploy-complete')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.finalizeDeployment).toHaveBeenCalledTimes(1);
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+    expect(deps.sendMessage).toHaveBeenCalledWith('Deployment finalized.');
   });
 
   it('handles authorized /review without invoking the agent', async () => {

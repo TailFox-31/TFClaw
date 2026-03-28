@@ -43,6 +43,7 @@ import { MessageTurnController } from './message-turn-controller.js';
 import { createSuppressToken } from './output-suppression.js';
 import {
   approveRoomPlan,
+  finalizeRoomDeployment,
   formatRoomReviewReadyMessage,
   markRoomReviewReady,
   planPairedExecutionRecovery,
@@ -586,6 +587,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               dedupeKey,
             });
             return formatRoomReviewReadyMessage(result);
+          },
+          finalizeDeployment: async () => {
+            const lease = getEffectiveChannelLease(chatJid);
+            const roomRoleContext = buildRoomRoleContext(
+              lease,
+              lease.owner_service_id,
+            );
+            return finalizeRoomDeployment({
+              group,
+              chatJid,
+              roomRoleContext,
+            });
           },
           setTaskRiskLevel: async (riskLevel, dedupeKey) => {
             const lease = getEffectiveChannelLease(chatJid);

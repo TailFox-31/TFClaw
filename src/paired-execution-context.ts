@@ -8,6 +8,7 @@ import {
   createPairedArtifact,
   createPairedExecution,
   createPairedTask,
+  getLatestPairedTaskForChat,
   getLatestOpenPairedTaskForChat,
   getPairedExecutionById,
   getPairedTaskById,
@@ -51,6 +52,12 @@ const VISIBLE_REVIEWER_GATE_VERDICTS = new Set<PairedReviewerVerdict>([
 ]);
 const REVIEWER_GATE_REQUIRED_MESSAGE =
   'A visible reviewer verdict is required before the owner can proceed with this gate.';
+const DEPLOY_COMPLETE_OWNER_ONLY_MESSAGE =
+  'Deployment finalization must be handled by the owner service.';
+const DEPLOY_COMPLETE_PRECONDITION_MESSAGE =
+  'Deploy completion requires a merge-ready task or the same already-finalized checkpoint.';
+const DEPLOY_COMPLETE_HEAD_REQUIRED_MESSAGE =
+  'Deploy completion requires a canonical workDir with a readable HEAD.';
 
 function getGateTurnKind(task: PairedTask): PairedGateTurnKind | null {
   return task.gate_turn_kind ?? null;
@@ -87,6 +94,19 @@ function resolveCanonicalSourceRef(workDir: string): string {
     return head || 'HEAD';
   } catch {
     return 'HEAD';
+  }
+}
+
+function resolveCanonicalHead(workDir: string): string | null {
+  try {
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: workDir,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    return head || null;
+  } catch {
+    return null;
   }
 }
 
@@ -138,6 +158,7 @@ function ensureActiveTask(
     risk_level: 'low',
     plan_status: 'not_requested',
     review_requested_at: null,
+    last_finalized_checkpoint: null,
     gate_turn_kind: null,
     reviewer_verdict: null,
     reviewer_verdict_at: null,
@@ -835,10 +856,15 @@ export function completePairedExecutionContext(args: {
     task.gate_turn_kind &&
     args.reviewerVerdict
   ) {
+    const shouldPromoteToMergeReady =
+      task.gate_turn_kind === 'push' &&
+      APPROVED_REVIEWER_GATE_VERDICTS.has(args.reviewerVerdict);
     updatePairedTask(task.id, {
+      gate_turn_kind: shouldPromoteToMergeReady ? null : task.gate_turn_kind,
       reviewer_verdict: args.reviewerVerdict,
       reviewer_verdict_at: completedAt,
       reviewer_verdict_note: args.reviewerVerdictNote ?? null,
+      status: shouldPromoteToMergeReady ? 'merge_ready' : task.status,
       updated_at: completedAt,
     });
   }
@@ -1199,5 +1225,74 @@ export function requestRoomPlanChanges(args: {
     `- Task: ${latestTask.id}`,
     `- Plan status: ${latestTask.plan_status}`,
     `- Status: ${latestTask.status}`,
+  ].join('\n');
+}
+
+export function finalizeRoomDeployment(args: {
+  group: RegisteredGroup;
+  chatJid: string;
+  roomRoleContext?: RoomRoleContext;
+}): string | null {
+  const { group, chatJid, roomRoleContext } = args;
+  if (!roomRoleContext) {
+    return null;
+  }
+  if (roomRoleContext.role !== 'owner') {
+    return DEPLOY_COMPLETE_OWNER_ONLY_MESSAGE;
+  }
+  if (!group.workDir) {
+    return DEPLOY_COMPLETE_HEAD_REQUIRED_MESSAGE;
+  }
+
+  const deployedCheckpoint = resolveCanonicalHead(group.workDir);
+  if (!deployedCheckpoint) {
+    return DEPLOY_COMPLETE_HEAD_REQUIRED_MESSAGE;
+  }
+
+  const task = getLatestPairedTaskForChat(chatJid);
+  if (!task) {
+    return null;
+  }
+
+  const alreadyFinalized =
+    task.status === 'merged' &&
+    task.last_finalized_checkpoint === deployedCheckpoint;
+  if (task.status !== 'merge_ready' && !alreadyFinalized) {
+    return [
+      DEPLOY_COMPLETE_PRECONDITION_MESSAGE,
+      `- Task: ${task.id}`,
+      `- Status: ${task.status}`,
+      `- Checkpoint: ${deployedCheckpoint}`,
+    ].join('\n');
+  }
+
+  const finalizedAt = new Date().toISOString();
+  applyPairedEvent({
+    event: {
+      task_id: task.id,
+      event_type: 'deploy_complete',
+      actor_role: roomRoleContext.role,
+      source_service_id: roomRoleContext.serviceId,
+      source_fingerprint: deployedCheckpoint,
+      dedupe_key: `deploy-complete:${deployedCheckpoint}`,
+      payload_json: serializeIntentPayload({ checkpoint: deployedCheckpoint }),
+      created_at: finalizedAt,
+    },
+    onApply: () => {
+      updatePairedTask(task.id, {
+        status: 'merged',
+        last_finalized_checkpoint: deployedCheckpoint,
+        gate_turn_kind: null,
+        updated_at: finalizedAt,
+      });
+    },
+  });
+
+  const latestTask = getPairedTaskById(task.id) ?? task;
+  return [
+    'Deployment finalized.',
+    `- Task: ${latestTask.id}`,
+    `- Status: ${latestTask.status}`,
+    `- Checkpoint: ${deployedCheckpoint}`,
   ].join('\n');
 }

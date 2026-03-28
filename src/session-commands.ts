@@ -22,6 +22,10 @@ const SESSION_COMMAND_CONTROL_PATTERNS = [
   /^Plan approval must be handled by the reviewer service\.$/,
   /^Plan review commands are only required for high-risk tasks\.$/,
   /^Plan artifacts are incomplete\.(?:\n|$)/,
+  /^Deployment finalized\.(?:\n|$)/,
+  /^Deployment finalization must be handled by the owner service\.$/,
+  /^Deploy completion requires a merge-ready task or the same already-finalized checkpoint\.(?:\n|$)/,
+  /^Deploy completion requires a canonical workDir with a readable HEAD\.$/,
   /^Review is unavailable for this room\./,
 ];
 
@@ -44,6 +48,7 @@ export function extractSessionCommand(
   if (text === '/compact') return '/compact';
   if (text === '/clear') return '/clear';
   if (text === '/review' || text === '/review-ready') return '/review';
+  if (text === '/deploy-complete') return '/deploy-complete';
   if (/^\/risk(?:\s|$)/.test(text)) return '/risk';
   if (/^\/plan(?:\s|$)/.test(text)) return '/plan';
   if (text === '/approve-plan') return '/approve-plan';
@@ -109,6 +114,7 @@ export interface SessionCommandDeps {
     note: string | undefined,
     dedupeKey: string,
   ) => Promise<string | null>;
+  finalizeDeployment: () => Promise<string | null>;
 }
 
 function resultToText(result: string | object | null | undefined): string {
@@ -199,6 +205,15 @@ export async function handleSessionCommand(opts: {
     await deps.sendMessage(
       result ??
         'Review is unavailable for this room. Paired workspaces require a configured project workDir.',
+    );
+    return { handled: true, success: true };
+  }
+
+  if (command === '/deploy-complete') {
+    deps.advanceCursor(cmdMsg.timestamp);
+    await deps.sendMessage(
+      (await deps.finalizeDeployment()) ??
+        'Deploy finalization is unavailable for this room.',
     );
     return { handled: true, success: true };
   }

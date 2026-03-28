@@ -24,6 +24,7 @@ import {
   getAllRegisteredGroups,
   getDueTasks,
   getLatestMessageSeqAtOrBefore,
+  getLatestPairedTaskForChat,
   getMessagesSinceSeq,
   getNewMessagesBySeq,
   getOpenWorkItem,
@@ -638,6 +639,9 @@ describe('paired task state', () => {
     expect(getPairedTaskById('paired-task-1')?.gate_turn_kind ?? null).toBe(
       null,
     );
+    expect(
+      getPairedTaskById('paired-task-1')?.last_finalized_checkpoint ?? null,
+    ).toBe(null);
     expect(getPairedTaskById('paired-task-1')?.reviewer_verdict ?? null).toBe(
       null,
     );
@@ -722,6 +726,85 @@ describe('paired task state', () => {
     );
     expect(getPairedTaskById('paired-task-events-1')?.review_requested_at).toBe(
       '2026-03-29T00:01:00.000Z',
+    );
+  });
+
+  it('dedupes deploy_complete and atomically finalizes the checkpoint once', () => {
+    createPairedTask({
+      id: 'paired-task-events-deploy',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'approved',
+      review_requested_at: '2026-03-29T00:00:00.000Z',
+      last_finalized_checkpoint: null,
+      gate_turn_kind: null,
+      reviewer_verdict: 'done',
+      reviewer_verdict_at: '2026-03-29T00:00:00.000Z',
+      reviewer_verdict_note: '**DONE** ready',
+      status: 'merge_ready',
+      created_at: '2026-03-29T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    const first = applyPairedEvent({
+      event: {
+        task_id: 'paired-task-events-deploy',
+        event_type: 'deploy_complete',
+        actor_role: 'owner',
+        source_service_id: 'codex-main',
+        source_fingerprint: 'canonical-v1',
+        dedupe_key: 'deploy-complete:canonical-v1',
+        payload_json: '{"checkpoint":"canonical-v1"}',
+        created_at: '2026-03-29T00:01:00.000Z',
+      },
+      onApply: () => {
+        updatePairedTask('paired-task-events-deploy', {
+          status: 'merged',
+          last_finalized_checkpoint: 'canonical-v1',
+          updated_at: '2026-03-29T00:01:00.000Z',
+        });
+      },
+    });
+
+    const second = applyPairedEvent({
+      event: {
+        task_id: 'paired-task-events-deploy',
+        event_type: 'deploy_complete',
+        actor_role: 'owner',
+        source_service_id: 'codex-main',
+        source_fingerprint: 'canonical-v1',
+        dedupe_key: 'deploy-complete:canonical-v1',
+        payload_json: '{"checkpoint":"canonical-v1"}',
+        created_at: '2026-03-29T00:02:00.000Z',
+      },
+      onApply: () => {
+        updatePairedTask('paired-task-events-deploy', {
+          status: 'failed',
+          last_finalized_checkpoint: 'should-not-change',
+          updated_at: '2026-03-29T00:02:00.000Z',
+        });
+      },
+    });
+
+    expect(first.applied).toBe(true);
+    expect(second.applied).toBe(false);
+    expect(
+      listPairedEventsForTask('paired-task-events-deploy').filter(
+        (event) => event.event_type === 'deploy_complete',
+      ),
+    ).toHaveLength(1);
+    expect(
+      getPairedTaskById('paired-task-events-deploy')?.last_finalized_checkpoint,
+    ).toBe('canonical-v1');
+    expect(getLatestPairedTaskForChat('dc:paired')?.status).toBe('merged');
+    expect(getPairedTaskById('paired-task-events-deploy')?.status).toBe(
+      'merged',
     );
   });
 
@@ -928,6 +1011,160 @@ describe('paired task state', () => {
     expect(getPairedTaskById('paired-draft')?.plan_status).toBe(
       'not_requested',
     );
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('migrates paired task finalization fields and deploy_complete events', () => {
+    const tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-db-finalize-'));
+    const dbPath = path.join(tempRoot, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE paired_tasks (
+        id TEXT PRIMARY KEY,
+        chat_jid TEXT NOT NULL,
+        group_folder TEXT NOT NULL,
+        owner_service_id TEXT NOT NULL,
+        reviewer_service_id TEXT NOT NULL,
+        title TEXT,
+        source_ref TEXT,
+        task_policy TEXT NOT NULL DEFAULT 'autonomous',
+        risk_level TEXT NOT NULL DEFAULT 'low',
+        plan_status TEXT NOT NULL DEFAULT 'not_requested',
+        review_requested_at TEXT,
+        gate_turn_kind TEXT,
+        reviewer_verdict TEXT,
+        reviewer_verdict_at TEXT,
+        reviewer_verdict_note TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE paired_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        actor_role TEXT NOT NULL,
+        source_service_id TEXT NOT NULL,
+        source_fingerprint TEXT,
+        dedupe_key TEXT NOT NULL,
+        payload_json TEXT,
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    legacyDb
+      .prepare(
+        `
+          INSERT INTO paired_tasks (
+            id,
+            chat_jid,
+            group_folder,
+            owner_service_id,
+            reviewer_service_id,
+            title,
+            source_ref,
+            task_policy,
+            risk_level,
+            plan_status,
+            review_requested_at,
+            gate_turn_kind,
+            reviewer_verdict,
+            reviewer_verdict_at,
+            reviewer_verdict_note,
+            status,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        'paired-finalized',
+        'dc:paired',
+        'paired-room',
+        'codex-main',
+        'codex-review',
+        null,
+        'HEAD',
+        'autonomous',
+        'low',
+        'approved',
+        '2026-03-29T00:00:00.000Z',
+        null,
+        'done',
+        '2026-03-29T00:00:00.000Z',
+        '**DONE**',
+        'merge_ready',
+        '2026-03-29T00:00:00.000Z',
+        '2026-03-29T00:00:00.000Z',
+      );
+    legacyDb
+      .prepare(
+        `
+          INSERT INTO paired_events (
+            task_id,
+            event_type,
+            actor_role,
+            source_service_id,
+            source_fingerprint,
+            dedupe_key,
+            payload_json,
+            created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        'paired-finalized',
+        'request_review',
+        'owner',
+        'codex-main',
+        'fingerprint-v1',
+        'msg-review-legacy',
+        null,
+        '2026-03-29T00:00:00.000Z',
+      );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(
+      getPairedTaskById('paired-finalized')?.last_finalized_checkpoint ?? null,
+    ).toBe(null);
+
+    applyPairedEvent({
+      event: {
+        task_id: 'paired-finalized',
+        event_type: 'deploy_complete',
+        actor_role: 'owner',
+        source_service_id: 'codex-main',
+        source_fingerprint: 'canonical-v1',
+        dedupe_key: 'deploy-complete:canonical-v1',
+        payload_json: '{"checkpoint":"canonical-v1"}',
+        created_at: '2026-03-29T00:01:00.000Z',
+      },
+      onApply: () => {
+        updatePairedTask('paired-finalized', {
+          status: 'merged',
+          last_finalized_checkpoint: 'canonical-v1',
+          updated_at: '2026-03-29T00:01:00.000Z',
+        });
+      },
+    });
+
+    expect(getPairedTaskById('paired-finalized')?.status).toBe('merged');
+    expect(
+      getPairedTaskById('paired-finalized')?.last_finalized_checkpoint,
+    ).toBe('canonical-v1');
+    expect(
+      getPairedEventByDedupeKey({
+        taskId: 'paired-finalized',
+        eventType: 'deploy_complete',
+        dedupeKey: 'deploy-complete:canonical-v1',
+      })?.source_fingerprint,
+    ).toBe('canonical-v1');
 
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });

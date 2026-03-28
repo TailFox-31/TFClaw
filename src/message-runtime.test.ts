@@ -39,6 +39,7 @@ vi.mock('./paired-execution-context.js', () => ({
   markRoomReviewReady: vi.fn(() => null),
   formatRoomReviewReadyMessage: vi.fn(() => null),
   planPairedExecutionRecovery: vi.fn(() => null),
+  finalizeRoomDeployment: vi.fn(() => null),
   setRoomTaskRiskLevel: vi.fn(() => null),
   recordRoomPlan: vi.fn(() => null),
   approveRoomPlan: vi.fn(() => null),
@@ -407,6 +408,77 @@ describe('createMessageRuntime', () => {
 
     expect(result).toBe(true);
     expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, blockedMessage);
+  });
+
+  it('surfaces the deploy-complete message through the message-runtime path', async () => {
+    const chatJid = 'group@test';
+    const group = {
+      ...makeGroup('codex'),
+      workDir: '/repo/canonical',
+    };
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+    const deployMessage = [
+      'Deployment finalized.',
+      '- Task: paired-task-1',
+      '- Status: merged',
+      '- Checkpoint: abc123',
+    ].join('\n');
+
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-deploy',
+        chat_jid: chatJid,
+        sender: 'me@test',
+        sender_name: 'Me',
+        content: '/deploy-complete',
+        timestamp: '2026-03-29T00:00:00.000Z',
+        is_from_me: true,
+      },
+    ]);
+    const actualSessionCommands = await vi.importActual<
+      typeof import('./session-commands.js')
+    >('./session-commands.js');
+    vi.mocked(sessionCommands.handleSessionCommand).mockImplementation((opts) =>
+      actualSessionCommands.handleSessionCommand(opts),
+    );
+    vi.mocked(pairedExecutionContext.finalizeRoomDeployment).mockReturnValue(
+      deployMessage,
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-deploy-complete',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(sessionCommands.handleSessionCommand).toHaveBeenCalled();
+    expect(pairedExecutionContext.finalizeRoomDeployment).toHaveBeenCalled();
+    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, deployMessage);
   });
 
   it('routes /approve-plan through reviewer context in the message-runtime path', async () => {

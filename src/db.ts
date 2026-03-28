@@ -258,6 +258,7 @@ function createSchema(database: Database.Database): void {
       risk_level TEXT NOT NULL DEFAULT 'low',
       plan_status TEXT NOT NULL DEFAULT 'not_requested',
       review_requested_at TEXT,
+      last_finalized_checkpoint TEXT,
       gate_turn_kind TEXT,
       reviewer_verdict TEXT,
       reviewer_verdict_at TEXT,
@@ -386,7 +387,8 @@ function createSchema(database: Database.Database): void {
           'submit_plan',
           'approve_plan',
           'request_plan_changes',
-          'request_review'
+          'request_review',
+          'deploy_complete'
         )
       ),
       CHECK (actor_role IN ('owner', 'reviewer', 'system'))
@@ -703,6 +705,7 @@ function createSchema(database: Database.Database): void {
       !pairedTasksSql.includes('task_policy TEXT') ||
       !pairedTasksSql.includes('risk_level TEXT') ||
       !pairedTasksSql.includes('plan_status TEXT') ||
+      !pairedTasksSql.includes('last_finalized_checkpoint TEXT') ||
       !pairedTasksSql.includes('gate_turn_kind TEXT') ||
       !pairedTasksSql.includes('reviewer_verdict TEXT'));
   if (pairedTasksNeedsMigration) {
@@ -719,6 +722,7 @@ function createSchema(database: Database.Database): void {
         risk_level TEXT NOT NULL DEFAULT 'low',
         plan_status TEXT NOT NULL DEFAULT 'not_requested',
         review_requested_at TEXT,
+        last_finalized_checkpoint TEXT,
         gate_turn_kind TEXT,
         reviewer_verdict TEXT,
         reviewer_verdict_at TEXT,
@@ -774,6 +778,7 @@ function createSchema(database: Database.Database): void {
         risk_level,
         plan_status,
         review_requested_at,
+        last_finalized_checkpoint,
         gate_turn_kind,
         reviewer_verdict,
         reviewer_verdict_at,
@@ -808,6 +813,7 @@ function createSchema(database: Database.Database): void {
         NULL,
         NULL,
         NULL,
+        NULL,
         status,
         created_at,
         updated_at
@@ -820,6 +826,77 @@ function createSchema(database: Database.Database): void {
     database.exec(`
       CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
         ON paired_tasks(chat_jid, status, updated_at);
+    `);
+  }
+
+  const pairedEventsSqlRow = database
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_events'`,
+    )
+    .get() as { sql?: string } | undefined;
+  const pairedEventsSql = pairedEventsSqlRow?.sql || '';
+  const pairedEventsNeedsMigration =
+    pairedEventsSql && !pairedEventsSql.includes("'deploy_complete'");
+  if (pairedEventsNeedsMigration) {
+    database.exec(`
+      CREATE TABLE paired_events_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        actor_role TEXT NOT NULL,
+        source_service_id TEXT NOT NULL,
+        source_fingerprint TEXT,
+        dedupe_key TEXT NOT NULL,
+        payload_json TEXT,
+        created_at TEXT NOT NULL,
+        CHECK (
+          event_type IN (
+            'set_risk',
+            'submit_plan',
+            'approve_plan',
+            'request_plan_changes',
+            'request_review',
+            'deploy_complete'
+          )
+        ),
+        CHECK (actor_role IN ('owner', 'reviewer', 'system'))
+      );
+    `);
+    database.exec(`
+      INSERT INTO paired_events_new (
+        id,
+        task_id,
+        event_type,
+        actor_role,
+        source_service_id,
+        source_fingerprint,
+        dedupe_key,
+        payload_json,
+        created_at
+      )
+      SELECT
+        id,
+        task_id,
+        event_type,
+        actor_role,
+        source_service_id,
+        source_fingerprint,
+        dedupe_key,
+        payload_json,
+        created_at
+      FROM paired_events;
+    `);
+    database.exec(`
+      DROP TABLE paired_events;
+      ALTER TABLE paired_events_new RENAME TO paired_events;
+    `);
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_paired_events_task
+        ON paired_events(task_id, created_at, id);
+    `);
+    database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_paired_events_dedupe
+        ON paired_events(task_id, event_type, dedupe_key);
     `);
   }
 
@@ -2076,6 +2153,7 @@ export function createPairedTask(task: PairedTask): void {
         risk_level,
         plan_status,
         review_requested_at,
+        last_finalized_checkpoint,
         gate_turn_kind,
         reviewer_verdict,
         reviewer_verdict_at,
@@ -2084,7 +2162,7 @@ export function createPairedTask(task: PairedTask): void {
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     task.id,
@@ -2098,6 +2176,7 @@ export function createPairedTask(task: PairedTask): void {
     task.risk_level,
     task.plan_status,
     task.review_requested_at,
+    task.last_finalized_checkpoint ?? null,
     task.gate_turn_kind ?? null,
     task.reviewer_verdict ?? null,
     task.reviewer_verdict_at ?? null,
@@ -2112,6 +2191,22 @@ export function getPairedTaskById(id: string): PairedTask | undefined {
   return db.prepare('SELECT * FROM paired_tasks WHERE id = ?').get(id) as
     | PairedTask
     | undefined;
+}
+
+export function getLatestPairedTaskForChat(
+  chatJid: string,
+): PairedTask | undefined {
+  return db
+    .prepare(
+      `
+        SELECT *
+          FROM paired_tasks
+         WHERE chat_jid = ?
+         ORDER BY updated_at DESC
+         LIMIT 1
+      `,
+    )
+    .get(chatJid) as PairedTask | undefined;
 }
 
 export function getLatestOpenPairedTaskForChat(
@@ -2142,6 +2237,7 @@ export function updatePairedTask(
       | 'risk_level'
       | 'plan_status'
       | 'review_requested_at'
+      | 'last_finalized_checkpoint'
       | 'gate_turn_kind'
       | 'reviewer_verdict'
       | 'reviewer_verdict_at'
@@ -2177,6 +2273,10 @@ export function updatePairedTask(
   if (updates.review_requested_at !== undefined) {
     fields.push('review_requested_at = ?');
     values.push(updates.review_requested_at);
+  }
+  if (updates.last_finalized_checkpoint !== undefined) {
+    fields.push('last_finalized_checkpoint = ?');
+    values.push(updates.last_finalized_checkpoint);
   }
   if (updates.gate_turn_kind !== undefined) {
     fields.push('gate_turn_kind = ?');

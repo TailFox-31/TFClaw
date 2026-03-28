@@ -1,3 +1,8 @@
+import { execFileSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./db.js', () => ({
@@ -6,6 +11,7 @@ vi.mock('./db.js', () => ({
   createPairedArtifact: vi.fn(),
   createPairedExecution: vi.fn(),
   createPairedTask: vi.fn(),
+  getLatestPairedTaskForChat: vi.fn(),
   getLatestOpenPairedTaskForChat: vi.fn(),
   getPairedExecutionById: vi.fn(),
   getPairedTaskById: vi.fn(),
@@ -41,6 +47,7 @@ import * as db from './db.js';
 import {
   approveRoomPlan,
   completePairedExecutionContext,
+  finalizeRoomDeployment,
   formatRoomReviewReadyMessage,
   markRoomReviewReady,
   planPairedExecutionRecovery,
@@ -77,6 +84,26 @@ const reviewerContext: RoomRoleContext = {
   failoverOwner: false,
 };
 
+function createCanonicalRepoWithCommit(commitMessage: string): string {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-finalize-'));
+  execFileSync('git', ['init'], { cwd: repoDir, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.name', 'Test User'], {
+    cwd: repoDir,
+    stdio: 'ignore',
+  });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+    cwd: repoDir,
+    stdio: 'ignore',
+  });
+  fs.writeFileSync(path.join(repoDir, 'README.md'), `${commitMessage}\n`);
+  execFileSync('git', ['add', 'README.md'], { cwd: repoDir, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', commitMessage], {
+    cwd: repoDir,
+    stdio: 'ignore',
+  });
+  return repoDir;
+}
+
 async function importExecutionContextForService(serviceId: string) {
   vi.resetModules();
 
@@ -86,6 +113,7 @@ async function importExecutionContextForService(serviceId: string) {
     createPairedArtifact: vi.fn(),
     createPairedExecution: vi.fn(),
     createPairedTask: vi.fn(),
+    getLatestPairedTaskForChat: vi.fn(),
     getLatestOpenPairedTaskForChat: vi.fn(),
     getPairedExecutionById: vi.fn(),
     getPairedTaskById: vi.fn(),
@@ -102,6 +130,7 @@ async function importExecutionContextForService(serviceId: string) {
     event: { id: 1, ...event },
     result: onApply ? onApply() : null,
   }));
+  dbModule.getLatestPairedTaskForChat.mockReturnValue(undefined);
   dbModule.getLatestOpenPairedTaskForChat.mockReturnValue(undefined);
   dbModule.getPairedExecutionById.mockReturnValue(undefined);
   dbModule.getPairedTaskById.mockReturnValue(undefined);
@@ -182,6 +211,7 @@ describe('paired execution context', () => {
       result: onApply ? onApply() : null,
     }));
     vi.mocked(db.cancelSupersededPairedExecutions).mockReturnValue(0);
+    vi.mocked(db.getLatestPairedTaskForChat).mockReturnValue(undefined);
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(undefined);
     vi.mocked(db.getPairedExecutionById).mockReturnValue(undefined);
     vi.mocked(db.getPairedTaskById).mockReturnValue(undefined);
@@ -416,6 +446,256 @@ describe('paired execution context', () => {
         reviewer_verdict_note: '**DONE_WITH_CONCERNS** gate okay',
       }),
     );
+  });
+
+  it('promotes an approved push gate verdict to merge_ready', () => {
+    vi.mocked(db.getPairedExecutionById).mockReturnValue({
+      id: 'run-review:codex-review',
+      task_id: 'task-1',
+      service_id: 'codex-review',
+      role: 'reviewer',
+      workspace_id: 'task-1:reviewer',
+      checkpoint_fingerprint: null,
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: '2026-03-28T00:00:00.000Z',
+      completed_at: null,
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'approved',
+      review_requested_at: '2026-03-28T00:01:00.000Z',
+      gate_turn_kind: 'push',
+      reviewer_verdict: null,
+      reviewer_verdict_at: null,
+      reviewer_verdict_note: null,
+      status: 'in_review',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:01:00.000Z',
+    });
+
+    completePairedExecutionContext({
+      executionId: 'run-review:codex-review',
+      status: 'succeeded',
+      reviewerVerdict: 'done',
+      reviewerVerdictNote: '**DONE** okay to deploy',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        gate_turn_kind: null,
+        reviewer_verdict: 'done',
+        reviewer_verdict_note: '**DONE** okay to deploy',
+        status: 'merge_ready',
+      }),
+    );
+  });
+
+  it('finalizes a merge-ready task with a durable deploy_complete checkpoint', () => {
+    const canonicalDir = createCanonicalRepoWithCommit('deploy-ready');
+    const deployedCheckpoint = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: canonicalDir,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    const groupWithRepo: RegisteredGroup = {
+      ...group,
+      workDir: canonicalDir,
+    };
+    const task = {
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous' as const,
+      risk_level: 'low' as const,
+      plan_status: 'approved' as const,
+      review_requested_at: '2026-03-28T00:01:00.000Z',
+      last_finalized_checkpoint: null,
+      gate_turn_kind: null,
+      reviewer_verdict: 'done' as const,
+      reviewer_verdict_at: '2026-03-28T00:01:00.000Z',
+      reviewer_verdict_note: '**DONE** okay to deploy',
+      status: 'merge_ready' as const,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:01:00.000Z',
+    };
+    vi.mocked(db.getLatestPairedTaskForChat).mockReturnValue(task);
+    vi.mocked(db.getPairedTaskById).mockImplementation(() => task as any);
+    vi.mocked(db.updatePairedTask).mockImplementation((_id, updates) => {
+      Object.assign(task, updates);
+    });
+
+    const message = finalizeRoomDeployment({
+      group: groupWithRepo,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(db.applyPairedEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          task_id: 'task-1',
+          event_type: 'deploy_complete',
+          source_fingerprint: deployedCheckpoint,
+          dedupe_key: `deploy-complete:${deployedCheckpoint}`,
+        }),
+      }),
+    );
+    expect(task.status).toBe('merged');
+    expect(task.last_finalized_checkpoint).toBe(deployedCheckpoint);
+    expect(message).toContain('Deployment finalized.');
+    expect(message).toContain(deployedCheckpoint);
+
+    fs.rmSync(canonicalDir, { recursive: true, force: true });
+  });
+
+  it('keeps deploy completion idempotent for the same checkpoint', () => {
+    const canonicalDir = createCanonicalRepoWithCommit('deploy-once');
+    const deployedCheckpoint = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: canonicalDir,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    const groupWithRepo: RegisteredGroup = {
+      ...group,
+      workDir: canonicalDir,
+    };
+    const task = {
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous' as const,
+      risk_level: 'low' as const,
+      plan_status: 'approved' as const,
+      review_requested_at: '2026-03-28T00:01:00.000Z',
+      last_finalized_checkpoint: null,
+      gate_turn_kind: null,
+      reviewer_verdict: 'done' as const,
+      reviewer_verdict_at: '2026-03-28T00:01:00.000Z',
+      reviewer_verdict_note: '**DONE** okay to deploy',
+      status: 'merge_ready' as const,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:01:00.000Z',
+    };
+    let applied = false;
+    vi.mocked(db.getLatestPairedTaskForChat).mockImplementation(() => task as any);
+    vi.mocked(db.getPairedTaskById).mockImplementation(() => task as any);
+    vi.mocked(db.updatePairedTask).mockImplementation((_id, updates) => {
+      Object.assign(task, updates);
+    });
+    vi.mocked(db.applyPairedEvent).mockImplementation(({ event, onApply }) => {
+      if (applied) {
+        return {
+          applied: false,
+          event: { id: 1, ...event },
+          result: null,
+        };
+      }
+      applied = true;
+      const result = onApply ? onApply() : null;
+      return {
+        applied: true,
+        event: { id: 1, ...event },
+        result,
+      };
+    });
+
+    finalizeRoomDeployment({
+      group: groupWithRepo,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+    const second = finalizeRoomDeployment({
+      group: groupWithRepo,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(db.applyPairedEvent).toHaveBeenCalledTimes(2);
+    expect(task.status).toBe('merged');
+    expect(task.last_finalized_checkpoint).toBe(deployedCheckpoint);
+    expect(second).toContain(deployedCheckpoint);
+
+    fs.rmSync(canonicalDir, { recursive: true, force: true });
+  });
+
+  it('rejects deploy completion for a non-merge-ready task', () => {
+    const canonicalDir = createCanonicalRepoWithCommit('not-ready');
+    const groupWithRepo: RegisteredGroup = {
+      ...group,
+      workDir: canonicalDir,
+    };
+    vi.mocked(db.getLatestPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'approved',
+      review_requested_at: '2026-03-28T00:01:00.000Z',
+      last_finalized_checkpoint: null,
+      gate_turn_kind: null,
+      reviewer_verdict: 'done',
+      reviewer_verdict_at: '2026-03-28T00:01:00.000Z',
+      reviewer_verdict_note: '**DONE** okay to deploy',
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:01:00.000Z',
+    });
+
+    const message = finalizeRoomDeployment({
+      group: groupWithRepo,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(message).toContain(
+      'Deploy completion requires a merge-ready task or the same already-finalized checkpoint.',
+    );
+    expect(db.applyPairedEvent).not.toHaveBeenCalled();
+
+    fs.rmSync(canonicalDir, { recursive: true, force: true });
+  });
+
+  it('rejects deploy completion when the canonical HEAD is unavailable', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-no-git-'));
+    const message = finalizeRoomDeployment({
+      group: {
+        ...group,
+        workDir: tempDir,
+      },
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(message).toBe(
+      'Deploy completion requires a canonical workDir with a readable HEAD.',
+    );
+    expect(db.applyPairedEvent).not.toHaveBeenCalled();
+
+    fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   it('plans reviewer recovery from the latest review checkpoint', () => {

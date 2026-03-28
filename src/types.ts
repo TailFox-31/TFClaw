@@ -91,7 +91,8 @@ export type PairedEventType =
   | 'submit_plan'
   | 'approve_plan'
   | 'request_plan_changes'
-  | 'request_review';
+  | 'request_review'
+  | 'deploy_complete';
 
 export interface RoomRoleContext {
   serviceId: string;
@@ -122,6 +123,7 @@ export interface PairedTask {
   risk_level: PairedRiskLevel;
   plan_status: PairedPlanStatus;
   review_requested_at: string | null;
+  last_finalized_checkpoint?: string | null;
   gate_turn_kind?: PairedGateTurnKind | null;
   reviewer_verdict?: PairedReviewerVerdict | null;
   reviewer_verdict_at?: string | null;
