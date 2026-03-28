@@ -12,6 +12,7 @@ import {
   getPairedTaskById,
   getPairedWorkspace,
   listPairedArtifactsForTask,
+  listPairedEventsForTask,
   updatePairedExecution,
   updatePairedTask,
   upsertPairedProject,
@@ -19,6 +20,7 @@ import {
 import { logger } from './logger.js';
 import {
   PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE,
+  hasReviewableOwnerWorkspaceChanges,
   markPairedTaskReviewReady,
   prepareReviewerWorkspaceForExecution,
   provisionOwnerWorkspaceForPairedTask,
@@ -252,6 +254,7 @@ const PLAN_REQUIRES_HIGH_RISK_MESSAGE =
   'Plan review commands are only required for high-risk tasks.';
 const PLAN_INCOMPLETE_MESSAGE =
   'Plan artifacts are incomplete. Record /plan <plan brief> || <acceptance criteria> || <risk summary> before approval.';
+const AUTO_REQUEST_REVIEW_DEDUPE_PREFIX = 'auto-request-review';
 
 function normalizeIntentDedupeKey(dedupeKey?: string): string {
   return dedupeKey?.trim() || crypto.randomUUID();
@@ -357,6 +360,117 @@ function formatPlanReviewRequiredMessage(task: PairedTask): string {
   ].join('\n');
 }
 
+function hasRequestReviewForFingerprint(
+  taskId: string,
+  sourceFingerprint: string,
+): boolean {
+  return listPairedEventsForTask(taskId).some(
+    (event) =>
+      event.event_type === 'request_review' &&
+      event.source_fingerprint === sourceFingerprint,
+  );
+}
+
+function buildRoomRoleContextFromExecution(args: {
+  task: PairedTask;
+  execution: PairedExecution;
+}): RoomRoleContext {
+  return {
+    serviceId: args.execution.service_id,
+    role: args.execution.role,
+    ownerServiceId: args.task.owner_service_id,
+    reviewerServiceId: args.task.reviewer_service_id,
+    failoverOwner: false,
+  };
+}
+
+function markTaskReviewPendingWithoutSnapshot(taskId: string): void {
+  const requestedAt = new Date().toISOString();
+  updatePairedTask(taskId, {
+    status: 'review_pending',
+    review_requested_at: requestedAt,
+    updated_at: requestedAt,
+  });
+}
+
+function maybeAutoRequestReviewForCompletedExecution(args: {
+  executionId: string;
+  status: 'succeeded' | 'failed';
+}): void {
+  if (args.status !== 'succeeded') {
+    return;
+  }
+
+  const execution = getPairedExecutionById(args.executionId);
+  if (!execution || execution.role !== 'owner') {
+    return;
+  }
+
+  const task = getPairedTaskById(execution.task_id);
+  if (!task) {
+    return;
+  }
+
+  if (isPlanReviewRequired(task)) {
+    return;
+  }
+
+  const shouldOpenReview =
+    task.status === 'active' || task.status === 'changes_requested';
+  const shouldRecordUpdatedCheckpoint =
+    task.status === 'review_pending' ||
+    task.status === 'review_ready' ||
+    task.status === 'in_review';
+
+  if (!shouldOpenReview && !shouldRecordUpdatedCheckpoint) {
+    return;
+  }
+
+  const ownerWorkspace = getPairedWorkspace(task.id, 'owner');
+  if (!ownerWorkspace) {
+    return;
+  }
+
+  const sourceFingerprint = resolvePairedTaskSourceFingerprint(task.id);
+  if (!sourceFingerprint) {
+    return;
+  }
+
+  if (!hasReviewableOwnerWorkspaceChanges(task.id)) {
+    return;
+  }
+
+  if (hasRequestReviewForFingerprint(task.id, sourceFingerprint)) {
+    return;
+  }
+
+  const roomRoleContext = buildRoomRoleContextFromExecution({
+    task,
+    execution,
+  });
+  const reviewIntent = applyRoomIntent({
+    task,
+    roomRoleContext,
+    eventType: 'request_review',
+    dedupeKey: `${AUTO_REQUEST_REVIEW_DEDUPE_PREFIX}:${sourceFingerprint}`,
+    onApply: () =>
+      shouldOpenReview
+        ? markPairedTaskReviewReady(task.id)
+        : markTaskReviewPendingWithoutSnapshot(task.id),
+  });
+
+  if (reviewIntent.applied) {
+    logger.info(
+      {
+        taskId: task.id,
+        executionId: execution.id,
+        sourceFingerprint,
+      },
+      'Automatically requested review for low-risk owner checkpoint',
+    );
+  }
+}
+
 export function completePairedExecutionContext(args: {
   executionId: string;
   status: 'succeeded' | 'failed';
@@ -366,6 +480,10 @@ export function completePairedExecutionContext(args: {
     status: args.status,
     summary: args.summary ?? null,
     completed_at: new Date().toISOString(),
+  });
+  maybeAutoRequestReviewForCompletedExecution({
+    executionId: args.executionId,
+    status: args.status,
   });
 }
 

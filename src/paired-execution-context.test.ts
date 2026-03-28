@@ -10,6 +10,7 @@ vi.mock('./db.js', () => ({
   getPairedTaskById: vi.fn(),
   getPairedWorkspace: vi.fn(),
   listPairedArtifactsForTask: vi.fn(),
+  listPairedEventsForTask: vi.fn(),
   updatePairedExecution: vi.fn(),
   updatePairedTask: vi.fn(),
   upsertPairedProject: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('./db.js', () => ({
 vi.mock('./paired-workspace-manager.js', () => ({
   PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE:
     'Plan review is required before formal review for this high-risk task.',
+  hasReviewableOwnerWorkspaceChanges: vi.fn(),
   markPairedTaskReviewReady: vi.fn(),
   prepareReviewerWorkspaceForExecution: vi.fn(),
   provisionOwnerWorkspaceForPairedTask: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock('./logger.js', () => ({
 import * as db from './db.js';
 import {
   approveRoomPlan,
+  completePairedExecutionContext,
   formatRoomReviewReadyMessage,
   markRoomReviewReady,
   preparePairedExecutionContext,
@@ -84,6 +87,7 @@ async function importExecutionContextForService(serviceId: string) {
     getPairedTaskById: vi.fn(),
     getPairedWorkspace: vi.fn(),
     listPairedArtifactsForTask: vi.fn(),
+    listPairedEventsForTask: vi.fn(),
     updatePairedExecution: vi.fn(),
     updatePairedTask: vi.fn(),
     upsertPairedProject: vi.fn(),
@@ -98,10 +102,12 @@ async function importExecutionContextForService(serviceId: string) {
   dbModule.getPairedTaskById.mockReturnValue(undefined);
   dbModule.getPairedWorkspace.mockReturnValue(undefined);
   dbModule.listPairedArtifactsForTask.mockReturnValue([]);
+  dbModule.listPairedEventsForTask.mockReturnValue([]);
 
   const pairedWorkspaceManagerModule = {
     PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE:
       'Plan review is required before formal review for this high-risk task.',
+    hasReviewableOwnerWorkspaceChanges: vi.fn(),
     markPairedTaskReviewReady: vi.fn(),
     prepareReviewerWorkspaceForExecution: vi.fn(),
     provisionOwnerWorkspaceForPairedTask: vi.fn(),
@@ -126,6 +132,9 @@ async function importExecutionContextForService(serviceId: string) {
       workspace: null,
       autoRefreshed: false,
     },
+  );
+  pairedWorkspaceManagerModule.hasReviewableOwnerWorkspaceChanges.mockReturnValue(
+    true,
   );
   pairedWorkspaceManagerModule.resolvePairedTaskSourceFingerprint.mockReturnValue(
     'fingerprint-1',
@@ -171,6 +180,7 @@ describe('paired execution context', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(undefined);
     vi.mocked(db.getPairedWorkspace).mockReturnValue(undefined);
     vi.mocked(db.listPairedArtifactsForTask).mockReturnValue([]);
+    vi.mocked(db.listPairedEventsForTask).mockReturnValue([]);
     vi.mocked(
       pairedWorkspaceManager.provisionOwnerWorkspaceForPairedTask,
     ).mockReturnValue({
@@ -191,6 +201,9 @@ describe('paired execution context', () => {
       workspace: null,
       autoRefreshed: false,
     });
+    vi.mocked(
+      pairedWorkspaceManager.hasReviewableOwnerWorkspaceChanges,
+    ).mockReturnValue(true);
     vi.mocked(
       pairedWorkspaceManager.resolvePairedTaskSourceFingerprint,
     ).mockReturnValue('fingerprint-1');
@@ -225,6 +238,390 @@ describe('paired execution context', () => {
       EJCLAW_WORK_DIR: '/tmp/paired/task-1/owner',
       EJCLAW_PAIRED_ROLE: 'owner',
     });
+  });
+
+  it('auto-requests review when a low-risk owner execution completes', () => {
+    vi.mocked(db.getPairedExecutionById).mockReturnValue({
+      id: 'run-1:codex-main',
+      task_id: 'task-1',
+      service_id: 'codex-main',
+      role: 'owner',
+      workspace_id: 'task-1:owner',
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: '2026-03-28T00:00:00.000Z',
+      completed_at: null,
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedWorkspace).mockImplementation((taskId, role) => {
+      if (taskId !== 'task-1' || role !== 'owner') {
+        return undefined;
+      }
+      return {
+        id: 'task-1:owner',
+        task_id: 'task-1',
+        role: 'owner',
+        workspace_dir: '/tmp/paired/task-1/owner',
+        snapshot_source_dir: null,
+        snapshot_source_fingerprint: null,
+        status: 'ready',
+        snapshot_refreshed_at: null,
+        created_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:00.000Z',
+      };
+    });
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: {
+          id: 'task-1:owner',
+          task_id: 'task-1',
+          role: 'owner',
+          workspace_dir: '/tmp/paired/task-1/owner',
+          snapshot_source_dir: null,
+          snapshot_source_fingerprint: null,
+          status: 'ready',
+          snapshot_refreshed_at: null,
+          created_at: '2026-03-28T00:00:00.000Z',
+          updated_at: '2026-03-28T00:00:00.000Z',
+        },
+        reviewerWorkspace: {
+          id: 'task-1:reviewer',
+          task_id: 'task-1',
+          role: 'reviewer',
+          workspace_dir: '/tmp/paired/task-1/reviewer',
+          snapshot_source_dir: '/tmp/paired/task-1/owner',
+          snapshot_source_fingerprint: 'fingerprint-1',
+          status: 'ready',
+          snapshot_refreshed_at: '2026-03-28T00:00:00.000Z',
+          created_at: '2026-03-28T00:00:00.000Z',
+          updated_at: '2026-03-28T00:00:00.000Z',
+        },
+      },
+    );
+
+    completePairedExecutionContext({
+      executionId: 'run-1:codex-main',
+      status: 'succeeded',
+      summary: 'done',
+    });
+
+    expect(db.updatePairedExecution).toHaveBeenCalledWith('run-1:codex-main', {
+      status: 'succeeded',
+      summary: 'done',
+      completed_at: expect.any(String),
+    });
+    expect(db.applyPairedEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          task_id: 'task-1',
+          event_type: 'request_review',
+          source_fingerprint: 'fingerprint-1',
+          dedupe_key: 'auto-request-review:fingerprint-1',
+        }),
+      }),
+    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledWith('task-1');
+  });
+
+  it('does not auto-request review for a successful owner turn without reviewable changes', () => {
+    vi.mocked(db.getPairedExecutionById).mockReturnValue({
+      id: 'run-1:codex-main',
+      task_id: 'task-1',
+      service_id: 'codex-main',
+      role: 'owner',
+      workspace_id: 'task-1:owner',
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: '2026-03-28T00:00:00.000Z',
+      completed_at: null,
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedWorkspace).mockReturnValue({
+      id: 'task-1:owner',
+      task_id: 'task-1',
+      role: 'owner',
+      workspace_dir: '/tmp/paired/task-1/owner',
+      snapshot_source_dir: null,
+      snapshot_source_fingerprint: null,
+      status: 'ready',
+      snapshot_refreshed_at: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(
+      pairedWorkspaceManager.hasReviewableOwnerWorkspaceChanges,
+    ).mockReturnValue(false);
+
+    completePairedExecutionContext({
+      executionId: 'run-1:codex-main',
+      status: 'succeeded',
+      summary: 'done',
+    });
+
+    expect(db.applyPairedEvent).not.toHaveBeenCalled();
+    expect(pairedWorkspaceManager.markPairedTaskReviewReady).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-request review twice for the same fingerprint', () => {
+    vi.mocked(db.getPairedExecutionById).mockReturnValue({
+      id: 'run-1:codex-main',
+      task_id: 'task-1',
+      service_id: 'codex-main',
+      role: 'owner',
+      workspace_id: 'task-1:owner',
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: '2026-03-28T00:00:00.000Z',
+      completed_at: null,
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedWorkspace).mockReturnValue({
+      id: 'task-1:owner',
+      task_id: 'task-1',
+      role: 'owner',
+      workspace_dir: '/tmp/paired/task-1/owner',
+      snapshot_source_dir: null,
+      snapshot_source_fingerprint: null,
+      status: 'ready',
+      snapshot_refreshed_at: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.listPairedEventsForTask).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-1',
+        event_type: 'request_review',
+        actor_role: 'owner',
+        source_service_id: 'codex-main',
+        source_fingerprint: 'fingerprint-1',
+        dedupe_key: 'auto-request-review:fingerprint-1',
+        payload_json: null,
+        created_at: '2026-03-28T00:00:00.000Z',
+      },
+    ]);
+
+    completePairedExecutionContext({
+      executionId: 'run-1:codex-main',
+      status: 'succeeded',
+      summary: 'done',
+    });
+
+    expect(db.applyPairedEvent).not.toHaveBeenCalled();
+    expect(pairedWorkspaceManager.markPairedTaskReviewReady).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-request review for high-risk tasks before plan approval', () => {
+    vi.mocked(db.getPairedExecutionById).mockReturnValue({
+      id: 'run-1:codex-main',
+      task_id: 'task-1',
+      service_id: 'codex-main',
+      role: 'owner',
+      workspace_id: 'task-1:owner',
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: '2026-03-28T00:00:00.000Z',
+      completed_at: null,
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'plan_review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedWorkspace).mockReturnValue({
+      id: 'task-1:owner',
+      task_id: 'task-1',
+      role: 'owner',
+      workspace_dir: '/tmp/paired/task-1/owner',
+      snapshot_source_dir: null,
+      snapshot_source_fingerprint: null,
+      status: 'ready',
+      snapshot_refreshed_at: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    completePairedExecutionContext({
+      executionId: 'run-1:codex-main',
+      status: 'succeeded',
+      summary: 'done',
+    });
+
+    expect(db.applyPairedEvent).not.toHaveBeenCalled();
+    expect(pairedWorkspaceManager.markPairedTaskReviewReady).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-request review after a reviewer execution completes', () => {
+    vi.mocked(db.getPairedExecutionById).mockReturnValue({
+      id: 'run-1:codex-review',
+      task_id: 'task-1',
+      service_id: 'codex-review',
+      role: 'reviewer',
+      workspace_id: 'task-1:reviewer',
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: '2026-03-28T00:00:00.000Z',
+      completed_at: null,
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    completePairedExecutionContext({
+      executionId: 'run-1:codex-review',
+      status: 'succeeded',
+      summary: 'done',
+    });
+
+    expect(db.applyPairedEvent).not.toHaveBeenCalled();
+    expect(pairedWorkspaceManager.markPairedTaskReviewReady).not.toHaveBeenCalled();
+  });
+
+  it('records a new checkpoint and returns the task to review_pending when owner changes arrive during in_review', () => {
+    vi.mocked(db.getPairedExecutionById).mockReturnValue({
+      id: 'run-1:codex-main',
+      task_id: 'task-1',
+      service_id: 'codex-main',
+      role: 'owner',
+      workspace_id: 'task-1:owner',
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: '2026-03-28T00:00:00.000Z',
+      completed_at: null,
+    });
+    vi.mocked(pairedWorkspaceManager.resolvePairedTaskSourceFingerprint).mockReturnValue(
+      'fingerprint-2',
+    );
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: '2026-03-28T00:00:00.000Z',
+      status: 'in_review',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedWorkspace).mockReturnValue({
+      id: 'task-1:owner',
+      task_id: 'task-1',
+      role: 'owner',
+      workspace_dir: '/tmp/paired/task-1/owner',
+      snapshot_source_dir: null,
+      snapshot_source_fingerprint: null,
+      status: 'ready',
+      snapshot_refreshed_at: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    completePairedExecutionContext({
+      executionId: 'run-1:codex-main',
+      status: 'succeeded',
+      summary: 'updated',
+    });
+
+    expect(db.applyPairedEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          task_id: 'task-1',
+          event_type: 'request_review',
+          source_fingerprint: 'fingerprint-2',
+          dedupe_key: 'auto-request-review:fingerprint-2',
+        }),
+      }),
+    );
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'review_pending',
+        review_requested_at: expect.any(String),
+      }),
+    );
+    expect(pairedWorkspaceManager.markPairedTaskReviewReady).not.toHaveBeenCalled();
   });
 
   it('uses the reviewer snapshot after lazy auto-refresh and marks the task in_review', () => {

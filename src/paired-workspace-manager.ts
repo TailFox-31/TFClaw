@@ -197,6 +197,14 @@ function listAllowedUntrackedFiles(sourceDir: string): string[] {
   ]).filter(shouldIncludeUntrackedReviewerPath);
 }
 
+function listReviewableTrackedDiffFiles(
+  sourceDir: string,
+  sourceRef: string,
+): string[] {
+  return listGitPaths(sourceDir, ['diff', '--name-only', '-z', sourceRef, '--'])
+    .filter((relativePath) => !isReviewerSnapshotDeniedPath(relativePath));
+}
+
 function copySnapshotPaths(
   sourceDir: string,
   targetDir: string,
@@ -345,6 +353,25 @@ export function resolvePairedTaskSourceFingerprint(taskId: string): string | nul
       ownerWorkspace.workspace_dir,
     ),
   });
+}
+
+export function hasReviewableOwnerWorkspaceChanges(taskId: string): boolean {
+  const { task } = getTaskAndProject(taskId);
+  const ownerWorkspace = getPairedWorkspace(taskId, 'owner');
+  if (!ownerWorkspace) {
+    return false;
+  }
+
+  ensureGitRepository(ownerWorkspace.workspace_dir);
+  const reviewableTrackedDiffs = listReviewableTrackedDiffFiles(
+    ownerWorkspace.workspace_dir,
+    task.source_ref || 'HEAD',
+  );
+  if (reviewableTrackedDiffs.length > 0) {
+    return true;
+  }
+
+  return listAllowedUntrackedFiles(ownerWorkspace.workspace_dir).length > 0;
 }
 
 export function provisionOwnerWorkspaceForPairedTask(
