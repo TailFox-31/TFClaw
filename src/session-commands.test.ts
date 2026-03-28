@@ -91,6 +91,22 @@ describe('isSessionCommandControlMessage', () => {
     ).toBe(true);
   });
 
+  it('matches multiline review-updated output', () => {
+    expect(
+      isSessionCommandControlMessage(
+        'Review snapshot updated.\n- Task: paired-task-1',
+      ),
+    ).toBe(true);
+  });
+
+  it('matches pending review output', () => {
+    expect(
+      isSessionCommandControlMessage(
+        'Review request recorded, but the owner workspace is not ready yet.\n- Task: paired-task-1\nThe task stays review_pending until the owner workspace is prepared.',
+      ),
+    ).toBe(true);
+  });
+
   it('does not match regular bot conversation', () => {
     expect(
       isSessionCommandControlMessage(
@@ -234,6 +250,31 @@ describe('handleSessionCommand', () => {
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Review snapshot updated.\n- Task: paired-task-1',
+    );
+  });
+
+  it('sends a pending review message when owner workspace is not ready yet', async () => {
+    const deps = makeDeps({
+      markReviewReady: vi
+        .fn()
+        .mockResolvedValue(
+          'Review request recorded, but the owner workspace is not ready yet.\n- Task: paired-task-1\nThe task stays review_pending until the owner workspace is prepared.',
+        ),
+    });
+
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/review')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.markReviewReady).toHaveBeenCalledTimes(1);
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Review request recorded, but the owner workspace is not ready yet.\n- Task: paired-task-1\nThe task stays review_pending until the owner workspace is prepared.',
     );
   });
 

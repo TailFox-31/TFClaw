@@ -41,7 +41,10 @@ import {
 import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
 import { createSuppressToken } from './output-suppression.js';
-import { markRoomReviewReady } from './paired-execution-context.js';
+import {
+  formatRoomReviewReadyMessage,
+  markRoomReviewReady,
+} from './paired-execution-context.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import {
   extractSessionCommand,
@@ -573,15 +576,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               chatJid,
               roomRoleContext,
             });
-            if (!result) {
-              return null;
-            }
-            return [
-              'Review snapshot updated.',
-              `- Task: ${result.task.id}`,
-              `- Owner workspace: ${result.ownerWorkspace.workspace_dir}`,
-              `- Reviewer snapshot: ${result.reviewerWorkspace.workspace_dir}`,
-            ].join('\n');
+            return formatRoomReviewReadyMessage(result);
           },
         },
       });

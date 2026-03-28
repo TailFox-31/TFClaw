@@ -132,6 +132,53 @@ describe('paired workspace manager', () => {
     ).toBeTruthy();
   });
 
+  it('keeps review_pending when /review is requested before an owner workspace exists', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    runGit(['init'], canonicalDir);
+    runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
+    runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'README.md'), 'original\n');
+    runGit(['add', 'README.md'], canonicalDir);
+    runGit(['commit', '-m', 'initial'], canonicalDir);
+
+    const now = '2026-03-28T00:00:00.000Z';
+    db.upsertPairedProject({
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      canonical_work_dir: canonicalDir,
+      workspace_topology: 'shadow-snapshot',
+      created_at: now,
+      updated_at: now,
+    });
+    db.createPairedTask({
+      id: 'paired-task-pending',
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      review_requested_at: null,
+      status: 'draft',
+      created_at: now,
+      updated_at: now,
+    });
+
+    const result = manager.markPairedTaskReviewReady('paired-task-pending');
+
+    expect(result).toBeNull();
+    expect(db.getPairedTaskById('paired-task-pending')?.status).toBe(
+      'review_pending',
+    );
+    expect(
+      db.getPairedTaskById('paired-task-pending')?.review_requested_at,
+    ).toBeTruthy();
+  });
+
   it('uses the shared DB owner workspace across service-local data dirs', async () => {
     const canonicalDir = path.join(tempRoot, 'canonical');
     fs.mkdirSync(canonicalDir, { recursive: true });
@@ -600,6 +647,69 @@ describe('paired workspace manager', () => {
     expect(db.getPairedTaskById('paired-task-5b')?.review_requested_at).toBe(
       '2026-03-28T00:01:00.000Z',
     );
+  });
+
+  it('auto-refreshes once the owner workspace appears after review_pending was already recorded', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    runGit(['init'], canonicalDir);
+    runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
+    runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'README.md'), 'base\n');
+    runGit(['add', 'README.md'], canonicalDir);
+    runGit(['commit', '-m', 'initial'], canonicalDir);
+
+    const now = '2026-03-28T00:00:00.000Z';
+    db.upsertPairedProject({
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      canonical_work_dir: canonicalDir,
+      workspace_topology: 'shadow-snapshot',
+      created_at: now,
+      updated_at: now,
+    });
+    db.createPairedTask({
+      id: 'paired-task-5c',
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      review_requested_at: null,
+      status: 'draft',
+      created_at: now,
+      updated_at: now,
+    });
+
+    expect(manager.markPairedTaskReviewReady('paired-task-5c')).toBeNull();
+    expect(db.getPairedTaskById('paired-task-5c')?.status).toBe(
+      'review_pending',
+    );
+
+    const ownerWorkspace =
+      manager.provisionOwnerWorkspaceForPairedTask('paired-task-5c');
+    fs.writeFileSync(
+      path.join(ownerWorkspace.workspace_dir, 'README.md'),
+      'owner ready now\n',
+    );
+
+    const result = manager.prepareReviewerWorkspaceForExecution(
+      db.getPairedTaskById('paired-task-5c')!,
+    );
+
+    expect(result.autoRefreshed).toBe(true);
+    expect(result.blockMessage).toBeUndefined();
+    expect(
+      fs.readFileSync(
+        path.join(result.workspace!.workspace_dir, 'README.md'),
+        'utf-8',
+      ),
+    ).toBe('owner ready now\n');
+    expect(db.getPairedTaskById('paired-task-5c')?.status).toBe('review_ready');
   });
 
   it('blocks once when an in-review snapshot becomes stale, then refreshes on retry', async () => {

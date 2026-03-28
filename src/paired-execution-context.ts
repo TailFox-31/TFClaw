@@ -152,6 +152,19 @@ export interface PreparedPairedExecutionContext {
   blockMessage?: string;
 }
 
+export type MarkRoomReviewReadyResult =
+  | {
+      status: 'ready';
+      task: PairedTask;
+      ownerWorkspace: PairedWorkspace;
+      reviewerWorkspace: PairedWorkspace;
+    }
+  | {
+      status: 'pending';
+      task: PairedTask;
+      pendingReason: 'owner-workspace-not-ready';
+    };
+
 export function preparePairedExecutionContext(args: {
   group: RegisteredGroup;
   chatJid: string;
@@ -231,11 +244,7 @@ export function markRoomReviewReady(args: {
   group: RegisteredGroup;
   chatJid: string;
   roomRoleContext?: RoomRoleContext;
-}): {
-  task: PairedTask;
-  ownerWorkspace: PairedWorkspace;
-  reviewerWorkspace: PairedWorkspace;
-} | null {
+}): MarkRoomReviewReadyResult | null {
   const { group, chatJid, roomRoleContext } = args;
   if (!roomRoleContext || !group.workDir) {
     return null;
@@ -253,14 +262,43 @@ export function markRoomReviewReady(args: {
   }
 
   const reviewReady = markPairedTaskReviewReady(task.id);
+  const latestTask = getPairedTaskById(task.id) ?? task;
   if (!reviewReady) {
-    return null;
+    return {
+      status: 'pending',
+      task: latestTask,
+      pendingReason: 'owner-workspace-not-ready',
+    };
   }
 
   const { ownerWorkspace, reviewerWorkspace } = reviewReady;
   return {
-    task: getPairedTaskById(task.id) ?? task,
+    status: 'ready',
+    task: latestTask,
     ownerWorkspace,
     reviewerWorkspace,
   };
+}
+
+export function formatRoomReviewReadyMessage(
+  result: MarkRoomReviewReadyResult | null,
+): string | null {
+  if (!result) {
+    return null;
+  }
+
+  if (result.status === 'pending') {
+    return [
+      'Review request recorded, but the owner workspace is not ready yet.',
+      `- Task: ${result.task.id}`,
+      'The task stays review_pending until the owner workspace is prepared.',
+    ].join('\n');
+  }
+
+  return [
+    'Review snapshot updated.',
+    `- Task: ${result.task.id}`,
+    `- Owner workspace: ${result.ownerWorkspace.workspace_dir}`,
+    `- Reviewer snapshot: ${result.reviewerWorkspace.workspace_dir}`,
+  ].join('\n');
 }

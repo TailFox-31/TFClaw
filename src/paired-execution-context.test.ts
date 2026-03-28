@@ -29,6 +29,7 @@ vi.mock('./logger.js', () => ({
 
 import * as db from './db.js';
 import {
+  formatRoomReviewReadyMessage,
   markRoomReviewReady,
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
@@ -315,10 +316,14 @@ describe('paired execution context', () => {
     expect(
       pairedWorkspaceManager.markPairedTaskReviewReady,
     ).toHaveBeenCalledWith('task-1');
-    expect(result?.task.status).toBe('review_ready');
+    expect(result?.status).toBe('ready');
+    if (result?.status !== 'ready') {
+      throw new Error('expected ready review result');
+    }
+    expect(result.task.status).toBe('review_ready');
   });
 
-  it('returns null when review-ready setup cannot resolve an owner workspace', () => {
+  it('returns pending when review-ready setup cannot resolve an owner workspace', () => {
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
       id: 'task-1',
       chat_jid: 'dc:test',
@@ -332,6 +337,19 @@ describe('paired execution context', () => {
       created_at: '2026-03-28T00:00:00.000Z',
       updated_at: '2026-03-28T00:00:00.000Z',
     });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      review_requested_at: '2026-03-28T00:01:00.000Z',
+      status: 'review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:01:00.000Z',
+    });
     vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
       null,
     );
@@ -342,6 +360,39 @@ describe('paired execution context', () => {
       roomRoleContext: ownerContext,
     });
 
-    expect(result).toBeNull();
+    expect(result).toEqual(
+      expect.objectContaining({
+        status: 'pending',
+        pendingReason: 'owner-workspace-not-ready',
+        task: expect.objectContaining({
+          id: 'task-1',
+          status: 'review_pending',
+        }),
+      }),
+    );
+  });
+
+  it('formats a pending review-ready result into a user-facing pending message', () => {
+    const message = formatRoomReviewReadyMessage({
+      status: 'pending',
+      pendingReason: 'owner-workspace-not-ready',
+      task: {
+        id: 'task-1',
+        chat_jid: 'dc:test',
+        group_folder: group.folder,
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        review_requested_at: '2026-03-28T00:01:00.000Z',
+        status: 'review_pending',
+        created_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:01:00.000Z',
+      },
+    });
+
+    expect(message).toBe(
+      'Review request recorded, but the owner workspace is not ready yet.\n- Task: task-1\nThe task stays review_pending until the owner workspace is prepared.',
+    );
   });
 });
