@@ -37,107 +37,6 @@ export function isReviewerRuntime(
   return roomRoleContext?.role === 'reviewer';
 }
 
-function findGitSubcommand(args: string[]): string {
-  let skipNext = false;
-  for (const arg of args) {
-    if (skipNext) {
-      skipNext = false;
-      continue;
-    }
-    switch (arg) {
-      case '-c':
-      case '-C':
-      case '--git-dir':
-      case '--work-tree':
-      case '--namespace':
-      case '--exec-path':
-      case '--config-env':
-        skipNext = true;
-        continue;
-      default:
-        break;
-    }
-    if (
-      arg.startsWith('-c') ||
-      arg.startsWith('-C') ||
-      arg.startsWith('--git-dir=') ||
-      arg.startsWith('--work-tree=') ||
-      arg.startsWith('--namespace=') ||
-      arg.startsWith('--exec-path=') ||
-      arg.startsWith('--config-env=')
-    ) {
-      continue;
-    }
-    if (arg.startsWith('-')) {
-      continue;
-    }
-    return arg;
-  }
-  return '';
-}
-
-function tokenizeShellWords(segment: string): string[] {
-  const tokens: string[] = [];
-  let current = '';
-  let quote: '"' | "'" | null = null;
-  let escaped = false;
-
-  for (const char of segment) {
-    if (escaped) {
-      current += char;
-      escaped = false;
-      continue;
-    }
-    if (char === '\\' && quote !== "'") {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (char === quote) {
-        quote = null;
-      } else {
-        current += char;
-      }
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-    if (/\s/.test(char)) {
-      if (current) {
-        tokens.push(current);
-        current = '';
-      }
-      continue;
-    }
-    current += char;
-  }
-
-  if (current) {
-    tokens.push(current);
-  }
-  return tokens;
-}
-
-function isBlockedGitCommand(command: string): boolean {
-  const segments = command
-    .split(/&&|\|\||[;\n]/)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-  for (const segment of segments) {
-    const tokens = tokenizeShellWords(segment);
-    if (tokens[0] !== 'git') {
-      continue;
-    }
-    const subcommand = findGitSubcommand(tokens.slice(1));
-    if (BLOCKED_GIT_SUBCOMMANDS.has(subcommand)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function resolveGitBinary(baseEnv: NodeJS.ProcessEnv): string {
   return execFileSync('bash', ['-lc', 'command -v git'], {
     encoding: 'utf-8',
@@ -155,6 +54,7 @@ export function buildReviewerGitGuardEnv(
   }
 
   const realGitPath = resolveGitBinary(baseEnv);
+  const protectedWorkDir = baseEnv.EJCLAW_WORK_DIR || '';
   const wrapperDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'ejclaw-reviewer-git-'),
   );
@@ -166,15 +66,46 @@ export function buildReviewerGitGuardEnv(
   const script = `#!/usr/bin/env bash
 set -euo pipefail
 real_git=${JSON.stringify(realGitPath)}
+protected_work_dir=${JSON.stringify(protectedWorkDir)}
 blocked_subcommands=(${blocked})
 subcmd=""
 skip_next=0
+target_dir="$(pwd -P)"
+capture_next_dir=0
 for arg in "$@"; do
+  if [[ "$capture_next_dir" == "1" ]]; then
+    if [[ "$arg" == /* ]]; then
+      target_dir="$arg"
+    else
+      target_dir="$target_dir/$arg"
+    fi
+    target_dir="$(cd "$target_dir" 2>/dev/null && pwd -P || printf '%s' "$target_dir")"
+    capture_next_dir=0
+    continue
+  fi
   if [[ "$skip_next" == "1" ]]; then
     skip_next=0
     continue
   fi
   case "$arg" in
+    -C)
+      capture_next_dir=1
+      continue
+      ;;
+    -C*)
+      target_dir="\${arg#-C}"
+      target_dir="$(cd "$target_dir" 2>/dev/null && pwd -P || printf '%s' "$target_dir")"
+      continue
+      ;;
+    --work-tree)
+      capture_next_dir=1
+      continue
+      ;;
+    --work-tree=*)
+      target_dir="\${arg#--work-tree=}"
+      target_dir="$(cd "$target_dir" 2>/dev/null && pwd -P || printf '%s' "$target_dir")"
+      continue
+      ;;
     -c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)
       skip_next=1
       continue
@@ -194,8 +125,17 @@ for arg in "$@"; do
       ;;
   esac
 done
+is_protected_target=0
+if [[ -n "$protected_work_dir" ]]; then
+  protected_real="$(cd "$protected_work_dir" 2>/dev/null && pwd -P || printf '%s' "$protected_work_dir")"
+  case "$target_dir" in
+    "$protected_real"|"$protected_real"/*)
+      is_protected_target=1
+      ;;
+  esac
+fi
 for blocked in "\${blocked_subcommands[@]}"; do
-  if [[ "$subcmd" == "$blocked" ]]; then
+  if [[ "$is_protected_target" == "1" && "$subcmd" == "$blocked" ]]; then
     echo "EJClaw reviewer runtime blocks mutating git subcommands: $subcmd" >&2
     exit 1
   fi
@@ -207,6 +147,7 @@ exec "$real_git" "$@"
   return {
     ...baseEnv,
     EJCLAW_REAL_GIT: realGitPath,
+    EJCLAW_PROTECTED_WORK_DIR: protectedWorkDir,
     PATH: `${wrapperDir}:${baseEnv.PATH || ''}`,
   };
 }
@@ -214,7 +155,6 @@ exec "$real_git" "$@"
 export function isReviewerMutatingShellCommand(command: string): boolean {
   const normalized = command.trim();
   return (
-    isBlockedGitCommand(normalized) ||
     MUTATING_SHELL_PATTERNS.some((pattern) => pattern.test(normalized))
   );
 }

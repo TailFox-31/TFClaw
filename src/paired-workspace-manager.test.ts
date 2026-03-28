@@ -319,4 +319,76 @@ describe('paired workspace manager', () => {
       ),
     ).toBe(false);
   });
+
+  it('keeps reviewer git status clean while hiding denied tracked files', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    fs.mkdirSync(path.join(canonicalDir, '.claude'), { recursive: true });
+    runGit(['init'], canonicalDir);
+    runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
+    runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'tracked.ts'), 'export const ok = 1;\n');
+    fs.writeFileSync(
+      path.join(canonicalDir, '.claude', 'settings.json'),
+      '{"secret":true}\n',
+    );
+    fs.writeFileSync(
+      path.join(canonicalDir, '.env.production'),
+      'TRACKED_SECRET=1\n',
+    );
+    fs.writeFileSync(path.join(canonicalDir, '.env.example'), 'EXAMPLE=1\n');
+    runGit(
+      ['add', 'tracked.ts', '.claude/settings.json', '.env.production', '.env.example'],
+      canonicalDir,
+    );
+    runGit(['commit', '-m', 'initial'], canonicalDir);
+
+    const now = '2026-03-28T00:00:00.000Z';
+    db.upsertPairedProject({
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      canonical_work_dir: canonicalDir,
+      workspace_topology: 'shadow-snapshot',
+      created_at: now,
+      updated_at: now,
+    });
+    db.createPairedTask({
+      id: 'paired-task-4',
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      review_requested_at: null,
+      status: 'draft',
+      created_at: now,
+      updated_at: now,
+    });
+
+    const reviewerWorkspace =
+      manager.refreshReviewerSnapshotForPairedTask('paired-task-4');
+
+    expect(
+      runGit(['status', '--short'], reviewerWorkspace.workspace_dir),
+    ).toBe('');
+    expect(
+      fs.existsSync(
+        path.join(reviewerWorkspace.workspace_dir, '.claude', 'settings.json'),
+      ),
+    ).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(reviewerWorkspace.workspace_dir, '.env.production'),
+      ),
+    ).toBe(false);
+    expect(
+      fs.readFileSync(
+        path.join(reviewerWorkspace.workspace_dir, '.env.example'),
+        'utf-8',
+      ),
+    ).toBe('EXAMPLE=1\n');
+  });
 });

@@ -10,6 +10,26 @@ import {
   isReviewerRuntime,
 } from '../src/reviewer-runtime.js';
 
+function createTempRepo(prefix: string): string {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  execFileSync('git', ['init'], {
+    cwd,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+    cwd,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  execFileSync('git', ['config', 'user.name', 'EJClaw Test'], {
+    cwd,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return cwd;
+}
+
 describe('codex reviewer runtime guard', () => {
   it('detects reviewer room metadata', () => {
     expect(
@@ -29,9 +49,39 @@ describe('codex reviewer runtime guard', () => {
     expect(env.EJCLAW_REAL_GIT).toBeTruthy();
   });
 
-  it('blocks mutating git subcommands even when git options come first', () => {
-    const env = buildReviewerGitGuardEnv({ PATH: process.env.PATH }, true);
+  it('allows mutating git commands in temp repos outside the protected workspace', () => {
+    const protectedDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-protected-workspace-'),
+    );
+    const env = buildReviewerGitGuardEnv(
+      {
+        PATH: process.env.PATH,
+        EJCLAW_WORK_DIR: protectedDir,
+      },
+      true,
+    );
+    const cwd = createTempRepo('ejclaw-reviewer-temp-repo-');
+    fs.writeFileSync(path.join(cwd, 'note.txt'), 'ok\n');
+
+    expect(() =>
+      execFileSync('git', ['add', 'note.txt'], {
+        cwd,
+        env,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    ).not.toThrow();
+  });
+
+  it('blocks mutating git subcommands inside the protected reviewer workspace', () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-reviewer-test-'));
+    const env = buildReviewerGitGuardEnv(
+      {
+        PATH: process.env.PATH,
+        EJCLAW_WORK_DIR: cwd,
+      },
+      true,
+    );
 
     try {
       execFileSync('git', ['-c', 'color.ui=false', 'commit', '-m', 'x'], {

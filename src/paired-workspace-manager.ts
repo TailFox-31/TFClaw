@@ -92,6 +92,19 @@ function runGit(args: string[], cwd?: string): string {
   }).trim();
 }
 
+function runGitWithInput(
+  args: string[],
+  cwd: string,
+  input: string,
+): string {
+  return execFileSync('git', args, {
+    cwd,
+    input,
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }).trim();
+}
+
 function ensureGitRepository(repoDir: string): void {
   const insideWorkTree = runGit(
     ['rev-parse', '--is-inside-work-tree'],
@@ -167,24 +180,35 @@ function shouldIncludeUntrackedReviewerPath(relativePath: string): boolean {
   );
 }
 
-function copySelectedSnapshotTree(sourceDir: string, targetDir: string): void {
-  resetDirectoryExceptGit(targetDir);
-
-  const trackedFiles = listGitPaths(sourceDir, [
+function listAllowedTrackedFiles(sourceDir: string): string[] {
+  return listGitPaths(sourceDir, [
     'ls-files',
     '--cached',
     '-z',
   ]).filter((relativePath) => !isReviewerSnapshotDeniedPath(relativePath));
-  const untrackedFiles = listGitPaths(sourceDir, [
+}
+
+function listDeletedTrackedFiles(sourceDir: string): string[] {
+  return listGitPaths(sourceDir, ['ls-files', '--deleted', '-z']).filter(
+    (relativePath) => !isReviewerSnapshotDeniedPath(relativePath),
+  );
+}
+
+function listAllowedUntrackedFiles(sourceDir: string): string[] {
+  return listGitPaths(sourceDir, [
     'ls-files',
     '--others',
     '--exclude-standard',
     '-z',
   ]).filter(shouldIncludeUntrackedReviewerPath);
+}
 
-  const filesToCopy = [...new Set([...trackedFiles, ...untrackedFiles])].sort();
-
-  for (const relativePath of filesToCopy) {
+function copySnapshotPaths(
+  sourceDir: string,
+  targetDir: string,
+  relativePaths: string[],
+): void {
+  for (const relativePath of [...new Set(relativePaths)].sort()) {
     const sourcePath = path.join(sourceDir, relativePath);
     if (!fs.existsSync(sourcePath)) continue;
 
@@ -192,6 +216,31 @@ function copySelectedSnapshotTree(sourceDir: string, targetDir: string): void {
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
     fs.cpSync(sourcePath, targetPath, { force: true, recursive: true });
   }
+}
+
+function removeSnapshotPaths(targetDir: string, relativePaths: string[]): void {
+  for (const relativePath of [...new Set(relativePaths)].sort()) {
+    fs.rmSync(path.join(targetDir, relativePath), {
+      recursive: true,
+      force: true,
+    });
+  }
+}
+
+function applyReviewerSparseCheckout(
+  reviewerDir: string,
+  allowedTrackedFiles: string[],
+): void {
+  runGit(['sparse-checkout', 'init', '--no-cone'], reviewerDir);
+  const patterns =
+    allowedTrackedFiles.length > 0
+      ? `${allowedTrackedFiles.join('\n')}\n`
+      : '/*\n!/*\n';
+  runGitWithInput(
+    ['sparse-checkout', 'set', '--no-cone', '--stdin'],
+    reviewerDir,
+    patterns,
+  );
 }
 
 function configureReviewerGitIsolation(workspaceDir: string): void {
@@ -307,9 +356,26 @@ export function refreshReviewerSnapshotForPairedTask(
     runGit(['clone', '--shared', ownerWorkspace.workspace_dir, reviewerDir]);
   }
 
+  const allowedTrackedFiles = listAllowedTrackedFiles(ownerWorkspace.workspace_dir);
+  const deletedTrackedFiles = listDeletedTrackedFiles(ownerWorkspace.workspace_dir);
+  const allowedUntrackedFiles = listAllowedUntrackedFiles(
+    ownerWorkspace.workspace_dir,
+  );
+
   runGit(['reset', '--hard', 'HEAD'], reviewerDir);
   runGit(['clean', '-fdx'], reviewerDir);
-  copySelectedSnapshotTree(ownerWorkspace.workspace_dir, reviewerDir);
+  applyReviewerSparseCheckout(reviewerDir, allowedTrackedFiles);
+  copySnapshotPaths(
+    ownerWorkspace.workspace_dir,
+    reviewerDir,
+    allowedTrackedFiles,
+  );
+  removeSnapshotPaths(reviewerDir, deletedTrackedFiles);
+  copySnapshotPaths(
+    ownerWorkspace.workspace_dir,
+    reviewerDir,
+    allowedUntrackedFiles,
+  );
   configureReviewerGitIsolation(reviewerDir);
 
   const refreshedAt = new Date().toISOString();

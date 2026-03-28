@@ -48,6 +48,7 @@ export function buildReviewerGitGuardEnv(
   }
 
   const realGitPath = resolveGitBinary(baseEnv);
+  const protectedWorkDir = baseEnv.EJCLAW_WORK_DIR || '';
   const wrapperDir = fs.mkdtempSync(
     path.join(os.tmpdir(), 'ejclaw-reviewer-git-'),
   );
@@ -59,15 +60,46 @@ export function buildReviewerGitGuardEnv(
   const script = `#!/usr/bin/env bash
 set -euo pipefail
 real_git=${JSON.stringify(realGitPath)}
+protected_work_dir=${JSON.stringify(protectedWorkDir)}
 blocked_subcommands=(${blocked})
 subcmd=""
 skip_next=0
+target_dir="$(pwd -P)"
+capture_next_dir=0
 for arg in "$@"; do
+  if [[ "$capture_next_dir" == "1" ]]; then
+    if [[ "$arg" == /* ]]; then
+      target_dir="$arg"
+    else
+      target_dir="$target_dir/$arg"
+    fi
+    target_dir="$(cd "$target_dir" 2>/dev/null && pwd -P || printf '%s' "$target_dir")"
+    capture_next_dir=0
+    continue
+  fi
   if [[ "$skip_next" == "1" ]]; then
     skip_next=0
     continue
   fi
   case "$arg" in
+    -C)
+      capture_next_dir=1
+      continue
+      ;;
+    -C*)
+      target_dir="\${arg#-C}"
+      target_dir="$(cd "$target_dir" 2>/dev/null && pwd -P || printf '%s' "$target_dir")"
+      continue
+      ;;
+    --work-tree)
+      capture_next_dir=1
+      continue
+      ;;
+    --work-tree=*)
+      target_dir="\${arg#--work-tree=}"
+      target_dir="$(cd "$target_dir" 2>/dev/null && pwd -P || printf '%s' "$target_dir")"
+      continue
+      ;;
     -c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)
       skip_next=1
       continue
@@ -87,8 +119,17 @@ for arg in "$@"; do
       ;;
   esac
 done
+is_protected_target=0
+if [[ -n "$protected_work_dir" ]]; then
+  protected_real="$(cd "$protected_work_dir" 2>/dev/null && pwd -P || printf '%s' "$protected_work_dir")"
+  case "$target_dir" in
+    "$protected_real"|"$protected_real"/*)
+      is_protected_target=1
+      ;;
+  esac
+fi
 for blocked in "\${blocked_subcommands[@]}"; do
-  if [[ "$subcmd" == "$blocked" ]]; then
+  if [[ "$is_protected_target" == "1" && "$subcmd" == "$blocked" ]]; then
     echo "EJClaw reviewer runtime blocks mutating git subcommands: $subcmd" >&2
     exit 1
   fi
@@ -100,6 +141,7 @@ exec "$real_git" "$@"
   return {
     ...baseEnv,
     EJCLAW_REAL_GIT: realGitPath,
+    EJCLAW_PROTECTED_WORK_DIR: protectedWorkDir,
     PATH: `${wrapperDir}:${baseEnv.PATH || ''}`,
   };
 }
