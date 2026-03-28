@@ -732,9 +732,7 @@ describe('paired task state', () => {
 
     _initTestDatabaseFromFile(dbPath);
 
-    expect(getPairedTaskById('paired-in-review')?.plan_status).toBe(
-      'approved',
-    );
+    expect(getPairedTaskById('paired-in-review')?.plan_status).toBe('approved');
     expect(getPairedTaskById('paired-merge-ready')?.plan_status).toBe(
       'approved',
     );

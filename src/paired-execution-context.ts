@@ -1,10 +1,7 @@
 import { execFileSync } from 'child_process';
 import crypto from 'crypto';
 
-import {
-  SERVICE_ID,
-  normalizeServiceId,
-} from './config.js';
+import { SERVICE_ID, normalizeServiceId } from './config.js';
 import {
   createPairedExecution,
   createPairedTask,

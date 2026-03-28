@@ -100,7 +100,10 @@ describe('paired /review command path', () => {
 
     expect(ownerResult?.workspace?.workspace_dir).toBeTruthy();
     const ownerWorkspaceDir = ownerResult!.workspace!.workspace_dir;
-    fs.writeFileSync(path.join(ownerWorkspaceDir, 'README.md'), 'owner change\n');
+    fs.writeFileSync(
+      path.join(ownerWorkspaceDir, 'README.md'),
+      'owner change\n',
+    );
 
     process.env.EJCLAW_DATA_DIR = path.join(tempRoot, 'data-review');
     process.env.SERVICE_ID = 'codex-review';

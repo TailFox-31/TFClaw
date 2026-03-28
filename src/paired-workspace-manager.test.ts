@@ -125,7 +125,9 @@ describe('paired workspace manager', () => {
       runGit(['status', '--short'], reviewerWorkspace.workspace_dir),
     ).toContain('M README.md');
     expect(db.getPairedTaskById('paired-task-1')?.status).toBe('review_ready');
-    expect(db.getPairedTaskById('paired-task-1')?.review_requested_at).toBeTruthy();
+    expect(
+      db.getPairedTaskById('paired-task-1')?.review_requested_at,
+    ).toBeTruthy();
     expect(
       db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_refreshed_at,
     ).toBeTruthy();
@@ -165,6 +167,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
       review_requested_at: null,
       status: 'draft',
       created_at: now,
@@ -226,8 +231,9 @@ describe('paired workspace manager', () => {
       updated_at: now,
     });
 
-    const ownerWorkspace =
-      manager.provisionOwnerWorkspaceForPairedTask('paired-task-cross-service');
+    const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-cross-service',
+    );
     fs.writeFileSync(
       path.join(ownerWorkspace.workspace_dir, 'README.md'),
       'owner modified\n',
@@ -700,6 +706,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
       review_requested_at: null,
       status: 'draft',
       created_at: now,
@@ -798,8 +807,12 @@ describe('paired workspace manager', () => {
     expect(blocked.blockMessage).toBe(
       'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.',
     );
-    expect(db.getPairedTaskById('paired-task-6')?.status).toBe('review_pending');
-    expect(db.getPairedTaskById('paired-task-6')?.review_requested_at).toBeTruthy();
+    expect(db.getPairedTaskById('paired-task-6')?.status).toBe(
+      'review_pending',
+    );
+    expect(
+      db.getPairedTaskById('paired-task-6')?.review_requested_at,
+    ).toBeTruthy();
     expect(db.getPairedWorkspace('paired-task-6', 'reviewer')?.status).toBe(
       'stale',
     );
@@ -816,6 +829,8 @@ describe('paired workspace manager', () => {
         'utf-8',
       ),
     ).toBe('owner changed again\n');
-    expect(db.getPairedTaskById('paired-task-6')?.review_requested_at).toBeTruthy();
+    expect(
+      db.getPairedTaskById('paired-task-6')?.review_requested_at,
+    ).toBeTruthy();
   });
 });

@@ -761,8 +761,7 @@ function createSchema(database: Database.Database): void {
     .get() as { sql?: string } | undefined;
   const pairedArtifactsSql = pairedArtifactsSqlRow?.sql || '';
   const pairedArtifactsNeedsMigration =
-    pairedArtifactsSql &&
-    !pairedArtifactsSql.includes("'plan_brief'");
+    pairedArtifactsSql && !pairedArtifactsSql.includes("'plan_brief'");
   if (pairedArtifactsNeedsMigration) {
     database.exec(`
       CREATE TABLE paired_artifacts_new (

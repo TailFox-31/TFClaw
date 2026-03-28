@@ -343,8 +343,10 @@ describe('paired execution context', () => {
       pairedWorkspaceManager.markPairedTaskReviewReady,
     ).toHaveBeenCalledWith('task-1');
     expect(result?.status).toBe('ready');
+    if (!result || result.status !== 'ready') {
+      throw new Error('expected ready review result');
+    }
     expect(result.task.status).toBe('review_ready');
-    expect(result?.task.status).toBe('review_ready');
   });
 
   it('keeps review_pending and returns a pending result when owner workspace is not ready', () => {

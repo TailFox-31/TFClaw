@@ -246,10 +246,9 @@ describe('createMessageRuntime', () => {
         is_from_me: true,
       },
     ]);
-    const actualSessionCommands =
-      await vi.importActual<typeof import('./session-commands.js')>(
-        './session-commands.js',
-      );
+    const actualSessionCommands = await vi.importActual<
+      typeof import('./session-commands.js')
+    >('./session-commands.js');
     vi.mocked(sessionCommands.handleSessionCommand).mockImplementation((opts) =>
       actualSessionCommands.handleSessionCommand(opts),
     );

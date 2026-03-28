@@ -504,10 +504,7 @@ export function prepareReviewerWorkspaceForExecution(
   const now = new Date().toISOString();
 
   if (snapshotMissing || snapshotStale) {
-    if (
-      task.status === 'review_pending' ||
-      task.status === 'review_ready'
-    ) {
+    if (task.status === 'review_pending' || task.status === 'review_ready') {
       const refreshedWorkspace = refreshReviewerSnapshotForPairedTask(task.id);
       updatePairedTask(task.id, {
         status: 'review_ready',

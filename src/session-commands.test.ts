@@ -93,7 +93,9 @@ describe('isSessionCommandControlMessage', () => {
 
   it('matches multiline review snapshot output', () => {
     expect(
-      isSessionCommandControlMessage('Review snapshot updated.\n- Task: task-1'),
+      isSessionCommandControlMessage(
+        'Review snapshot updated.\n- Task: task-1',
+      ),
     ).toBe(true);
   });
 
