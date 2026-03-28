@@ -21,6 +21,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { fileURLToPath } from 'url';
 
+import {
+  prependRoomRoleHeader,
+  type RoomRoleContext,
+} from './room-role-context.js';
+
 interface ContainerInput {
   prompt: string;
   sessionId?: string;
@@ -30,6 +35,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
+  roomRoleContext?: RoomRoleContext;
 }
 
 /** Mirrors AgentOutput in src/agent-runner.ts (separate package, can't import directly). */
@@ -971,6 +977,7 @@ async function main(): Promise<void> {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
     prompt += '\n' + pending.join('\n');
   }
+  prompt = prependRoomRoleHeader(prompt, containerInput.roomRoleContext);
 
   // --- Slash command handling ---
   // Only known session slash commands are handled here. This prevents

@@ -15,6 +15,9 @@ vi.mock('./config.js', () => ({
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   DATA_DIR: '/tmp/ejclaw-test-data',
   SERVICE_SESSION_SCOPE: 'claude',
+  normalizeServiceId: vi.fn((serviceId: string) =>
+    serviceId === 'codex' ? 'codex-main' : serviceId,
+  ),
 }));
 
 vi.mock('./db.js', () => ({
@@ -225,6 +228,32 @@ describe('runAgentForGroup room memory', () => {
         prompt: expect.stringMatching(
           /If you have no user-visible content to send for this turn, output exactly this JSON and nothing else: \{"ejclaw":\{"visibility":"silent"\}\}[\s\S]*If you have already emitted any visible progress, status update, or partial answer earlier in this turn, do not end with the JSON object\. Finish with a short visible final conclusion for the user instead\./,
         ),
+      }),
+      expect.any(Function),
+      undefined,
+    );
+  });
+
+  it('passes paired-room role metadata through to the runner input', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-room-role',
+    });
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        roomRoleContext: {
+          serviceId: 'claude',
+          role: 'owner',
+          ownerServiceId: 'claude',
+          reviewerServiceId: 'codex-main',
+          failoverOwner: false,
+        },
       }),
       expect.any(Function),
       undefined,

@@ -312,6 +312,46 @@ describe('agent-runner timeout behavior', () => {
     );
   });
 
+  it('serializes roomRoleContext into the runner stdin payload', async () => {
+    vi.useRealTimers();
+    fakeProc = createFakeProcess();
+
+    let stdinPayload = '';
+    fakeProc.stdin.on('data', (chunk) => {
+      stdinPayload += chunk.toString();
+    });
+
+    const resultPromise = runAgentProcess(
+      testGroup,
+      {
+        ...testInput,
+        roomRoleContext: {
+          serviceId: 'codex-main',
+          role: 'reviewer',
+          ownerServiceId: 'claude',
+          reviewerServiceId: 'codex-main',
+          failoverOwner: false,
+        },
+      },
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(JSON.parse(stdinPayload)).toMatchObject({
+      prompt: 'Hello',
+      roomRoleContext: {
+        serviceId: 'codex-main',
+        role: 'reviewer',
+        ownerServiceId: 'claude',
+        reviewerServiceId: 'codex-main',
+        failoverOwner: false,
+      },
+    });
+  });
+
   it('isolates IPC and session directories for isolated scheduled tasks', async () => {
     vi.useRealTimers();
     fakeProc = createFakeProcess();

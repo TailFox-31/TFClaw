@@ -12,6 +12,7 @@ import { createServiceHandoff, getAllTasks } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
+import { buildRoomRoleContext } from './room-role-context.js';
 import {
   classifyRotationTrigger,
   type AgentTriggerReason,
@@ -121,6 +122,10 @@ export async function runAgentForGroup(
   const currentLease = getEffectiveChannelLease(chatJid);
   const reviewerMode =
     currentLease.reviewer_service_id === SERVICE_SESSION_SCOPE;
+  const roomRoleContext = buildRoomRoleContext(
+    currentLease,
+    SERVICE_SESSION_SCOPE,
+  );
   const effectivePrompt = buildStructuredOutputPrompt(prompt, {
     reviewerMode,
   });
@@ -180,6 +185,7 @@ export async function runAgentForGroup(
     runId,
     isMain,
     assistantName: deps.assistantName,
+    roomRoleContext,
   };
 
   const runAttempt = async (

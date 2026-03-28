@@ -23,6 +23,16 @@ export type VisiblePhase = 'silent' | 'progress' | 'final';
 
 export type AgentVisibility = 'public' | 'silent';
 
+export type PairedRoomRole = 'owner' | 'reviewer';
+
+export interface RoomRoleContext {
+  serviceId: string;
+  role: PairedRoomRole;
+  ownerServiceId: string;
+  reviewerServiceId: string;
+  failoverOwner: boolean;
+}
+
 export type StructuredAgentOutput =
   | {
       visibility: 'public';

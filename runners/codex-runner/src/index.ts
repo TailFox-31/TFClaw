@@ -19,6 +19,10 @@ import {
   CodexAppServerClient,
   type AppServerInputItem,
 } from './app-server-client.js';
+import {
+  prependRoomRoleHeader,
+  type RoomRoleContext,
+} from './room-role-context.js';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -31,6 +35,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   agentType?: string;
+  roomRoleContext?: RoomRoleContext;
 }
 
 interface ContainerOutput {
@@ -464,6 +469,7 @@ async function main(): Promise<void> {
   if (pending.length > 0) {
     prompt += '\n' + pending.join('\n');
   }
+  prompt = prependRoomRoleHeader(prompt, containerInput.roomRoleContext);
 
   try {
     log('Runtime selected: app-server');

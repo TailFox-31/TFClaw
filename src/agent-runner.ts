@@ -24,6 +24,7 @@ import {
   AgentOutputPhase,
   AgentType,
   RegisteredGroup,
+  RoomRoleContext,
   StructuredAgentOutput,
 } from './types.js';
 
@@ -40,6 +41,7 @@ export interface AgentInput {
   useTaskScopedSession?: boolean;
   assistantName?: string;
   agentType?: 'claude-code' | 'codex';
+  roomRoleContext?: RoomRoleContext;
 }
 
 export interface AgentOutput {
