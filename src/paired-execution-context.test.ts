@@ -43,6 +43,7 @@ import {
   completePairedExecutionContext,
   formatRoomReviewReadyMessage,
   markRoomReviewReady,
+  planPairedExecutionRecovery,
   preparePairedExecutionContext,
   recordRoomPlan,
   requestRoomPlanChanges,
@@ -291,6 +292,160 @@ describe('paired execution context', () => {
       exceptExecutionId: 'run-1:codex-main',
       note: 'Superseded by a newer execution for the same task and role.',
     });
+  });
+
+  it('plans reviewer recovery from the latest review checkpoint', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: '2026-03-29T00:00:00.000Z',
+      status: 'review_pending',
+      created_at: '2026-03-29T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+    vi.mocked(db.listPairedEventsForTask).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-1',
+        event_type: 'request_review',
+        actor_role: 'owner',
+        source_service_id: 'codex-main',
+        source_fingerprint: 'fingerprint-2',
+        dedupe_key: 'request-review',
+        payload_json: null,
+        created_at: '2026-03-29T00:00:00.000Z',
+      },
+    ]);
+
+    const result = planPairedExecutionRecovery({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: reviewerContext,
+    });
+
+    expect(result).toMatchObject({
+      role: 'reviewer',
+      checkpointFingerprint: 'fingerprint-2',
+      recoveryKey: 'paired-recovery:task-1:reviewer:fingerprint-2',
+    });
+    expect(result?.prompt).toContain('formal paired review');
+  });
+
+  it('plans owner recovery for changes requested tasks', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: '2026-03-29T00:00:00.000Z',
+      status: 'changes_requested',
+      created_at: '2026-03-29T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+    vi.mocked(pairedWorkspaceManager.resolvePairedTaskSourceFingerprint).mockReturnValue(
+      'fingerprint-3',
+    );
+
+    const result = planPairedExecutionRecovery({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(result).toMatchObject({
+      role: 'owner',
+      checkpointFingerprint: 'fingerprint-3',
+      recoveryKey:
+        'paired-recovery:task-1:owner:changes_requested:fingerprint-3',
+    });
+    expect(result?.prompt).toContain('owner rework');
+  });
+
+  it('plans owner recovery for an interrupted active owner execution only when the latest owner execution is still running', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-29T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+    vi.mocked(db.listPairedExecutionsForTask).mockReturnValue([
+      {
+        id: 'run-1:codex-main',
+        task_id: 'task-1',
+        service_id: 'codex-main',
+        role: 'owner',
+        workspace_id: 'task-1:owner',
+        checkpoint_fingerprint: 'fingerprint-1',
+        status: 'running',
+        summary: null,
+        created_at: '2026-03-29T00:00:00.000Z',
+        started_at: '2026-03-29T00:00:00.000Z',
+        completed_at: null,
+      },
+    ]);
+    vi.mocked(pairedWorkspaceManager.resolvePairedTaskSourceFingerprint).mockReturnValue(
+      'fingerprint-2',
+    );
+
+    const result = planPairedExecutionRecovery({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(result).toMatchObject({
+      role: 'owner',
+      checkpointFingerprint: 'fingerprint-2',
+      recoveryKey: 'paired-recovery:task-1:owner:active:fingerprint-2',
+    });
+
+    vi.mocked(db.listPairedExecutionsForTask).mockReturnValue([
+      {
+        id: 'run-1:codex-main',
+        task_id: 'task-1',
+        service_id: 'codex-main',
+        role: 'owner',
+        workspace_id: 'task-1:owner',
+        checkpoint_fingerprint: 'fingerprint-1',
+        status: 'succeeded',
+        summary: null,
+        created_at: '2026-03-29T00:00:00.000Z',
+        started_at: '2026-03-29T00:00:00.000Z',
+        completed_at: '2026-03-29T00:10:00.000Z',
+      },
+    ]);
+
+    expect(
+      planPairedExecutionRecovery({
+        group,
+        chatJid: 'dc:test',
+        roomRoleContext: ownerContext,
+      }),
+    ).toBeNull();
   });
 
   it('auto-requests review when a low-risk owner execution completes', () => {

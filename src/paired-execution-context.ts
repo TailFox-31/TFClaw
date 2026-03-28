@@ -261,6 +261,14 @@ export interface PreparedPairedExecutionContext {
   blockMessage?: string;
 }
 
+export interface PairedExecutionRecoveryPlan {
+  task: PairedTask;
+  role: RoomRoleContext['role'];
+  checkpointFingerprint: string | null;
+  recoveryKey: string;
+  prompt: string;
+}
+
 export function preparePairedExecutionContext(args: {
   group: RegisteredGroup;
   chatJid: string;
@@ -485,6 +493,143 @@ function buildRoomRoleContextFromExecution(args: {
     ownerServiceId: args.task.owner_service_id,
     reviewerServiceId: args.task.reviewer_service_id,
     failoverOwner: false,
+  };
+}
+
+function getLatestExecutionForRole(
+  taskId: string,
+  role: PairedExecution['role'],
+): PairedExecution | null {
+  const executions = listPairedExecutionsForTask(taskId).filter(
+    (execution) => execution.role === role,
+  );
+  return executions.at(-1) ?? null;
+}
+
+function buildPairedExecutionRecoveryPrompt(args: {
+  task: PairedTask;
+  role: RoomRoleContext['role'];
+  checkpointFingerprint: string | null;
+  mode: 'review' | 'owner-rework' | 'owner-resume';
+}): string {
+  const lines = [
+    'Internal paired execution recovery.',
+    '- This run was started automatically after service restart.',
+    `- Task: ${args.task.id}`,
+    `- Role: ${args.role}`,
+    `- Status: ${args.task.status}`,
+  ];
+  if (args.checkpointFingerprint) {
+    lines.push(`- Checkpoint: ${args.checkpointFingerprint}`);
+  }
+
+  if (args.mode === 'review') {
+    lines.push(
+      'Resume the formal paired review for the current checkpoint without waiting for a new user message.',
+    );
+  } else if (args.mode === 'owner-rework') {
+    lines.push(
+      'Resume the owner rework for the current task state without waiting for a new user message.',
+    );
+  } else {
+    lines.push(
+      'Resume the interrupted owner implementation for the current task without waiting for a new user message.',
+    );
+  }
+
+  lines.push('- Keep the current task scope unchanged.');
+  lines.push('- Follow the existing paired task guards and checkpoint rules.');
+  return lines.join('\n');
+}
+
+export function planPairedExecutionRecovery(args: {
+  group: RegisteredGroup;
+  chatJid: string;
+  roomRoleContext?: RoomRoleContext;
+}): PairedExecutionRecoveryPlan | null {
+  const { group, chatJid, roomRoleContext } = args;
+  if (!roomRoleContext || !group.workDir) {
+    return null;
+  }
+
+  const task = getLatestOpenPairedTaskForChat(chatJid);
+  if (!task) {
+    return null;
+  }
+
+  if (roomRoleContext.role === 'reviewer') {
+    if (
+      task.status !== 'review_pending' &&
+      task.status !== 'review_ready' &&
+      task.status !== 'in_review'
+    ) {
+      return null;
+    }
+
+    const checkpointFingerprint = getLatestReviewCheckpointFingerprint(task.id);
+    if (!checkpointFingerprint) {
+      return null;
+    }
+
+    return {
+      task,
+      role: 'reviewer',
+      checkpointFingerprint,
+      recoveryKey: `paired-recovery:${task.id}:reviewer:${checkpointFingerprint}`,
+      prompt: buildPairedExecutionRecoveryPrompt({
+        task,
+        role: 'reviewer',
+        checkpointFingerprint,
+        mode: 'review',
+      }),
+    };
+  }
+
+  if (task.status === 'changes_requested') {
+    const checkpointFingerprint =
+      resolvePairedTaskSourceFingerprint(task.id) ?? null;
+    return {
+      task,
+      role: 'owner',
+      checkpointFingerprint,
+      recoveryKey: `paired-recovery:${task.id}:owner:changes_requested:${
+        checkpointFingerprint ?? 'none'
+      }`,
+      prompt: buildPairedExecutionRecoveryPrompt({
+        task,
+        role: 'owner',
+        checkpointFingerprint,
+        mode: 'owner-rework',
+      }),
+    };
+  }
+
+  if (task.status !== 'active') {
+    return null;
+  }
+
+  const latestOwnerExecution = getLatestExecutionForRole(task.id, 'owner');
+  if (latestOwnerExecution?.status !== 'running') {
+    return null;
+  }
+
+  const checkpointFingerprint =
+    resolvePairedTaskSourceFingerprint(task.id) ??
+    latestOwnerExecution.checkpoint_fingerprint ??
+    null;
+  return {
+    task,
+    role: 'owner',
+    checkpointFingerprint,
+    recoveryKey: `paired-recovery:${task.id}:owner:active:${
+      checkpointFingerprint ?? 'none'
+    }`,
+    prompt: buildPairedExecutionRecoveryPrompt({
+      task,
+      role: 'owner',
+      checkpointFingerprint,
+      mode: 'owner-resume',
+    }),
   };
 }
 
