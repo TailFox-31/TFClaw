@@ -503,6 +503,43 @@ export class GroupQueue {
     }
   }
 
+  /**
+   * Immediately kill the running agent process for a group.
+   * Returns true if a process was killed, false if nothing was running.
+   */
+  killProcess(groupJid: string): boolean {
+    const state = this.getGroup(groupJid);
+    const proc = state.process;
+    if (!proc || !this.isProcessAlive(proc)) {
+      return false;
+    }
+    logger.info(
+      {
+        groupJid,
+        runId: state.currentRunId,
+        processName: state.processName,
+      },
+      'Killing agent process via /stop command',
+    );
+    try {
+      // SIGTERM allows the runner to call AbortController.abort() for graceful cleanup.
+      // Falls back to SIGKILL after 5 seconds if the process doesn't exit.
+      proc.kill('SIGTERM');
+      setTimeout(() => {
+        if (this.isProcessAlive(proc)) {
+          try {
+            proc.kill('SIGKILL');
+          } catch {
+            /* already dead */
+          }
+        }
+      }, 5000);
+    } catch {
+      /* already dead */
+    }
+    return true;
+  }
+
   private async runForGroup(
     groupJid: string,
     reason: 'messages' | 'drain',

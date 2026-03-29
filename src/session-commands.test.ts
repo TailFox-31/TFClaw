@@ -176,6 +176,7 @@ function makeDeps(
     isAdminSender: vi.fn().mockReturnValue(false),
     canSenderInteract: vi.fn().mockReturnValue(true),
     markReviewReady: vi.fn().mockResolvedValue('Review snapshot updated.'),
+    killProcess: vi.fn().mockReturnValue(false),
     ...overrides,
   };
 }

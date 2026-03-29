@@ -581,6 +581,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             });
             return formatRoomReviewReadyMessage(result);
           },
+          killProcess: () => deps.queue.killProcess(chatJid),
         },
       });
       if (cmdResult.handled) return cmdResult.success;
@@ -917,7 +918,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           );
         }
       }
-
     }
   };
 

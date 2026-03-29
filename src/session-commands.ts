@@ -34,6 +34,7 @@ export function extractSessionCommand(
   if (text === '/compact') return '/compact';
   if (text === '/clear') return '/clear';
   if (text === '/review' || text === '/review-ready') return '/review';
+  if (text === '/stop' || text === '/cancel' || text === '/kill') return '/stop';
   return null;
 }
 
@@ -79,6 +80,8 @@ export interface SessionCommandDeps {
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
   markReviewReady: () => Promise<string | null>;
+  /** Kill the currently running agent process for this group. Returns true if a process was killed. */
+  killProcess: () => boolean;
 }
 
 function resultToText(result: string | object | null | undefined): string {
@@ -169,6 +172,17 @@ export async function handleSessionCommand(opts: {
     await deps.sendMessage(
       result ??
         'Review is unavailable for this room. Paired workspaces require a configured project workDir.',
+    );
+    return { handled: true, success: true };
+  }
+
+  if (command === '/stop') {
+    const killed = deps.killProcess();
+    deps.advanceCursor(cmdMsg.timestamp);
+    await deps.sendMessage(
+      killed
+        ? 'Agent stopped.'
+        : 'No agent is currently running in this room.',
     );
     return { handled: true, success: true };
   }
