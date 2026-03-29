@@ -537,9 +537,23 @@ export function markPairedTaskReviewReady(taskId: string): {
   if (!ownerWorkspace) {
     return null;
   }
-  const reviewerWorkspace = refreshReviewerSnapshotForPairedTask(taskId);
-  const now = new Date().toISOString();
 
+  // Reviewer runs in a container with the owner workspace mounted read-only.
+  // No file-level snapshot copy needed — just register the path.
+  const reviewerWorkspace = makeWorkspaceRecord({
+    taskId,
+    role: 'reviewer',
+    workspaceDir: ownerWorkspace.workspace_dir,
+    snapshotSourceDir: ownerWorkspace.workspace_dir,
+    snapshotRefreshedAt: requestedAt,
+  });
+  upsertPairedWorkspace(reviewerWorkspace);
+  logger.info(
+    { taskId, ownerDir: ownerWorkspace.workspace_dir },
+    'Reviewer will mount owner workspace directly',
+  );
+
+  const now = new Date().toISOString();
   updatePairedTask(taskId, {
     status: 'review_ready',
     updated_at: now,

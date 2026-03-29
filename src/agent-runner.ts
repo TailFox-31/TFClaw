@@ -70,13 +70,9 @@ export async function runAgentProcess(
   envOverrides?: Record<string, string>,
 ): Promise<AgentOutput> {
   // ── Reviewer container mode ─────────────────────────────────────
-  // When EJCLAW_REVIEWER_RUNTIME is set in envOverrides, run the reviewer
-  // inside a Docker container with read-only source mount instead of
-  // as a host process. This provides kernel-level write protection.
-  const isReviewerContainer =
-    envOverrides?.EJCLAW_REVIEWER_RUNTIME === '1' &&
-    getEnv('REVIEWER_CONTAINER_ENABLED') !== '0';
-  if (isReviewerContainer) {
+  // Reviewers always run inside a Docker container with read-only source
+  // mount for kernel-level write protection. Docker is required.
+  if (envOverrides?.EJCLAW_REVIEWER_RUNTIME === '1') {
     const ownerWorkspaceDir =
       envOverrides?.EJCLAW_WORK_DIR || group.workDir || process.cwd();
     return runReviewerContainer({
