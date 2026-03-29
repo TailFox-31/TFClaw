@@ -1,5 +1,6 @@
 # EJClaw Reviewer Container
 # Runs Claude/Codex agent in read-only isolated environment for code review.
+# Build from project root: docker build -f container/Dockerfile -t ejclaw-reviewer:latest .
 
 FROM node:22-slim
 
@@ -23,10 +24,10 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex
 # Create app directory
 WORKDIR /app
 
-# Copy and install agent runner
-COPY agent-runner/package*.json ./
+# Copy host's agent-runner (same code, same SDK version)
+COPY runners/agent-runner/package*.json ./
 RUN npm install
-COPY agent-runner/ ./
+COPY runners/agent-runner/ ./
 RUN npm run build
 
 # Create workspace directories
