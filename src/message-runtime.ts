@@ -533,8 +533,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           }
           const reviewPrompt =
             parts.length > 0
-              ? `${parts.join('\n\n')}\n\nReview the owner's response above. Provide feedback or approve.`
-              : 'Review the latest owner changes in the workspace. Provide feedback or approve.';
+              ? `${parts.join('\n\n')}\n\nReview the owner's response above.`
+              : 'Review the latest owner changes in the workspace.';
 
           // Advance cursor past the owner's messages so they aren't re-processed
           const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];

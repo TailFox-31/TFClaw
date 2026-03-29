@@ -453,11 +453,13 @@ export function prepareGroupEnvironment(
     !isMain && fs.existsSync(globalClaudeMdPath)
       ? fs.readFileSync(globalClaudeMdPath, 'utf-8').trim()
       : undefined;
+  // Owner CLAUDE.md: platform rules + owner paired room rules.
+  // Reviewer paired room rules are NOT included — those belong to the
+  // container reviewer only (via prepareContainerSessionEnvironment).
   const sessionClaudeMd = [
     ownerCommonPlatformPrompt,
     claudePlatformPrompt,
     ownerCommonPairedRoomPrompt,
-    claudePairedRoomPrompt,
     globalClaudeMemory,
     options?.memoryBriefing,
   ]

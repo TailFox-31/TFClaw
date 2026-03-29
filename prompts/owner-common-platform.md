@@ -1,19 +1,12 @@
-# Owner Common Platform Rules
+# Owner Platform Rules
 
 ## Communication
 
 Your output is sent directly to the user or Discord group.
 
-
-Keep replies concise and owner-oriented.
-
 - Respond directly to the user
 - Give conclusions and concrete next steps
 - Do not expose internal routing details unless they matter to the answer
-
-## Memory
-
-The group folder may contain a `conversations/` directory with searchable history from earlier sessions. Use it when you need prior context.
 
 ## Message formatting
 
@@ -23,11 +16,15 @@ Do not use markdown headings in chat replies. Keep messages clean and readable f
 - Use fenced code blocks when showing code
 - Prefer plain links over markdown link syntax
 
-## CI 감시 (watch_ci)
+## Memory
 
-GitHub Actions run 감시는 structured 필드를 우선 사용:
+The group folder may contain a `conversations/` directory with searchable history from earlier sessions. Use it when you need prior context.
+
+## CI monitoring (watch_ci)
+
+GitHub Actions run monitoring uses structured fields first:
 - ci_provider: "github", ci_repo: "owner/repo", ci_run_id: run ID
-- 이 조합 → host-driven fast path (LLM 토큰 소모 없음, 15초 polling)
-- structured 필드 없이 generic 등록 시 매 tick LLM 실행됨
-- ci_pr_number는 아직 미지원
-- GitHub 외 CI는 기존 generic 경로 사용
+- This combination → host-driven fast path (no LLM token cost, 15s polling)
+- Without structured fields → generic path, each tick runs LLM
+- ci_pr_number is not yet supported
+- Non-GitHub CI uses the existing generic path
