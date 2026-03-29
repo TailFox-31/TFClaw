@@ -264,19 +264,9 @@ export class MessageTurnController {
     // Final arrived — flush any buffered progress that isn't the same text,
     // then discard the pending buffer so it never shows up.
     if (text) {
-      // If the progress message already shows the same text as the final
-      // result, finalize it in-place instead of sending a duplicate message.
-      const alreadyVisible =
-        this.progressMessageId && this.latestProgressText === text;
-      if (alreadyVisible) {
-        await this.finalizeProgressMessage();
-        this.visiblePhase = toVisiblePhase(phase);
-        this.latestProgressTextForFinal = null;
-      } else {
-        await this.flushPendingProgress(text);
-        await this.finalizeProgressMessage();
-        await this.deliverFinalText(text);
-      }
+      await this.flushPendingProgress(text);
+      await this.finalizeProgressMessage();
+      await this.deliverFinalText(text);
     } else if (silentOutput || suppressState !== 'none') {
       const shouldPromoteVisibleProgressToFinal =
         this.visiblePhase === 'progress' &&
