@@ -58,6 +58,7 @@ export interface ReviewerContainerInput {
   runId: string;
   isMain: boolean;
   assistantName?: string;
+  roomRoleContext?: import('./types.js').RoomRoleContext;
 }
 
 interface VolumeMount {

@@ -12,7 +12,10 @@ import {
   AGENT_TIMEOUT,
   IDLE_TIMEOUT,
 } from './config.js';
-import { prepareGroupEnvironment } from './agent-runner-environment.js';
+import {
+  prepareContainerSessionEnvironment,
+  prepareGroupEnvironment,
+} from './agent-runner-environment.js';
 import { getEnv } from './env.js';
 export {
   type AvailableGroup,
@@ -75,6 +78,19 @@ export async function runAgentProcess(
   if (envOverrides?.EJCLAW_REVIEWER_RUNTIME === '1') {
     const ownerWorkspaceDir =
       envOverrides?.EJCLAW_WORK_DIR || group.workDir || process.cwd();
+
+    // Prepare session directory for the container (CLAUDE.md, skills, settings)
+    // so the Claude SDK inside the container has platform & paired room prompts.
+    const sessionDir = envOverrides?.CLAUDE_CONFIG_DIR;
+    if (sessionDir) {
+      prepareContainerSessionEnvironment({
+        sessionDir,
+        chatJid: input.chatJid,
+        isMain: input.isMain,
+        memoryBriefing: input.memoryBriefing,
+      });
+    }
+
     return runReviewerContainer({
       group,
       input: {
@@ -85,6 +101,7 @@ export async function runAgentProcess(
         runId: input.runId || `${Date.now()}`,
         isMain: input.isMain,
         assistantName: input.assistantName,
+        roomRoleContext: input.roomRoleContext,
       },
       ownerWorkspaceDir,
       envOverrides,

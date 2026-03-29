@@ -525,3 +525,60 @@ export function prepareGroupEnvironment(
 
   return { env, groupDir, runnerDir };
 }
+
+/**
+ * Prepare the Claude session directory for a container-based reviewer.
+ *
+ * Writes CLAUDE.md (platform + paired room prompts + global memory + briefing),
+ * syncs skills, and ensures settings.json exist — the same steps that
+ * `prepareGroupEnvironment` does for host-mode agents, but targeted at an
+ * externally provided session directory (the one mounted into the container).
+ */
+export function prepareContainerSessionEnvironment(args: {
+  sessionDir: string;
+  chatJid: string;
+  isMain: boolean;
+  memoryBriefing?: string;
+}): void {
+  const { sessionDir, chatJid, isMain, memoryBriefing } = args;
+  const projectRoot = process.cwd();
+
+  fs.mkdirSync(sessionDir, { recursive: true });
+  ensureClaudeSessionSettings(sessionDir);
+
+  // Sync skills from host
+  const skillSources = [
+    path.join(os.homedir(), '.claude', 'skills'),
+    path.join(projectRoot, 'runners', 'skills'),
+  ];
+  syncDirectoryEntries(skillSources, path.join(sessionDir, 'skills'));
+
+  // Build CLAUDE.md with reviewer-appropriate prompts
+  const claudePlatformPrompt = readPlatformPrompt('claude-code', projectRoot);
+  const claudePairedRoomPrompt = isPairedRoomJid(chatJid)
+    ? readPairedRoomPrompt('claude-code', projectRoot)
+    : undefined;
+  const globalDir = path.join(GROUPS_DIR, 'global');
+  const globalClaudeMdPath = path.join(globalDir, 'CLAUDE.md');
+  const globalClaudeMemory =
+    !isMain && fs.existsSync(globalClaudeMdPath)
+      ? fs.readFileSync(globalClaudeMdPath, 'utf-8').trim()
+      : undefined;
+
+  const sessionClaudeMd = [
+    claudePlatformPrompt,
+    claudePairedRoomPrompt,
+    globalClaudeMemory,
+    memoryBriefing,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join('\n\n---\n\n')
+    .trim();
+
+  const sessionClaudeMdPath = path.join(sessionDir, 'CLAUDE.md');
+  if (sessionClaudeMd) {
+    fs.writeFileSync(sessionClaudeMdPath, sessionClaudeMd + '\n');
+  } else if (fs.existsSync(sessionClaudeMdPath)) {
+    fs.unlinkSync(sessionClaudeMdPath);
+  }
+}
