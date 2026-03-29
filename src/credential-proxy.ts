@@ -52,14 +52,12 @@ export function startCredentialProxy(
         }
 
         // Default: Anthropic/Claude API
-        const headers: Record<
-          string,
-          string | number | string[] | undefined
-        > = {
-          ...(req.headers as Record<string, string>),
-          host: anthropicUrl.host,
-          'content-length': body.length,
-        };
+        const headers: Record<string, string | number | string[] | undefined> =
+          {
+            ...(req.headers as Record<string, string>),
+            host: anthropicUrl.host,
+            'content-length': body.length,
+          };
 
         delete headers['connection'];
         delete headers['keep-alive'];

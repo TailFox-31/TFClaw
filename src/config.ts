@@ -22,6 +22,9 @@ export const SERVICE_AGENT_TYPE: AgentType =
       ? 'codex'
       : 'claude-code';
 
+/** Unified mode: single process manages all bots. Disable with UNIFIED_MODE=0. */
+export const UNIFIED_MODE = getEnv('UNIFIED_MODE') !== '0';
+
 export function normalizeServiceId(serviceId: string): string {
   if (serviceId === 'codex') {
     return CODEX_MAIN_SERVICE_ID;

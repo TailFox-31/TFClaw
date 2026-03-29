@@ -1752,7 +1752,7 @@ export function getAllRegisteredGroups(
       );
       continue;
     }
-    result[row.jid] = {
+    const group: RegisteredGroup = {
       name: row.name,
       folder: row.folder,
       trigger: row.trigger_pattern,
@@ -1764,6 +1764,17 @@ export function getAllRegisteredGroups(
       agentType: (row.agent_type as RegisteredGroup['agentType']) || undefined,
       workDir: row.work_dir || undefined,
     };
+    // In unified mode (no agentTypeFilter), when the same JID has both
+    // claude-code and codex rows, prefer the codex entry (owner).
+    const existing = result[row.jid];
+    if (existing && !agentTypeFilter) {
+      if (group.agentType === 'codex') {
+        result[row.jid] = group;
+      }
+      // else keep existing (already codex or first-seen)
+    } else {
+      result[row.jid] = group;
+    }
   }
   return result;
 }
@@ -1836,11 +1847,6 @@ export function createPairedTask(task: PairedTask): void {
         source_ref,
         plan_notes,
         review_requested_at,
-        last_finalized_checkpoint,
-        gate_turn_kind,
-        reviewer_verdict,
-        reviewer_verdict_at,
-        reviewer_verdict_note,
         status,
         created_at,
         updated_at
@@ -1857,11 +1863,6 @@ export function createPairedTask(task: PairedTask): void {
     task.source_ref,
     task.plan_notes,
     task.review_requested_at,
-    task.last_finalized_checkpoint ?? null,
-    task.gate_turn_kind ?? null,
-    task.reviewer_verdict ?? null,
-    task.reviewer_verdict_at ?? null,
-    task.reviewer_verdict_note ?? null,
     task.status,
     task.created_at,
     task.updated_at,
@@ -1916,11 +1917,6 @@ export function updatePairedTask(
       | 'source_ref'
       | 'plan_notes'
       | 'review_requested_at'
-      | 'last_finalized_checkpoint'
-      | 'gate_turn_kind'
-      | 'reviewer_verdict'
-      | 'reviewer_verdict_at'
-      | 'reviewer_verdict_note'
       | 'status'
       | 'updated_at'
     >
@@ -1944,26 +1940,6 @@ export function updatePairedTask(
   if (updates.review_requested_at !== undefined) {
     fields.push('review_requested_at = ?');
     values.push(updates.review_requested_at);
-  }
-  if (updates.last_finalized_checkpoint !== undefined) {
-    fields.push('last_finalized_checkpoint = ?');
-    values.push(updates.last_finalized_checkpoint);
-  }
-  if (updates.gate_turn_kind !== undefined) {
-    fields.push('gate_turn_kind = ?');
-    values.push(updates.gate_turn_kind);
-  }
-  if (updates.reviewer_verdict !== undefined) {
-    fields.push('reviewer_verdict = ?');
-    values.push(updates.reviewer_verdict);
-  }
-  if (updates.reviewer_verdict_at !== undefined) {
-    fields.push('reviewer_verdict_at = ?');
-    values.push(updates.reviewer_verdict_at);
-  }
-  if (updates.reviewer_verdict_note !== undefined) {
-    fields.push('reviewer_verdict_note = ?');
-    values.push(updates.reviewer_verdict_note);
   }
   if (updates.status !== undefined) {
     fields.push('status = ?');

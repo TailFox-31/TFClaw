@@ -4,6 +4,7 @@ import {
   CODEX_REVIEW_SERVICE_ID,
   SERVICE_AGENT_TYPE,
   SERVICE_ID,
+  UNIFIED_MODE,
   normalizeServiceId,
 } from './config.js';
 import {
@@ -142,6 +143,7 @@ export function shouldServiceProcessChat(
   chatJid: string,
   serviceId: string = SERVICE_ID,
 ): boolean {
+  if (UNIFIED_MODE) return true;
   const normalizedServiceId = normalizeServiceId(serviceId);
   const lease = getEffectiveChannelLease(chatJid);
   return (

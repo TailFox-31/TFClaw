@@ -918,57 +918,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         }
       }
 
-      const lease = getEffectiveChannelLease(chatJid);
-      const roomRoleContext = buildRoomRoleContext(lease, SERVICE_ID);
-      const recoveryPlan = planPairedExecutionRecovery({
-        group,
-        chatJid,
-        roomRoleContext,
-      });
-      if (!recoveryPlan) {
-        continue;
-      }
-
-      deps.queue.enqueueTask(chatJid, recoveryPlan.recoveryKey, async () => {
-        const recoveryChannel = findChannel(deps.channels, chatJid);
-        if (!recoveryChannel) {
-          logger.warn(
-            {
-              chatJid,
-              taskId: recoveryPlan.task.id,
-              role: recoveryPlan.role,
-              recoveryKey: recoveryPlan.recoveryKey,
-            },
-            'Skipping paired execution recovery because no channel owns the chat',
-          );
-          return;
-        }
-
-        const runId = `recovery-${Date.now().toString(36)}-${Math.random()
-          .toString(36)
-          .slice(2, 8)}`;
-        logger.info(
-          {
-            chatJid,
-            group: group.name,
-            taskId: recoveryPlan.task.id,
-            role: recoveryPlan.role,
-            checkpointFingerprint: recoveryPlan.checkpointFingerprint,
-            recoveryKey: recoveryPlan.recoveryKey,
-            runId,
-          },
-          'Recovery: resuming paired execution after restart',
-        );
-        await executeTurn({
-          group,
-          prompt: recoveryPlan.prompt,
-          chatJid,
-          runId,
-          channel: recoveryChannel,
-          startSeq: null,
-          endSeq: null,
-        });
-      });
     }
   };
 

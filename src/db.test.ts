@@ -607,13 +607,6 @@ describe('paired task state', () => {
       updated_at: '2026-03-28T00:10:00.000Z',
     });
 
-    expect(getPairedTaskById('paired-task-2')?.gate_turn_kind).toBe(
-      'implementation_start',
-    );
-    expect(getPairedTaskById('paired-task-2')?.reviewer_verdict).toBe(
-      'done_with_concerns',
-    );
-
     upsertPairedWorkspace({
       id: 'paired-task-2:reviewer',
       task_id: 'paired-task-2',

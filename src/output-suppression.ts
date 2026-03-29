@@ -5,7 +5,7 @@ import {
   CODEX_REVIEW_SERVICE_ID,
   normalizeServiceId,
 } from './config.js';
-import type { PairedGateTurnKind, StructuredAgentOutput } from './types.js';
+import type { StructuredAgentOutput } from './types.js';
 
 const ANY_SUPPRESS_TOKEN_PATTERN = /__EJ_SUPPRESS_[a-f0-9]{24,}(?:__)?/g;
 const EXACT_ANY_SUPPRESS_TOKEN_PATTERN = /^__EJ_SUPPRESS_[a-f0-9]{24,}(?:__)?$/;
@@ -64,46 +64,21 @@ export function parseStructuredOutputEnvelope(
 ): StructuredAgentOutput | null {
   try {
     const parsed = JSON.parse(rawText) as {
-      ejclaw?: { visibility?: unknown; text?: unknown; verdict?: unknown };
+      ejclaw?: { visibility?: unknown; text?: unknown };
     };
     const envelope = parsed?.ejclaw;
     if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
       return null;
     }
     if (envelope.visibility === 'silent') {
-      if (
-        envelope.verdict !== undefined &&
-        !STRUCTURED_SILENT_VERDICTS.has(String(envelope.verdict))
-      ) {
-        return null;
-      }
-      return {
-        visibility: 'silent',
-        verdict:
-          envelope.verdict === 'silent'
-            ? ('silent' as const)
-            : undefined,
-      };
+      return { visibility: 'silent' };
     }
     if (
       envelope.visibility === 'public' &&
       typeof envelope.text === 'string' &&
       envelope.text.length > 0
     ) {
-      if (
-        envelope.verdict !== undefined &&
-        !STRUCTURED_PUBLIC_VERDICTS.has(String(envelope.verdict))
-      ) {
-        return null;
-      }
-      return {
-        visibility: 'public',
-        text: envelope.text,
-        verdict:
-          typeof envelope.verdict === 'string'
-            ? (envelope.verdict as 'done' | 'done_with_concerns' | 'blocked')
-            : undefined,
-      };
+      return { visibility: 'public', text: envelope.text };
     }
   } catch {
     return null;
@@ -116,7 +91,7 @@ export function buildStructuredOutputPrompt(
   prompt: string,
   options?: {
     reviewerMode?: boolean;
-    gateTurnKind?: PairedGateTurnKind | null;
+    gateTurnKind?: string | null;
     requiresVisibleVerdict?: boolean;
   },
 ): string {

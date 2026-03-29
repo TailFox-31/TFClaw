@@ -103,11 +103,6 @@ function ensureActiveTask(
     source_ref: resolveCanonicalSourceRef(canonicalWorkDir),
     plan_notes: null,
     review_requested_at: null,
-    last_finalized_checkpoint: null,
-    gate_turn_kind: null,
-    reviewer_verdict: null,
-    reviewer_verdict_at: null,
-    reviewer_verdict_note: null,
     status: 'active',
     created_at: now,
     updated_at: now,
@@ -133,7 +128,7 @@ export interface PreparedPairedExecutionContext {
   task: PairedTask;
   workspace: PairedWorkspace | null;
   envOverrides: Record<string, string>;
-  gateTurnKind?: PairedGateTurnKind | null;
+  gateTurnKind?: string | null;
   requiresVisibleVerdict?: boolean;
   blockMessage?: string;
 }
@@ -163,22 +158,11 @@ export function preparePairedExecutionContext(args: {
   }
 
   const latestTask = getPairedTaskById(task.id) ?? task;
-  const gateTurnKind = getGateTurnKind(latestTask);
-  const requiresVisibleVerdict =
-    roomRoleContext.role === 'reviewer' &&
-    !!gateTurnKind &&
-    !hasVisibleReviewerGateVerdict(latestTask.reviewer_verdict);
   let workspace: PairedWorkspace | null = null;
   let blockMessage: string | undefined;
   const now = new Date().toISOString();
 
-  if (
-    roomRoleContext.role === 'owner' &&
-    gateTurnKind &&
-    !allowsOwnerToProceedForGate(latestTask.reviewer_verdict)
-  ) {
-    blockMessage = formatOwnerGateBlockedMessage(latestTask);
-  } else if (roomRoleContext.role === 'owner') {
+  if (roomRoleContext.role === 'owner') {
     workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
   } else {
     const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
@@ -203,17 +187,12 @@ export function preparePairedExecutionContext(args: {
   }
   if (roomRoleContext.role === 'reviewer') {
     envOverrides.EJCLAW_REVIEWER_RUNTIME = '1';
-    if (requiresVisibleVerdict && gateTurnKind) {
-      envOverrides.EJCLAW_PAIRED_GATE_TURN_KIND = gateTurnKind;
-    }
   }
 
   return {
     task: getPairedTaskById(task.id) ?? task,
     workspace,
     envOverrides,
-    gateTurnKind,
-    requiresVisibleVerdict,
     blockMessage,
   };
 }

@@ -93,6 +93,13 @@ export function findChannel(
   return channels.find((c) => c.ownsJid(jid));
 }
 
+export function findChannelByName(
+  channels: Channel[],
+  name: string,
+): Channel | undefined {
+  return channels.find((c) => c.name === name);
+}
+
 /**
  * Normalize message text for deduplication comparison.
  * - Trim leading/trailing whitespace

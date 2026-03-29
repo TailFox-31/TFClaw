@@ -3,11 +3,13 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   SERVICE_ID,
   SERVICE_AGENT_TYPE,
+  UNIFIED_MODE,
   isClaudeService,
   isReviewService,
   isSessionCommandSenderAllowed,
@@ -85,6 +87,8 @@ import {
   restoreDefaultChannelLease,
 } from './service-routing.js';
 import { FAILOVER_MIN_DURATION_MS } from './config.js';
+import { startCredentialProxy } from './credential-proxy.js';
+import { cleanupOrphans } from './container-runtime.js';
 
 // Token rotation is initialized lazily on first use or at startup below
 
@@ -184,13 +188,16 @@ function loadState(): void {
     lastAgentTimestamp = {};
   }
   sessions = getAllSessions();
-  // Load only this service's registrations. The DB can hold both
-  // claude-code and codex rows for the same Discord JID.
-  registeredGroups = getAllRegisteredGroups(SERVICE_AGENT_TYPE);
+  // In unified mode, load ALL groups (duplicates resolved by preferring codex).
+  // In legacy per-service mode, load only this service's registrations.
+  registeredGroups = UNIFIED_MODE
+    ? getAllRegisteredGroups()
+    : getAllRegisteredGroups(SERVICE_AGENT_TYPE);
   logger.info(
     {
       groupCount: Object.keys(registeredGroups).length,
       agentType: SERVICE_AGENT_TYPE,
+      unifiedMode: UNIFIED_MODE,
     },
     'State loaded',
   );
@@ -316,9 +323,20 @@ async function main(): Promise<void> {
   initTokenRotation();
   initCodexTokenRotation();
 
-  // Only the Claude service owns Claude OAuth refresh to avoid
-  // cross-service refresh-token races on shared credentials.
-  if (shouldStartTokenRefreshLoop(SERVICE_AGENT_TYPE)) {
+  // Unified mode: start credential proxy for container isolation and clean up orphaned containers
+  if (UNIFIED_MODE) {
+    startCredentialProxy(CREDENTIAL_PROXY_PORT).catch((err) =>
+      logger.warn(
+        { err },
+        'Failed to start credential proxy (may already be running)',
+      ),
+    );
+    cleanupOrphans();
+  }
+
+  // In unified mode, always start the Claude OAuth refresh loop.
+  // In per-service mode, only the Claude service owns refresh to avoid races.
+  if (UNIFIED_MODE || shouldStartTokenRefreshLoop(SERVICE_AGENT_TYPE)) {
     startTokenRefreshLoop();
   } else {
     logger.info(
@@ -430,7 +448,8 @@ async function main(): Promise<void> {
   }
 
   // Start subsystems (independently of connection handler)
-  if (!isReviewService()) {
+  // In unified mode always run the scheduler. In per-service mode, skip for review-only service.
+  if (UNIFIED_MODE || !isReviewService()) {
     startSchedulerLoop({
       registeredGroups: () => registeredGroups,
       getSessions: () => sessions,
@@ -511,7 +530,7 @@ async function main(): Promise<void> {
     purgeOnStart: true,
   });
 
-  if (isClaudeService()) {
+  if (UNIFIED_MODE || isClaudeService()) {
     leaseRecoveryTimer = setInterval(() => {
       if (!hasAvailableClaudeToken()) {
         return;

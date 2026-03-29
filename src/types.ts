@@ -62,11 +62,6 @@ export interface PairedTask {
   source_ref: string | null;
   plan_notes: string | null;
   review_requested_at: string | null;
-  last_finalized_checkpoint?: string | null;
-  gate_turn_kind?: PairedGateTurnKind | null;
-  reviewer_verdict?: PairedReviewerVerdict | null;
-  reviewer_verdict_at?: string | null;
-  reviewer_verdict_note?: string | null;
   status: PairedTaskStatus;
   created_at: string;
   updated_at: string;
@@ -91,11 +86,9 @@ export type StructuredAgentOutput =
   | {
       visibility: 'public';
       text: string;
-      verdict?: Exclude<PairedReviewerVerdict, 'silent'>;
     }
   | {
       visibility: 'silent';
-      verdict?: 'silent';
     };
 
 export function normalizeAgentOutputPhase(

@@ -217,9 +217,6 @@ describe('createMessageRuntime', () => {
     vi.mocked(db.isPairedRoomJid).mockReturnValue(false);
     vi.mocked(config.isClaudeService).mockReturnValue(true);
     vi.mocked(config.isReviewService).mockReturnValue(false);
-    vi.mocked(pairedExecutionContext.planPairedExecutionRecovery).mockReturnValue(
-      null,
-    );
   });
 
   it('surfaces the pending review message through the message-runtime /review path', async () => {
@@ -2793,31 +2790,6 @@ describe('createMessageRuntime', () => {
     const enqueueMessageCheck = vi.fn();
     const enqueueTask = vi.fn();
 
-    vi.mocked(pairedExecutionContext.planPairedExecutionRecovery).mockReturnValue(
-      {
-        task: {
-          id: 'task-1',
-          chat_jid: chatJid,
-          group_folder: group.folder,
-          owner_service_id: 'claude',
-          reviewer_service_id: 'codex-main',
-          title: null,
-          source_ref: 'HEAD',
-          task_policy: 'autonomous',
-          risk_level: 'low',
-          plan_status: 'not_requested',
-          review_requested_at: '2026-03-29T00:00:00.000Z',
-          status: 'review_pending',
-          created_at: '2026-03-29T00:00:00.000Z',
-          updated_at: '2026-03-29T00:00:00.000Z',
-        },
-        role: 'reviewer',
-        checkpointFingerprint: 'fingerprint-1',
-        recoveryKey: 'paired-recovery:task-1:reviewer:fingerprint-1',
-        prompt: 'resume reviewer',
-      },
-    );
-
     vi.mocked(db.getOpenWorkItem).mockReturnValue({
       id: 99,
       group_folder: group.folder,
@@ -2866,158 +2838,8 @@ describe('createMessageRuntime', () => {
       chatJid,
       resolveGroupIpcPath(group.folder),
     );
-    expect(pairedExecutionContext.planPairedExecutionRecovery).not.toHaveBeenCalled();
     expect(enqueueTask).not.toHaveBeenCalled();
     expect(db.getMessagesSinceSeq).not.toHaveBeenCalled();
   });
 
-  it('recovery queues paired execution resume when no messages are pending', () => {
-    const chatJid = 'group@test';
-    const group = {
-      ...makeGroup('codex'),
-      workDir: '/repo/canonical',
-    };
-    const enqueueMessageCheck = vi.fn();
-    const enqueueTask = vi.fn();
-
-    vi.mocked(pairedExecutionContext.planPairedExecutionRecovery).mockReturnValue(
-      {
-        task: {
-          id: 'task-1',
-          chat_jid: chatJid,
-          group_folder: group.folder,
-          owner_service_id: 'claude',
-          reviewer_service_id: 'codex-main',
-          title: null,
-          source_ref: 'HEAD',
-          task_policy: 'autonomous',
-          risk_level: 'low',
-          plan_status: 'not_requested',
-          review_requested_at: '2026-03-29T00:00:00.000Z',
-          status: 'review_pending',
-          created_at: '2026-03-29T00:00:00.000Z',
-          updated_at: '2026-03-29T00:00:00.000Z',
-        },
-        role: 'reviewer',
-        checkpointFingerprint: 'fingerprint-1',
-        recoveryKey: 'paired-recovery:task-1:reviewer:fingerprint-1',
-        prompt: 'resume reviewer',
-      },
-    );
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [makeChannel(chatJid)],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-        enqueueMessageCheck,
-        enqueueTask,
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
-      saveState: vi.fn(),
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    runtime.recoverPendingMessages();
-
-    expect(pairedExecutionContext.planPairedExecutionRecovery).toHaveBeenCalled();
-    expect(enqueueMessageCheck).not.toHaveBeenCalled();
-    expect(enqueueTask).toHaveBeenCalledWith(
-      chatJid,
-      'paired-recovery:task-1:reviewer:fingerprint-1',
-      expect.any(Function),
-    );
-  });
-
-  it('recovery does not queue paired execution resume when messages are already pending', () => {
-    const chatJid = 'group@test';
-    const group = {
-      ...makeGroup('codex'),
-      workDir: '/repo/canonical',
-    };
-    const enqueueMessageCheck = vi.fn();
-    const enqueueTask = vi.fn();
-    vi.mocked(pairedExecutionContext.planPairedExecutionRecovery).mockReturnValue(
-      {
-        task: {
-          id: 'task-1',
-          chat_jid: chatJid,
-          group_folder: group.folder,
-          owner_service_id: 'claude',
-          reviewer_service_id: 'codex-main',
-          title: null,
-          source_ref: 'HEAD',
-          task_policy: 'autonomous',
-          risk_level: 'low',
-          plan_status: 'not_requested',
-          review_requested_at: '2026-03-29T00:00:00.000Z',
-          status: 'review_pending',
-          created_at: '2026-03-29T00:00:00.000Z',
-          updated_at: '2026-03-29T00:00:00.000Z',
-        },
-        role: 'reviewer',
-        checkpointFingerprint: 'fingerprint-1',
-        recoveryKey: 'paired-recovery:task-1:reviewer:fingerprint-1',
-        prompt: 'resume reviewer',
-      },
-    );
-
-    vi.mocked(db.getMessagesSinceSeq).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user',
-        sender_name: 'User',
-        content: 'pending',
-        timestamp: '2026-03-29T00:00:00.000Z',
-        seq: 1,
-        is_bot_message: false,
-        is_from_me: false,
-      },
-    ] as any);
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [makeChannel(chatJid)],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-        enqueueMessageCheck,
-        enqueueTask,
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
-      saveState: vi.fn(),
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    runtime.recoverPendingMessages();
-
-    expect(enqueueMessageCheck).toHaveBeenCalledWith(
-      chatJid,
-      resolveGroupIpcPath(group.folder),
-    );
-    expect(pairedExecutionContext.planPairedExecutionRecovery).not.toHaveBeenCalled();
-    expect(enqueueTask).not.toHaveBeenCalled();
-  });
 });

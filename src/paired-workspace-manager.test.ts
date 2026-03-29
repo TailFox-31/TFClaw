@@ -63,7 +63,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -129,8 +129,7 @@ describe('paired workspace manager', () => {
       db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_refreshed_at,
     ).toBeTruthy();
     expect(
-      db.getPairedWorkspace('paired-task-1', 'reviewer')
-        ?.snapshot_ref,
+      db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_ref,
     ).toBeTruthy();
   });
 
@@ -152,7 +151,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -204,7 +203,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -279,7 +278,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -353,7 +352,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -493,7 +492,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -554,7 +553,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -609,7 +608,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -670,7 +669,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -733,7 +732,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -821,7 +820,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-            created_at: now,
+      created_at: now,
       updated_at: now,
     });
     db.createPairedTask({

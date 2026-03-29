@@ -33,10 +33,8 @@ vi.mock('./logger.js', () => ({
 import * as db from './db.js';
 import {
   completePairedExecutionContext,
-  finalizeRoomDeployment,
   formatRoomReviewReadyMessage,
   markRoomReviewReady,
-  planPairedExecutionRecovery,
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
 import * as pairedWorkspaceManager from './paired-workspace-manager.js';
@@ -130,7 +128,10 @@ async function importExecutionContextForService(serviceId: string) {
   );
 
   vi.doMock('./db.js', () => dbModule);
-  vi.doMock('./paired-workspace-manager.js', () => pairedWorkspaceManagerModule);
+  vi.doMock(
+    './paired-workspace-manager.js',
+    () => pairedWorkspaceManagerModule,
+  );
   vi.doMock('./logger.js', () => ({
     logger: {
       debug: vi.fn(),
@@ -473,7 +474,9 @@ describe('paired execution context', () => {
       created_at: '2026-03-28T00:00:00.000Z',
       updated_at: '2026-03-28T00:00:00.000Z',
     });
-    pairedWorkspaceManagerModule.markPairedTaskReviewReady.mockReturnValue(null);
+    pairedWorkspaceManagerModule.markPairedTaskReviewReady.mockReturnValue(
+      null,
+    );
 
     const result = isolatedMarkRoomReviewReady({
       group,

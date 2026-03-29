@@ -234,23 +234,6 @@ describe('handleSessionCommand', () => {
     );
   });
 
-  it('handles authorized /deploy-complete without invoking the agent', async () => {
-    const deps = makeDeps();
-    const result = await handleSessionCommand({
-      missedMessages: [makeMsg('/deploy-complete')],
-      isMainGroup: true,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-    expect(result).toEqual({ handled: true, success: true });
-    expect(deps.finalizeDeployment).toHaveBeenCalledTimes(1);
-    expect(deps.runAgent).not.toHaveBeenCalled();
-    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
-    expect(deps.sendMessage).toHaveBeenCalledWith('Deployment finalized.');
-  });
-
   it('handles authorized /review without invoking the agent', async () => {
     const deps = makeDeps({
       markReviewReady: vi

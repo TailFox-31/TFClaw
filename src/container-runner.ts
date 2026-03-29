@@ -215,11 +215,7 @@ export async function runReviewerContainer(args: {
   const containerName = `ejclaw-reviewer-${group.folder}-${Date.now()}`;
 
   const mounts = buildReviewerMounts(group, ownerWorkspaceDir);
-  const containerArgs = buildContainerArgs(
-    mounts,
-    containerName,
-    envOverrides,
-  );
+  const containerArgs = buildContainerArgs(mounts, containerName, envOverrides);
 
   logger.info(
     {
@@ -275,9 +271,7 @@ export async function runReviewerContainer(args: {
 
       // Parse streamed output markers
       let startIdx: number;
-      while (
-        (startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1
-      ) {
+      while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
         const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
         if (endIdx === -1) break;
 

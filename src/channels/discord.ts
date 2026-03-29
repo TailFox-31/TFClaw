@@ -726,12 +726,18 @@ registerChannel('discord', (opts: ChannelOpts) => {
   );
 });
 
-// Only register the secondary Codex bot channel when running as the primary (claude-code) service.
-// The codex service uses its own DISCORD_BOT_TOKEN via systemd EnvironmentFile override.
-if ((process.env.ASSISTANT_NAME || 'claude') !== 'codex') {
-  registerChannel('discord-codex', (opts: ChannelOpts) => {
-    const token = getEnv('DISCORD_CODEX_BOT_TOKEN') || '';
-    if (!token) return null; // Codex Discord bot is optional
-    return new DiscordChannel(token, opts, 'codex');
-  });
-}
+// Register the secondary Codex bot channel.
+// In unified mode all bots register unconditionally; in legacy per-service mode
+// the codex service uses its own DISCORD_BOT_TOKEN via systemd EnvironmentFile override.
+registerChannel('discord-codex', (opts: ChannelOpts) => {
+  const token = getEnv('DISCORD_CODEX_BOT_TOKEN') || '';
+  if (!token) return null; // Codex Discord bot is optional
+  return new DiscordChannel(token, opts, 'codex');
+});
+
+// Register the review bot channel (codex agent type, separate token).
+registerChannel('discord-review', (opts: ChannelOpts) => {
+  const token = getEnv('DISCORD_REVIEW_BOT_TOKEN') || '';
+  if (!token) return null; // Review Discord bot is optional
+  return new DiscordChannel(token, opts, 'codex');
+});

@@ -198,8 +198,13 @@ function listReviewableTrackedDiffFiles(
   sourceDir: string,
   sourceRef: string,
 ): string[] {
-  return listGitPaths(sourceDir, ['diff', '--name-only', '-z', sourceRef, '--'])
-    .filter((relativePath) => !isReviewerSnapshotDeniedPath(relativePath));
+  return listGitPaths(sourceDir, [
+    'diff',
+    '--name-only',
+    '-z',
+    sourceRef,
+    '--',
+  ]).filter((relativePath) => !isReviewerSnapshotDeniedPath(relativePath));
 }
 
 function copySnapshotPaths(
@@ -323,9 +328,7 @@ function makeWorkspaceRecord(args: {
     snapshot_source_dir:
       args.snapshotSourceDir ?? existing?.snapshot_source_dir ?? null,
     snapshot_ref:
-      args.snapshotSourceFingerprint ??
-      existing?.snapshot_ref ??
-      null,
+      args.snapshotSourceFingerprint ?? existing?.snapshot_ref ?? null,
     status: args.status ?? 'ready',
     snapshot_refreshed_at:
       args.snapshotRefreshedAt ?? existing?.snapshot_refreshed_at ?? null,
@@ -334,7 +337,9 @@ function makeWorkspaceRecord(args: {
   };
 }
 
-export function resolvePairedTaskSourceFingerprint(taskId: string): string | null {
+export function resolvePairedTaskSourceFingerprint(
+  taskId: string,
+): string | null {
   const { task } = getTaskAndProject(taskId);
   const ownerWorkspace = getPairedWorkspace(taskId, 'owner');
   if (!ownerWorkspace) {
@@ -574,8 +579,7 @@ export function prepareReviewerWorkspaceForExecution(
           role: 'reviewer',
           workspaceDir: reviewerWorkspace.workspace_dir,
           snapshotSourceDir: reviewerWorkspace.snapshot_source_dir,
-          snapshotSourceFingerprint:
-            reviewerWorkspace.snapshot_ref,
+          snapshotSourceFingerprint: reviewerWorkspace.snapshot_ref,
           snapshotRefreshedAt: reviewerWorkspace.snapshot_refreshed_at,
           status: 'stale',
           createdAt: reviewerWorkspace.created_at,
