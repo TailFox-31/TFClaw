@@ -347,6 +347,11 @@ function buildCreateArgs(
   // Reviewer runtime flag
   args.push('-e', 'EJCLAW_REVIEWER_RUNTIME=1');
 
+  // Sentry read-only token for reviewer to verify error fixes
+  if (process.env.SENTRY_AUTH_TOKEN) {
+    args.push('-e', `SENTRY_AUTH_TOKEN=${process.env.SENTRY_AUTH_TOKEN}`);
+  }
+
   // Extra env overrides from paired-execution-context
   if (envOverrides) {
     for (const [key, value] of Object.entries(envOverrides)) {
