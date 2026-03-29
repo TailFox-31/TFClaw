@@ -85,7 +85,7 @@ import {
 } from './service-routing.js';
 import { FAILOVER_MIN_DURATION_MS } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
-import { cleanupOrphans } from './container-runtime.js';
+import { cleanupOrphans, PROXY_BIND_HOST } from './container-runtime.js';
 
 // Token rotation is initialized lazily on first use or at startup below
 
@@ -323,7 +323,7 @@ async function main(): Promise<void> {
   initCodexTokenRotation();
 
   // Start credential proxy for container isolation and clean up orphaned containers
-  startCredentialProxy(CREDENTIAL_PROXY_PORT).catch((err) =>
+  startCredentialProxy(CREDENTIAL_PROXY_PORT, PROXY_BIND_HOST).catch((err) =>
     logger.warn(
       { err },
       'Failed to start credential proxy (may already be running)',
