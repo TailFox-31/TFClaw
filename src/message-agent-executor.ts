@@ -11,7 +11,11 @@ import {
   writeTasksSnapshot,
 } from './agent-runner.js';
 import { listAvailableGroups } from './available-groups.js';
-import { createServiceHandoff, getAllTasks } from './db.js';
+import {
+  createServiceHandoff,
+  getAllTasks,
+  getLatestOpenPairedTaskForChat,
+} from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
@@ -127,11 +131,22 @@ export async function runAgentForGroup(
 
   const canRotateToken = isClaudeCodeAgent && getTokenCount() > 1;
   const currentLease = getEffectiveChannelLease(chatJid);
-  const reviewerMode =
-    currentLease.reviewer_service_id === SERVICE_SESSION_SCOPE;
+
+  // In unified mode, determine role from the lease directly.
+  // Default to owner; the auto-review trigger in completePairedExecutionContext
+  // will switch to reviewer when the task is in review_ready state.
+  const pairedTask = currentLease.reviewer_service_id
+    ? getLatestOpenPairedTaskForChat(chatJid)
+    : null;
+  const effectiveServiceId =
+    pairedTask &&
+    (pairedTask.status === 'review_ready' || pairedTask.status === 'in_review')
+      ? currentLease.reviewer_service_id!
+      : currentLease.owner_service_id;
+  const reviewerMode = effectiveServiceId === currentLease.reviewer_service_id;
   const roomRoleContext = buildRoomRoleContext(
     currentLease,
-    SERVICE_SESSION_SCOPE,
+    effectiveServiceId,
   );
   const pairedExecutionContext = preparePairedExecutionContext({
     group,
