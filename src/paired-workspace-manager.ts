@@ -579,77 +579,23 @@ export function prepareReviewerWorkspaceForExecution(
       blockMessage: REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE,
     };
   }
+
+  // Container mode: reviewer mounts owner workspace directly as read-only.
+  // No snapshot copy needed — just return the owner workspace as reviewer workspace.
   const reviewerWorkspace = getPairedWorkspace(task.id, 'reviewer') ?? null;
-  const allowedTrackedFiles = listAllowedTrackedFiles(
-    ownerWorkspace.workspace_dir,
-  );
-  const deletedTrackedFiles = listDeletedTrackedFiles(
-    ownerWorkspace.workspace_dir,
-  );
-  const allowedUntrackedFiles = listAllowedUntrackedFiles(
-    ownerWorkspace.workspace_dir,
-  );
-  const currentFingerprint = buildReviewerSnapshotFingerprint({
-    sourceDir: ownerWorkspace.workspace_dir,
-    allowedTrackedFiles,
-    deletedTrackedFiles,
-    allowedUntrackedFiles,
-  });
-  const snapshotMissing =
-    !reviewerWorkspace?.snapshot_refreshed_at || !reviewerWorkspace;
-  const snapshotStale =
-    !!reviewerWorkspace &&
-    (reviewerWorkspace.status === 'stale' ||
-      reviewerWorkspace.snapshot_ref !== currentFingerprint);
-  const now = new Date().toISOString();
-
-  if (snapshotMissing || snapshotStale) {
-    if (task.status === 'review_ready') {
-      const refreshedWorkspace = refreshReviewerSnapshotForPairedTask(task.id);
-      updatePairedTask(task.id, {
-        status: 'review_ready',
-        updated_at: now,
-      });
-      return {
-        workspace: refreshedWorkspace,
-        autoRefreshed: true,
-      };
-    }
-
-    if (snapshotMissing) {
-      return {
-        workspace: null,
-        autoRefreshed: false,
-        blockMessage: REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE,
-      };
-    }
-
-    if (reviewerWorkspace) {
-      upsertPairedWorkspace(
-        makeWorkspaceRecord({
-          taskId: task.id,
-          role: 'reviewer',
-          workspaceDir: reviewerWorkspace.workspace_dir,
-          snapshotSourceDir: reviewerWorkspace.snapshot_source_dir,
-          snapshotSourceFingerprint: reviewerWorkspace.snapshot_ref,
-          snapshotRefreshedAt: reviewerWorkspace.snapshot_refreshed_at,
-          status: 'stale',
-          createdAt: reviewerWorkspace.created_at,
-        }),
-      );
-    }
-    updatePairedTask(task.id, {
-      updated_at: now,
-    });
-    return {
-      workspace: null,
-      autoRefreshed: false,
-      blockMessage: REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE,
-    };
+  if (reviewerWorkspace) {
+    return { workspace: reviewerWorkspace, autoRefreshed: false };
   }
 
-  return {
-    workspace: reviewerWorkspace,
-    autoRefreshed: false,
-  };
+  // No reviewer workspace registered yet — register owner dir
+  const now = new Date().toISOString();
+  const newReviewerWorkspace = makeWorkspaceRecord({
+    taskId: task.id,
+    role: 'reviewer',
+    workspaceDir: ownerWorkspace.workspace_dir,
+    snapshotSourceDir: ownerWorkspace.workspace_dir,
+    snapshotRefreshedAt: now,
+  });
+  upsertPairedWorkspace(newReviewerWorkspace);
+  return { workspace: newReviewerWorkspace, autoRefreshed: false };
 }
