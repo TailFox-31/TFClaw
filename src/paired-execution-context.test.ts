@@ -38,7 +38,12 @@ import {
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
 import * as pairedWorkspaceManager from './paired-workspace-manager.js';
-import type { RegisteredGroup, RoomRoleContext } from './types.js';
+import type {
+  PairedTask,
+  PairedWorkspace,
+  RegisteredGroup,
+  RoomRoleContext,
+} from './types.js';
 
 const group: RegisteredGroup = {
   name: 'Paired Room',
@@ -83,6 +88,51 @@ function createCanonicalRepoWithCommit(commitMessage: string): string {
     stdio: 'ignore',
   });
   return repoDir;
+}
+
+function resolveTreeRef(repoDir: string): string {
+  return execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {
+    cwd: repoDir,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function buildPairedTask(overrides: Partial<PairedTask> = {}): PairedTask {
+  return {
+    id: 'task-1',
+    chat_jid: 'dc:test',
+    group_folder: group.folder,
+    owner_service_id: 'codex-main',
+    reviewer_service_id: 'codex-review',
+    title: null,
+    source_ref: 'HEAD',
+    plan_notes: null,
+    review_requested_at: null,
+    round_trip_count: 0,
+    status: 'active',
+    created_at: '2026-03-28T00:00:00.000Z',
+    updated_at: '2026-03-28T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function buildWorkspace(
+  role: 'owner' | 'reviewer',
+  workspaceDir: string,
+): PairedWorkspace {
+  return {
+    id: `task-1:${role}`,
+    task_id: 'task-1',
+    role,
+    workspace_dir: workspaceDir,
+    snapshot_source_dir: role === 'reviewer' ? '/tmp/paired/task-1/owner' : null,
+    snapshot_ref: role === 'reviewer' ? 'fingerprint-1' : null,
+    status: 'ready',
+    snapshot_refreshed_at: role === 'reviewer' ? '2026-03-28T00:00:00.000Z' : null,
+    created_at: '2026-03-28T00:00:00.000Z',
+    updated_at: '2026-03-28T00:00:00.000Z',
+  };
 }
 
 async function importExecutionContextForService(serviceId: string) {
@@ -361,6 +411,112 @@ describe('paired execution context', () => {
     });
 
     // Should not throw; just logs.
+  });
+
+  it('completes owner finalize when only the commit object changed after approval', () => {
+    const repoDir = createCanonicalRepoWithCommit('reviewed');
+    const approvedSourceRef = resolveTreeRef(repoDir);
+    execFileSync('git', ['commit', '--allow-empty', '-m', 'metadata only'], {
+      cwd: repoDir,
+      stdio: 'ignore',
+    });
+
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+        source_ref: approvedSourceRef,
+      }),
+    );
+    vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
+      role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'DONE',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({ status: 'completed' }),
+    );
+    expect(pairedWorkspaceManager.markPairedTaskReviewReady).not.toHaveBeenCalled();
+  });
+
+  it('re-triggers review when owner changed code after approval', () => {
+    const repoDir = createCanonicalRepoWithCommit('reviewed');
+    const approvedSourceRef = resolveTreeRef(repoDir);
+    fs.writeFileSync(path.join(repoDir, 'README.md'), 'changed\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repoDir, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'code change'], {
+      cwd: repoDir,
+      stdio: 'ignore',
+    });
+
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+        source_ref: approvedSourceRef,
+        round_trip_count: 1,
+      }),
+    );
+    vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
+      role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
+    );
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue({
+      ownerWorkspace: buildWorkspace('owner', repoDir),
+      reviewerWorkspace: buildWorkspace('reviewer', '/tmp/paired/task-1/reviewer'),
+    });
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'DONE',
+    });
+
+    expect(pairedWorkspaceManager.markPairedTaskReviewReady).toHaveBeenCalledWith(
+      'task-1',
+    );
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        round_trip_count: 2,
+        review_requested_at: expect.any(String),
+      }),
+    );
+  });
+
+  it('records source_ref when reviewer verdict DONE arrives via failed fallback', () => {
+    const repoDir = createCanonicalRepoWithCommit('reviewed');
+    const approvedSourceRef = resolveTreeRef(repoDir);
+
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'in_review',
+        source_ref: 'stale-ref',
+      }),
+    );
+    vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
+      role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'reviewer',
+      status: 'failed',
+      summary: 'DONE',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'merge_ready',
+        source_ref: approvedSourceRef,
+      }),
+    );
   });
 
   it('returns ready for /review on the owner service', async () => {

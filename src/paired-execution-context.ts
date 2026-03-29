@@ -66,27 +66,45 @@ function classifyReviewerVerdict(
 // ---------------------------------------------------------------------------
 
 function resolveCanonicalSourceRef(workDir: string): string {
+  const treeHash = resolveCanonicalTreeHash(workDir);
+  return treeHash || 'HEAD';
+}
+
+function resolveCanonicalTreeHash(workDir: string): string | null {
   try {
-    const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+    const treeHash = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], {
       cwd: workDir,
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
-    return head || 'HEAD';
+    return treeHash || null;
   } catch {
-    return 'HEAD';
+    return null;
   }
 }
 
-function resolveCanonicalHead(workDir: string): string | null {
+function hasCodeChangesSinceRef(
+  workDir: string,
+  sourceRef: string | null | undefined,
+): boolean | null {
+  if (!sourceRef) return null;
   try {
-    const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+    execFileSync('git', ['diff', '--quiet', sourceRef, 'HEAD'], {
       cwd: workDir,
-      encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim();
-    return head || null;
-  } catch {
+    });
+    return false;
+  } catch (error) {
+    const exitCode =
+      typeof error === 'object' &&
+      error !== null &&
+      'status' in error &&
+      typeof (error as { status?: unknown }).status === 'number'
+        ? (error as { status: number }).status
+        : null;
+    if (exitCode === 1) {
+      return true;
+    }
     return null;
   }
 }
@@ -290,12 +308,24 @@ export function completePairedExecutionContext(args: {
         verdict === 'needs_context'
       ) {
         const now = new Date().toISOString();
+        const ownerWs =
+          verdict === 'done' ? getPairedWorkspace(taskId, 'owner') : null;
+        const approvedSourceRef =
+          verdict === 'done' && ownerWs?.workspace_dir
+            ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
+            : task.source_ref;
         updatePairedTask(taskId, {
           status: verdict === 'done' ? 'merge_ready' : 'completed',
+          ...(verdict === 'done' ? { source_ref: approvedSourceRef } : {}),
           updated_at: now,
         });
         logger.info(
-          { taskId, verdict, summary: args.summary?.slice(0, 100) },
+          {
+            taskId,
+            verdict,
+            approvedSourceRef,
+            summary: args.summary?.slice(0, 100),
+          },
           'Reviewer verdict detected from failed execution — stopping ping-pong',
         );
         return;
@@ -320,13 +350,11 @@ export function completePairedExecutionContext(args: {
     // additional changes that need re-review.
     if (task.status === 'merge_ready') {
       const workspace = getPairedWorkspace(task.id, 'owner');
-      const currentHead = workspace?.workspace_dir
-        ? resolveCanonicalHead(workspace.workspace_dir)
+      const hasNewChanges = workspace?.workspace_dir
+        ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
         : null;
-      const snapshotRef = task.source_ref;
-      const hasNewChanges = currentHead && currentHead !== snapshotRef;
 
-      if (!hasNewChanges) {
+      if (hasNewChanges === false) {
         // No code changes since reviewer approved → finalize complete
         updatePairedTask(taskId, { status: 'completed', updated_at: now });
         logger.info(
@@ -337,7 +365,11 @@ export function completePairedExecutionContext(args: {
       }
       // Owner made changes after approval → needs re-review
       logger.info(
-        { taskId, previousHead: snapshotRef, currentHead },
+        {
+          taskId,
+          sourceRef: task.source_ref,
+          hasNewChanges,
+        },
         'Owner made changes after reviewer approval — re-triggering review',
       );
     }
@@ -380,12 +412,12 @@ export function completePairedExecutionContext(args: {
         // Record the current HEAD as source_ref so the finalize turn
         // can detect if the owner made additional code changes.
         const ownerWs = getPairedWorkspace(taskId, 'owner');
-        const approvedHead = ownerWs?.workspace_dir
-          ? resolveCanonicalHead(ownerWs.workspace_dir)
-          : null;
+        const approvedSourceRef = ownerWs?.workspace_dir
+          ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
+          : task.source_ref;
         updatePairedTask(taskId, {
           status: 'merge_ready',
-          source_ref: approvedHead ?? task.source_ref,
+          source_ref: approvedSourceRef,
           updated_at: now,
         });
         logger.info(
@@ -393,6 +425,7 @@ export function completePairedExecutionContext(args: {
             taskId,
             verdict,
             approvedHead,
+            approvedSourceRef,
             summary: args.summary?.slice(0, 100),
           },
           'Reviewer approved — owner gets final turn to finalize',
