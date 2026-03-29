@@ -188,11 +188,12 @@ function buildContainerArgs(
     }
   }
 
-  // tmpfs overlays for test runner caches (writable, ephemeral)
-  args.push(...tmpfsMountArgs('/workspace/project/node_modules/.vitest'));
-  args.push(...tmpfsMountArgs('/workspace/project/node_modules/.cache'));
-  args.push(...tmpfsMountArgs('/workspace/project/coverage'));
+  // Writable tmpfs for test runners and temp files.
+  // Cannot mount tmpfs inside :ro mount, so redirect caches via env vars.
   args.push(...tmpfsMountArgs('/tmp'));
+  args.push('-e', 'VITEST_CACHE_DIR=/tmp/.vitest');
+  args.push('-e', 'JEST_CACHE_DIR=/tmp/.jest');
+  args.push('-e', 'npm_config_cache=/tmp/.npm');
 
   args.push(CONTAINER_IMAGE);
 
