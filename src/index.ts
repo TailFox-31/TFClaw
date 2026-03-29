@@ -377,6 +377,7 @@ async function main(): Promise<void> {
       );
     }
     await queue.shutdown(10000);
+    cleanupOrphans();
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };

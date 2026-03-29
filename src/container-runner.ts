@@ -7,8 +7,9 @@
  *   - IPC via filesystem (input/ directory for follow-up messages)
  *   - Credentials injected by the credential proxy (never exposed to container)
  */
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { OUTPUT_END_MARKER, OUTPUT_START_MARKER } from './agent-protocol.js';
@@ -23,6 +24,7 @@ import {
 import {
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
+  ensureContainerRuntimeRunning,
   hostGatewayArgs,
   readonlyMountArgs,
   stopContainer,
@@ -62,6 +64,55 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+// ── pnpm store detection ─────────────────────────────────────────
+
+function detectPnpmStorePath(workspaceDir: string): string | null {
+  if (!fs.existsSync(path.join(workspaceDir, 'pnpm-lock.yaml'))) {
+    return null;
+  }
+  // Check env override first
+  if (process.env.PNPM_STORE_DIR && fs.existsSync(process.env.PNPM_STORE_DIR)) {
+    return process.env.PNPM_STORE_DIR;
+  }
+  // Try `pnpm store path`
+  try {
+    const storePath = execFileSync('pnpm', ['store', 'path'], {
+      cwd: workspaceDir,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 5000,
+    }).trim();
+    if (storePath && fs.existsSync(storePath)) return storePath;
+  } catch {
+    /* pnpm not available */
+  }
+  // Fallback to default location
+  const defaultStore = path.join(os.homedir(), '.local', 'share', 'pnpm', 'store');
+  if (fs.existsSync(defaultStore)) return defaultStore;
+  return null;
+}
+
+// ── Pre-flight checks ────────────────────────────────────────────
+
+let containerRuntimeChecked = false;
+
+function ensureContainerReady(): void {
+  if (containerRuntimeChecked) return;
+  ensureContainerRuntimeRunning();
+  // Check image exists
+  try {
+    execFileSync(CONTAINER_RUNTIME_BIN, ['image', 'inspect', CONTAINER_IMAGE], {
+      stdio: 'pipe',
+      timeout: 10000,
+    });
+  } catch {
+    throw new Error(
+      `Container image '${CONTAINER_IMAGE}' not found. Build it with: ./container/build.sh`,
+    );
+  }
+  containerRuntimeChecked = true;
+}
+
 // ── Mount builder ─────────────────────────────────────────────────
 
 export function buildReviewerMounts(
@@ -73,11 +124,24 @@ export function buildReviewerMounts(
   const groupIpcDir = resolveGroupIpcPath(group.folder);
 
   // Source code: READ-ONLY (kernel-level protection)
+  // Includes node_modules if present (npm/yarn/bun are self-contained)
   mounts.push({
     hostPath: ownerWorkspaceDir,
     containerPath: '/workspace/project',
     readonly: true,
   });
+
+  // pnpm global store: mount at the same host path so hardlinks resolve.
+  // Only needed for pnpm — npm/yarn/bun have self-contained node_modules.
+  const pnpmStore = detectPnpmStorePath(ownerWorkspaceDir);
+  if (pnpmStore) {
+    mounts.push({
+      hostPath: pnpmStore,
+      containerPath: pnpmStore,
+      readonly: true,
+    });
+    logger.debug({ pnpmStore }, 'Mounting pnpm store for container');
+  }
 
   // Shadow .env so reviewer cannot read secrets from mounted project
   const envFile = path.join(ownerWorkspaceDir, '.env');
@@ -215,6 +279,9 @@ export async function runReviewerContainer(args: {
   const startTime = Date.now();
   const containerName = `ejclaw-reviewer-${group.folder}-${Date.now()}`;
 
+  // Pre-flight: Docker running + image exists (cached after first check)
+  ensureContainerReady();
+
   const mounts = buildReviewerMounts(group, ownerWorkspaceDir);
   const containerArgs = buildContainerArgs(mounts, containerName, envOverrides);
 
@@ -269,6 +336,7 @@ export async function runReviewerContainer(args: {
 
       stdout += text;
       parseBuffer += text;
+      resetTimeout();
 
       // Parse streamed output markers
       let startIdx: number;
@@ -296,12 +364,15 @@ export async function runReviewerContainer(args: {
 
     proc.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString();
+      // Stderr activity means agent is alive — reset idle timeout
+      resetTimeout();
     });
 
-    // Timeout
-    const timeout = setTimeout(() => {
+    // Activity-based timeout: reset on stdout/stderr data
+    const timeoutMs = Math.max(AGENT_TIMEOUT, IDLE_TIMEOUT + 30_000);
+    const killOnTimeout = () => {
       logger.warn(
-        { containerName, timeoutMs: AGENT_TIMEOUT },
+        { containerName, timeoutMs },
         'Reviewer container timed out, stopping',
       );
       try {
@@ -309,7 +380,12 @@ export async function runReviewerContainer(args: {
       } catch {
         /* ignore */
       }
-    }, AGENT_TIMEOUT);
+    };
+    let timeout = setTimeout(killOnTimeout, timeoutMs);
+    const resetTimeout = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(killOnTimeout, timeoutMs);
+    };
 
     proc.on('close', (code, signal) => {
       clearTimeout(timeout);
