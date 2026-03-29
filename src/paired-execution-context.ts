@@ -302,14 +302,30 @@ export function completePairedExecutionContext(args: {
   if (role === 'owner') {
     const now = new Date().toISOString();
 
-    // merge_ready → owner finalized after reviewer approval → completed
+    // merge_ready → reviewer already approved. Check if owner made
+    // additional changes that need re-review.
     if (task.status === 'merge_ready') {
-      updatePairedTask(taskId, { status: 'completed', updated_at: now });
+      const workspace = getPairedWorkspace(task.id, 'owner');
+      const currentHead = workspace?.workspace_dir
+        ? resolveCanonicalHead(workspace.workspace_dir)
+        : null;
+      const snapshotRef = task.source_ref;
+      const hasNewChanges = currentHead && currentHead !== snapshotRef;
+
+      if (!hasNewChanges) {
+        // No code changes since reviewer approved → finalize complete
+        updatePairedTask(taskId, { status: 'completed', updated_at: now });
+        logger.info(
+          { taskId, summary: args.summary?.slice(0, 100) },
+          'Owner finalized after reviewer approval — task completed',
+        );
+        return;
+      }
+      // Owner made changes after approval → needs re-review
       logger.info(
-        { taskId, summary: args.summary?.slice(0, 100) },
-        'Owner finalized after reviewer approval — task completed',
+        { taskId, previousHead: snapshotRef, currentHead },
+        'Owner made changes after reviewer approval — re-triggering review',
       );
-      return;
     }
 
     // Normal turn → auto-trigger reviewer (if within round trip limit)
@@ -345,14 +361,25 @@ export function completePairedExecutionContext(args: {
     const verdict = classifyReviewerVerdict(args.summary);
 
     switch (verdict) {
-      case 'done':
-        // Approved → owner gets final turn to commit/push
-        updatePairedTask(taskId, { status: 'merge_ready', updated_at: now });
+      case 'done': {
+        // Approved → owner gets final turn to commit/push.
+        // Record the current HEAD as source_ref so the finalize turn
+        // can detect if the owner made additional code changes.
+        const ownerWs = getPairedWorkspace(taskId, 'owner');
+        const approvedHead = ownerWs?.workspace_dir
+          ? resolveCanonicalHead(ownerWs.workspace_dir)
+          : null;
+        updatePairedTask(taskId, {
+          status: 'merge_ready',
+          source_ref: approvedHead ?? task.source_ref,
+          updated_at: now,
+        });
         logger.info(
-          { taskId, verdict, summary: args.summary?.slice(0, 100) },
+          { taskId, verdict, approvedHead, summary: args.summary?.slice(0, 100) },
           'Reviewer approved — owner gets final turn to finalize',
         );
         break;
+      }
 
       case 'blocked':
       case 'needs_context':

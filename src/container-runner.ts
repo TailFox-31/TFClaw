@@ -87,7 +87,13 @@ function detectPnpmStorePath(workspaceDir: string): string | null {
     /* pnpm not available */
   }
   // Fallback to default location
-  const defaultStore = path.join(os.homedir(), '.local', 'share', 'pnpm', 'store');
+  const defaultStore = path.join(
+    os.homedir(),
+    '.local',
+    'share',
+    'pnpm',
+    'store',
+  );
   if (fs.existsSync(defaultStore)) return defaultStore;
   return null;
 }
