@@ -491,7 +491,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         (pendingTask.status === 'review_ready' ||
           pendingTask.status === 'in_review');
       const deliveryChannel = isReviewerWorkItem ? reviewerChannel : channel;
-      const delivered = await deliverOpenWorkItem(deliveryChannel, openWorkItem);
+      const delivered = await deliverOpenWorkItem(
+        deliveryChannel,
+        openWorkItem,
+      );
       if (!delivered) return false;
     }
 
@@ -532,9 +535,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           if (ownerContent) {
             parts.push(`Owner response:\n---\n${ownerContent}\n---`);
           }
-          const reviewPrompt = parts.length > 0
-            ? `${parts.join('\n\n')}\n\nReview the owner's response above. Provide feedback or approve.`
-            : 'Review the latest owner changes in the workspace. Provide feedback or approve.';
+          const reviewPrompt =
+            parts.length > 0
+              ? `${parts.join('\n\n')}\n\nReview the owner's response above. Provide feedback or approve.`
+              : 'Review the latest owner changes in the workspace. Provide feedback or approve.';
 
           // Advance cursor past the owner's messages so they aren't re-processed
           const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
@@ -553,6 +557,31 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             chatJid,
             runId,
             channel: reviewerChannel,
+            startSeq: null,
+            endSeq: null,
+          });
+          return deliverySucceeded;
+        }
+
+        // merge_ready: reviewer approved, owner gets final turn to finalize
+        if (pendingReviewTask && pendingReviewTask.status === 'merge_ready') {
+          const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
+          if (lastRaw?.seq != null) {
+            advanceLastAgentCursor(
+              deps.getLastAgentTimestamps(),
+              deps.saveState,
+              chatJid,
+              lastRaw.seq,
+            );
+          }
+          const finalizePrompt =
+            'The reviewer approved your work (DONE). Finalize: commit changes, push if appropriate, and report the result.';
+          const { deliverySucceeded } = await executeTurn({
+            group,
+            prompt: finalizePrompt,
+            chatJid,
+            runId,
+            channel,
             startSeq: null,
             endSeq: null,
           });

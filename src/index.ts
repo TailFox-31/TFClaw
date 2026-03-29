@@ -511,44 +511,44 @@ async function main(): Promise<void> {
   });
 
   leaseRecoveryTimer = setInterval(() => {
-      if (!hasAvailableClaudeToken()) {
-        return;
+    if (!hasAvailableClaudeToken()) {
+      return;
+    }
+    const now = Date.now();
+    for (const lease of getActiveCodexFailoverLeases()) {
+      const activatedMs = lease.activatedAt
+        ? new Date(lease.activatedAt).getTime()
+        : NaN;
+      if (Number.isNaN(activatedMs)) {
+        logger.warn(
+          { chatJid: lease.chatJid, activatedAt: lease.activatedAt },
+          'Failover lease has unparseable activated_at, skipping auto-restore',
+        );
+        continue;
       }
-      const now = Date.now();
-      for (const lease of getActiveCodexFailoverLeases()) {
-        const activatedMs = lease.activatedAt
-          ? new Date(lease.activatedAt).getTime()
-          : NaN;
-        if (Number.isNaN(activatedMs)) {
-          logger.warn(
-            { chatJid: lease.chatJid, activatedAt: lease.activatedAt },
-            'Failover lease has unparseable activated_at, skipping auto-restore',
-          );
-          continue;
-        }
-        const elapsed = now - activatedMs;
-        if (elapsed < FAILOVER_MIN_DURATION_MS) {
-          logger.debug(
-            {
-              chatJid: lease.chatJid,
-              elapsedMin: Math.round(elapsed / 60_000),
-              minDurationMin: Math.round(FAILOVER_MIN_DURATION_MS / 60_000),
-            },
-            'Failover lease still within minimum hold period, skipping restore',
-          );
-          continue;
-        }
-        restoreDefaultChannelLease(lease.chatJid);
-        logger.info(
+      const elapsed = now - activatedMs;
+      if (elapsed < FAILOVER_MIN_DURATION_MS) {
+        logger.debug(
           {
             chatJid: lease.chatJid,
-            serviceId: SERVICE_ID,
             elapsedMin: Math.round(elapsed / 60_000),
+            minDurationMin: Math.round(FAILOVER_MIN_DURATION_MS / 60_000),
           },
-          'Claude token available and failover hold period elapsed, restored default channel lease',
+          'Failover lease still within minimum hold period, skipping restore',
         );
+        continue;
       }
-    }, 5_000);
+      restoreDefaultChannelLease(lease.chatJid);
+      logger.info(
+        {
+          chatJid: lease.chatJid,
+          serviceId: SERVICE_ID,
+          elapsedMin: Math.round(elapsed / 60_000),
+        },
+        'Claude token available and failover hold period elapsed, restored default channel lease',
+      );
+    }
+  }, 5_000);
   runtime.startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

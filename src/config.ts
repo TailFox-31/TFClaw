@@ -106,7 +106,9 @@ export const REVIEWER_AGENT_TYPE: AgentType =
 
 /** Service ID for the reviewer based on agent type. */
 export const REVIEWER_SERVICE_ID_FOR_TYPE =
-  REVIEWER_AGENT_TYPE === 'claude-code' ? CLAUDE_SERVICE_ID : CODEX_REVIEW_SERVICE_ID;
+  REVIEWER_AGENT_TYPE === 'claude-code'
+    ? CLAUDE_SERVICE_ID
+    : CODEX_REVIEW_SERVICE_ID;
 
 // Max owner↔reviewer round trips per task. 0 = unlimited.
 const rawMaxRoundTrips = getEnv('PAIRED_MAX_ROUND_TRIPS') || '10';

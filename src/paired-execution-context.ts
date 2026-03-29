@@ -29,17 +29,19 @@ import type {
 } from './types.js';
 
 // ---------------------------------------------------------------------------
-// Reviewer approval detection
+// Reviewer verdict detection
 // ---------------------------------------------------------------------------
 
-// Only check the first line for explicit status markers from the prompt's
-// completion status protocol (DONE, DONE_WITH_CONCERNS, BLOCKED, NEEDS_CONTEXT).
-// DONE = approved → stop ping-pong. Everything else = continue.
-function isReviewerApproval(summary: string | null | undefined): boolean {
-  if (!summary) return false;
+type ReviewerVerdict = 'done' | 'done_with_concerns' | 'blocked' | 'needs_context' | 'continue';
+
+function classifyReviewerVerdict(summary: string | null | undefined): ReviewerVerdict {
+  if (!summary) return 'continue';
   const firstLine = summary.trimStart().split('\n')[0].trim();
-  // Match DONE but not DONE_WITH_CONCERNS
-  return /\bDONE\b/.test(firstLine) && !/\bDONE_WITH_CONCERNS\b/.test(firstLine);
+  if (/\bBLOCKED\b/.test(firstLine)) return 'blocked';
+  if (/\bNEEDS_CONTEXT\b/.test(firstLine)) return 'needs_context';
+  if (/\bDONE_WITH_CONCERNS\b/.test(firstLine)) return 'done_with_concerns';
+  if (/\bDONE\b/.test(firstLine)) return 'done';
+  return 'continue';
 }
 
 // ---------------------------------------------------------------------------
@@ -261,8 +263,21 @@ export function completePairedExecutionContext(args: {
     return;
   }
 
-  // Owner finished → auto-trigger reviewer (if within round trip limit)
+  // Owner finished
   if (role === 'owner') {
+    const now = new Date().toISOString();
+
+    // merge_ready → owner finalized after reviewer approval → completed
+    if (task.status === 'merge_ready') {
+      updatePairedTask(taskId, { status: 'completed', updated_at: now });
+      logger.info(
+        { taskId, summary: args.summary?.slice(0, 100) },
+        'Owner finalized after reviewer approval — task completed',
+      );
+      return;
+    }
+
+    // Normal turn → auto-trigger reviewer (if within round trip limit)
     if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
       logger.info(
         {
@@ -275,7 +290,6 @@ export function completePairedExecutionContext(args: {
       return;
     }
 
-    const now = new Date().toISOString();
     const result = markPairedTaskReviewReady(taskId);
     if (result) {
       updatePairedTask(taskId, {
@@ -290,28 +304,41 @@ export function completePairedExecutionContext(args: {
     }
   }
 
-  // Reviewer finished → check if approved or needs more work
+  // Reviewer finished → classify verdict and route accordingly
   if (role === 'reviewer') {
     const now = new Date().toISOString();
-    const approved = isReviewerApproval(args.summary);
-    if (approved) {
-      updatePairedTask(taskId, {
-        status: 'completed',
-        updated_at: now,
-      });
-      logger.info(
-        { taskId, summary: args.summary?.slice(0, 100) },
-        'Reviewer approved, task completed — ping-pong stopped',
-      );
-    } else {
-      updatePairedTask(taskId, {
-        status: 'active',
-        updated_at: now,
-      });
-      logger.info(
-        { taskId },
-        'Reviewer requested changes, task set back to active for owner',
-      );
+    const verdict = classifyReviewerVerdict(args.summary);
+
+    switch (verdict) {
+      case 'done':
+        // Approved → owner gets final turn to commit/push
+        updatePairedTask(taskId, { status: 'merge_ready', updated_at: now });
+        logger.info(
+          { taskId, verdict, summary: args.summary?.slice(0, 100) },
+          'Reviewer approved — owner gets final turn to finalize',
+        );
+        break;
+
+      case 'blocked':
+      case 'needs_context':
+        // Needs user decision — stop ping-pong, leave task active
+        updatePairedTask(taskId, { status: 'completed', updated_at: now });
+        logger.info(
+          { taskId, verdict, summary: args.summary?.slice(0, 100) },
+          'Reviewer escalated to user — ping-pong stopped',
+        );
+        break;
+
+      case 'done_with_concerns':
+      case 'continue':
+      default:
+        // Owner needs to address feedback — ping-pong continues
+        updatePairedTask(taskId, { status: 'active', updated_at: now });
+        logger.info(
+          { taskId, verdict },
+          'Reviewer has feedback, task set back to active for owner',
+        );
+        break;
     }
   }
 }

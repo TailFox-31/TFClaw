@@ -28,8 +28,6 @@ export function buildStructuredOutputPrompt(
   return prompt;
 }
 
-export function parseStructuredOutputEnvelope(
-  _rawText: string,
-): null {
+export function parseStructuredOutputEnvelope(_rawText: string): null {
   return null;
 }
