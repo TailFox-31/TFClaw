@@ -64,7 +64,7 @@ import type { RegisteredGroup } from './types.js';
 
 export interface MessageAgentExecutorDeps {
   assistantName: string;
-  queue: Pick<GroupQueue, 'registerProcess'>;
+  queue: Pick<GroupQueue, 'registerProcess' | 'enqueueMessageCheck'>;
   getRegisteredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   persistSession: (groupFolder: string, sessionId: string) => void;
@@ -888,12 +888,19 @@ export async function runAgentForGroup(
     return 'success';
   } finally {
     if (pairedExecutionContext) {
+      const completedRole = roomRoleContext?.role ?? 'owner';
       completePairedExecutionContext({
         taskId: pairedExecutionContext.task.id,
-        role: roomRoleContext?.role ?? 'owner',
+        role: completedRole,
         status: pairedExecutionStatus,
         summary: pairedExecutionSummary,
       });
+
+      // After owner/reviewer completes, enqueue the next turn so
+      // the message loop picks it up without waiting for a new message.
+      if (pairedExecutionStatus === 'succeeded') {
+        deps.queue.enqueueMessageCheck(chatJid);
+      }
     }
   }
 }
