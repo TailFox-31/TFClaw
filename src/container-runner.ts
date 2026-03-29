@@ -261,8 +261,14 @@ export function buildReviewerMounts(
     });
   }
 
-  // Session directory for Claude/Codex state
-  const groupSessionsDir = path.join(DATA_DIR, 'sessions', group.folder);
+  // Session directory for Claude/Codex state.
+  // Use the reviewer-suffixed path to match paired-execution-context.ts
+  // which writes CLAUDE.md (prompts) to {folder}-reviewer/.claude/.
+  const groupSessionsDir = path.join(
+    DATA_DIR,
+    'sessions',
+    `${group.folder}-reviewer`,
+  );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   mounts.push({
     hostPath: groupSessionsDir,
