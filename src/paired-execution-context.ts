@@ -227,6 +227,8 @@ export function preparePairedExecutionContext(args: {
         updated_at: now,
       });
     }
+    // Use a stable per-channel worktree (not per-task) so the Claude SDK
+    // session persists across tasks. Different channels still get isolation.
     workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
   } else {
     const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
@@ -424,7 +426,6 @@ export function completePairedExecutionContext(args: {
           {
             taskId,
             verdict,
-            approvedHead,
             approvedSourceRef,
             summary: args.summary?.slice(0, 100),
           },

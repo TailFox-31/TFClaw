@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+import { DATA_DIR } from './config.js';
 import {
   getPairedProject,
   getPairedTaskById,
@@ -376,31 +377,57 @@ export function hasReviewableOwnerWorkspaceChanges(taskId: string): boolean {
   return listAllowedUntrackedFiles(ownerWorkspace.workspace_dir).length > 0;
 }
 
+/**
+ * Register the canonical project directory as the owner workspace.
+ * No worktree is created — the owner works directly on the live project.
+ * This preserves the Claude SDK session across tasks (same project path).
+ */
+export function registerOwnerCanonicalWorkspace(
+  taskId: string,
+  canonicalWorkDir: string,
+): PairedWorkspace {
+  ensureGitRepository(canonicalWorkDir);
+  const workspace = makeWorkspaceRecord({
+    taskId,
+    role: 'owner',
+    workspaceDir: canonicalWorkDir,
+  });
+  upsertPairedWorkspace(workspace);
+  return workspace;
+}
+
 export function provisionOwnerWorkspaceForPairedTask(
   taskId: string,
 ): PairedWorkspace {
   const { task, canonicalWorkDir } = getTaskAndProject(taskId);
   ensureGitRepository(canonicalWorkDir);
 
-  const sourceRef = task.source_ref || 'HEAD';
-  const workspaceDir = resolvePairedTaskWorkspacePath(
+  // Use a stable per-channel path (not per-task) so the Claude SDK
+  // recognizes it as the same project across tasks → session persists.
+  const workspacesBaseDir = path.resolve(DATA_DIR, 'workspaces');
+  const workspaceDir = path.resolve(
+    workspacesBaseDir,
     task.group_folder,
-    task.id,
     'owner',
   );
-  const parentDir = path.dirname(workspaceDir);
-  fs.mkdirSync(parentDir, { recursive: true });
+  fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
 
   if (!fs.existsSync(path.join(workspaceDir, '.git'))) {
-    ensureCleanDirectory(parentDir);
     runGit(
-      ['worktree', 'add', '--detach', workspaceDir, sourceRef],
+      ['worktree', 'add', workspaceDir, 'HEAD'],
       canonicalWorkDir,
     );
     logger.info(
-      { taskId, workspaceDir, sourceRef },
-      'Provisioned owner workspace for paired task',
+      { taskId, workspaceDir },
+      'Provisioned stable owner workspace for channel',
     );
+  } else {
+    // Worktree exists — pull latest changes from canonical repo
+    try {
+      runGit(['checkout', '--detach', 'HEAD'], workspaceDir);
+    } catch {
+      // Already at HEAD or detached — fine
+    }
   }
 
   const workspace = makeWorkspaceRecord({
