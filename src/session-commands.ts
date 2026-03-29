@@ -241,6 +241,7 @@ export async function handleSessionCommand(opts: {
 
   // Advance cursor to the command — messages AFTER it remain pending for next poll.
   deps.advanceCursor(cmdMsg.timestamp);
+  deps.resetPairedTask?.();
   await deps.setTyping(false);
 
   if (cmdOutput === 'error' || hadCmdError) {
