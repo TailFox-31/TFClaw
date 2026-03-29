@@ -214,6 +214,37 @@ export function buildReviewerMounts(
     readonly: true,
   });
 
+  // Git worktree support: worktree's .git file references the parent repo's
+  // .git directory via absolute path. Mount the parent .git at the same host
+  // path so git commands resolve inside the container.
+  const dotGitPath = path.join(ownerWorkspaceDir, '.git');
+  try {
+    const stat = fs.statSync(dotGitPath);
+    if (stat.isFile()) {
+      // Worktree: .git is a file containing "gitdir: /path/to/.git/worktrees/name"
+      const content = fs.readFileSync(dotGitPath, 'utf-8').trim();
+      const match = content.match(/^gitdir:\s*(.+)$/);
+      if (match) {
+        const worktreeGitDir = path.resolve(ownerWorkspaceDir, match[1]);
+        // worktreeGitDir = /parent/.git/worktrees/name → parent .git = ../../
+        const parentGitDir = path.resolve(worktreeGitDir, '..', '..');
+        if (fs.existsSync(parentGitDir)) {
+          mounts.push({
+            hostPath: parentGitDir,
+            containerPath: parentGitDir,
+            readonly: true,
+          });
+          logger.debug(
+            { parentGitDir, worktreeGitDir },
+            'Mounting parent .git for worktree resolution',
+          );
+        }
+      }
+    }
+  } catch {
+    // Not a git repo or .git missing — skip
+  }
+
   // pnpm global store: mount at the same host path so hardlinks resolve.
   const pnpmStore = detectPnpmStorePath(ownerWorkspaceDir);
   if (pnpmStore) {
