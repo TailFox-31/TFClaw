@@ -33,8 +33,6 @@ vi.mock('./logger.js', () => ({
 import * as db from './db.js';
 import {
   completePairedExecutionContext,
-  formatRoomReviewReadyMessage,
-  markRoomReviewReady,
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
 import * as pairedWorkspaceManager from './paired-workspace-manager.js';
@@ -134,78 +132,6 @@ function buildWorkspace(
       role === 'reviewer' ? '2026-03-28T00:00:00.000Z' : null,
     created_at: '2026-03-28T00:00:00.000Z',
     updated_at: '2026-03-28T00:00:00.000Z',
-  };
-}
-
-async function importExecutionContextForService(serviceId: string) {
-  vi.resetModules();
-
-  const dbModule = {
-    createPairedTask: vi.fn(),
-    getLatestPairedTaskForChat: vi.fn(),
-    getLatestOpenPairedTaskForChat: vi.fn(),
-    getPairedTaskById: vi.fn(),
-    getPairedWorkspace: vi.fn(),
-    updatePairedTask: vi.fn(),
-    upsertPairedProject: vi.fn(),
-  };
-  dbModule.getLatestOpenPairedTaskForChat.mockReturnValue(undefined);
-  dbModule.getPairedTaskById.mockReturnValue(undefined);
-  dbModule.getPairedWorkspace.mockReturnValue(undefined);
-
-  const pairedWorkspaceManagerModule = {
-    markPairedTaskReviewReady: vi.fn(),
-    prepareReviewerWorkspaceForExecution: vi.fn(),
-    provisionOwnerWorkspaceForPairedTask: vi.fn(),
-  };
-  pairedWorkspaceManagerModule.provisionOwnerWorkspaceForPairedTask.mockReturnValue(
-    {
-      id: 'task-1:owner',
-      task_id: 'task-1',
-      role: 'owner',
-      workspace_dir: '/tmp/paired/task-1/owner',
-      snapshot_source_dir: null,
-      snapshot_ref: null,
-      status: 'ready',
-      snapshot_refreshed_at: null,
-      created_at: '2026-03-28T00:00:00.000Z',
-      updated_at: '2026-03-28T00:00:00.000Z',
-    },
-  );
-  pairedWorkspaceManagerModule.prepareReviewerWorkspaceForExecution.mockReturnValue(
-    {
-      workspace: null,
-      autoRefreshed: false,
-    },
-  );
-
-  vi.doMock('./db.js', () => dbModule);
-  vi.doMock(
-    './paired-workspace-manager.js',
-    () => pairedWorkspaceManagerModule,
-  );
-  vi.doMock('./logger.js', () => ({
-    logger: {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-    },
-  }));
-  vi.doMock('./config.js', async () => {
-    const actual =
-      await vi.importActual<typeof import('./config.js')>('./config.js');
-    return {
-      ...actual,
-      SERVICE_ID: serviceId,
-    };
-  });
-
-  const module = await import('./paired-execution-context.js');
-  return {
-    dbModule,
-    pairedWorkspaceManagerModule,
-    markRoomReviewReady: module.markRoomReviewReady,
   };
 }
 
@@ -325,7 +251,7 @@ describe('paired execution context', () => {
     });
   });
 
-  it('does not change task state for a general reviewer turn before /review', () => {
+  it('does not change task state when the reviewer snapshot is not ready', () => {
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
       id: 'task-1',
       chat_jid: 'dc:test',
@@ -347,7 +273,7 @@ describe('paired execution context', () => {
       workspace: null,
       autoRefreshed: false,
       blockMessage:
-        'Review snapshot is not ready yet. Ask the owner to run /review (or /review-ready) after preparing changes.',
+        'Review snapshot is not ready yet. Wait for the owner to complete a turn so the reviewer snapshot can be prepared.',
     });
 
     const result = preparePairedExecutionContext({
@@ -358,7 +284,7 @@ describe('paired execution context', () => {
     });
 
     expect(result?.blockMessage).toBe(
-      'Review snapshot is not ready yet. Ask the owner to run /review (or /review-ready) after preparing changes.',
+      'Review snapshot is not ready yet. Wait for the owner to complete a turn so the reviewer snapshot can be prepared.',
     );
     expect(db.updatePairedTask).not.toHaveBeenCalledWith(
       'task-1',
@@ -531,208 +457,4 @@ describe('paired execution context', () => {
     );
   });
 
-  it('returns ready for /review on the owner service', async () => {
-    const {
-      dbModule,
-      pairedWorkspaceManagerModule,
-      markRoomReviewReady: isolatedMarkRoomReviewReady,
-    } = await importExecutionContextForService('codex-main');
-
-    dbModule.getLatestOpenPairedTaskForChat.mockReturnValue({
-      id: 'task-1',
-      chat_jid: 'dc:test',
-      group_folder: group.folder,
-      owner_service_id: 'codex-main',
-      reviewer_service_id: 'codex-review',
-      title: null,
-      source_ref: 'HEAD',
-      plan_notes: null,
-      round_trip_count: 0,
-      review_requested_at: null,
-      status: 'active',
-      created_at: '2026-03-28T00:00:00.000Z',
-      updated_at: '2026-03-28T00:00:00.000Z',
-    });
-    dbModule.getPairedTaskById.mockReturnValue({
-      id: 'task-1',
-      chat_jid: 'dc:test',
-      group_folder: group.folder,
-      owner_service_id: 'codex-main',
-      reviewer_service_id: 'codex-review',
-      title: null,
-      source_ref: 'HEAD',
-      plan_notes: null,
-      round_trip_count: 0,
-      review_requested_at: '2026-03-28T00:00:00.000Z',
-      status: 'review_ready',
-      created_at: '2026-03-28T00:00:00.000Z',
-      updated_at: '2026-03-28T00:00:00.000Z',
-    });
-    pairedWorkspaceManagerModule.markPairedTaskReviewReady.mockReturnValue({
-      ownerWorkspace: {
-        id: 'task-1:owner',
-        task_id: 'task-1',
-        role: 'owner',
-        workspace_dir: '/tmp/paired/task-1/owner',
-        snapshot_source_dir: null,
-        snapshot_ref: null,
-        status: 'ready',
-        snapshot_refreshed_at: null,
-        created_at: '2026-03-28T00:00:00.000Z',
-        updated_at: '2026-03-28T00:00:00.000Z',
-      },
-      reviewerWorkspace: {
-        id: 'task-1:reviewer',
-        task_id: 'task-1',
-        role: 'reviewer',
-        workspace_dir: '/tmp/paired/task-1/reviewer',
-        snapshot_source_dir: '/tmp/paired/task-1/owner',
-        snapshot_ref: 'fingerprint-1',
-        status: 'ready',
-        snapshot_refreshed_at: '2026-03-28T00:00:00.000Z',
-        created_at: '2026-03-28T00:00:00.000Z',
-        updated_at: '2026-03-28T00:00:00.000Z',
-      },
-    });
-
-    const result = isolatedMarkRoomReviewReady({
-      group,
-      chatJid: 'dc:test',
-      roomRoleContext: ownerContext,
-    });
-
-    expect(
-      pairedWorkspaceManagerModule.provisionOwnerWorkspaceForPairedTask,
-    ).toHaveBeenCalledWith('task-1');
-    expect(
-      pairedWorkspaceManagerModule.markPairedTaskReviewReady,
-    ).toHaveBeenCalledWith('task-1');
-    expect(result?.status).toBe('ready');
-    if (!result || result.status !== 'ready') {
-      throw new Error('expected ready review result');
-    }
-    expect(result.task.status).toBe('review_ready');
-  });
-
-  it('returns pending for /review on the reviewer service before the owner workspace is visible', async () => {
-    const {
-      dbModule,
-      pairedWorkspaceManagerModule,
-      markRoomReviewReady: isolatedMarkRoomReviewReady,
-    } = await importExecutionContextForService('codex-review');
-
-    dbModule.getLatestOpenPairedTaskForChat.mockReturnValue({
-      id: 'task-1',
-      chat_jid: 'dc:test',
-      group_folder: group.folder,
-      owner_service_id: 'codex-main',
-      reviewer_service_id: 'codex-review',
-      title: null,
-      source_ref: 'HEAD',
-      plan_notes: null,
-      round_trip_count: 0,
-      review_requested_at: null,
-      status: 'active',
-      created_at: '2026-03-28T00:00:00.000Z',
-      updated_at: '2026-03-28T00:00:00.000Z',
-    });
-    dbModule.getPairedTaskById.mockReturnValue({
-      id: 'task-1',
-      chat_jid: 'dc:test',
-      group_folder: group.folder,
-      owner_service_id: 'codex-main',
-      reviewer_service_id: 'codex-review',
-      title: null,
-      source_ref: 'HEAD',
-      plan_notes: null,
-      round_trip_count: 0,
-      review_requested_at: '2026-03-28T00:00:00.000Z',
-      status: 'review_ready',
-      created_at: '2026-03-28T00:00:00.000Z',
-      updated_at: '2026-03-28T00:00:00.000Z',
-    });
-    pairedWorkspaceManagerModule.markPairedTaskReviewReady.mockReturnValue(
-      null,
-    );
-
-    const result = isolatedMarkRoomReviewReady({
-      group,
-      chatJid: 'dc:test',
-      roomRoleContext: ownerContext,
-    });
-
-    expect(
-      pairedWorkspaceManagerModule.provisionOwnerWorkspaceForPairedTask,
-    ).not.toHaveBeenCalled();
-    expect(dbModule.getPairedWorkspace).toHaveBeenCalledWith('task-1', 'owner');
-    expect(
-      pairedWorkspaceManagerModule.markPairedTaskReviewReady,
-    ).toHaveBeenCalledWith('task-1');
-    expect(result).toEqual({
-      status: 'pending',
-      task: expect.objectContaining({
-        id: 'task-1',
-        status: 'review_ready',
-      }),
-      pendingReason: 'owner-workspace-not-ready',
-    });
-  });
-
-  it('keeps review_ready and returns a pending result when owner workspace is not ready', () => {
-    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
-      id: 'task-1',
-      chat_jid: 'dc:test',
-      group_folder: group.folder,
-      owner_service_id: 'codex-main',
-      reviewer_service_id: 'codex-review',
-      title: null,
-      source_ref: 'HEAD',
-      plan_notes: null,
-      round_trip_count: 0,
-      review_requested_at: null,
-      status: 'active',
-      created_at: '2026-03-28T00:00:00.000Z',
-      updated_at: '2026-03-28T00:00:00.000Z',
-    });
-    vi.mocked(db.getPairedTaskById).mockReturnValue({
-      id: 'task-1',
-      chat_jid: 'dc:test',
-      group_folder: group.folder,
-      owner_service_id: 'codex-main',
-      reviewer_service_id: 'codex-review',
-      title: null,
-      source_ref: 'HEAD',
-      plan_notes: null,
-      round_trip_count: 0,
-      review_requested_at: '2026-03-29T00:00:00.000Z',
-      status: 'review_ready',
-      created_at: '2026-03-28T00:00:00.000Z',
-      updated_at: '2026-03-29T00:00:00.000Z',
-    });
-    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
-      null,
-    );
-
-    const result = markRoomReviewReady({
-      group,
-      chatJid: 'dc:test',
-      roomRoleContext: ownerContext,
-    });
-
-    expect(result).toEqual({
-      status: 'pending',
-      task: expect.objectContaining({
-        id: 'task-1',
-        status: 'review_ready',
-      }),
-      pendingReason: 'owner-workspace-not-ready',
-    });
-    expect(formatRoomReviewReadyMessage(result)).toBe(
-      [
-        'Review request recorded, but the owner workspace is not ready yet.',
-        '- Task: task-1',
-        'The task stays review_pending until the owner workspace is prepared.',
-      ].join('\n'),
-    );
-  });
 });

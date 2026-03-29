@@ -23,20 +23,6 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('/clear', trigger)).toBe('/clear');
   });
 
-  it('detects bare /review', () => {
-    expect(extractSessionCommand('/review', trigger)).toBe('/review');
-  });
-
-  it('detects bare /deploy-complete', () => {
-    expect(extractSessionCommand('/deploy-complete', trigger)).toBe(
-      '/deploy-complete',
-    );
-  });
-
-  it('normalizes /review-ready to /review', () => {
-    expect(extractSessionCommand('/review-ready', trigger)).toBe('/review');
-  });
-
   it('rejects /compact with extra text', () => {
     expect(extractSessionCommand('/compact now please', trigger)).toBeNull();
   });
@@ -94,47 +80,6 @@ describe('isSessionCommandControlMessage', () => {
   it('matches admin denial output', () => {
     expect(
       isSessionCommandControlMessage('Session commands require admin access.'),
-    ).toBe(true);
-  });
-
-  it('matches multiline review snapshot output', () => {
-    expect(
-      isSessionCommandControlMessage(
-        'Review snapshot updated.\n- Task: task-1',
-      ),
-    ).toBe(true);
-  });
-
-  it('matches pending review request output', () => {
-    expect(
-      isSessionCommandControlMessage(
-        [
-          'Review request recorded, but the owner workspace is not ready yet.',
-          '- Task: task-1',
-        ].join('\n'),
-      ),
-    ).toBe(true);
-  });
-
-  it('matches plan-gate control output', () => {
-    expect(
-      isSessionCommandControlMessage(
-        'Plan review is required before formal review for this high-risk task.\n- Task: task-1',
-      ),
-    ).toBe(true);
-  });
-
-  it('matches plan artifact control output', () => {
-    expect(
-      isSessionCommandControlMessage('Plan recorded.\n- Task: task-1'),
-    ).toBe(true);
-  });
-
-  it('matches deployment finalized output', () => {
-    expect(
-      isSessionCommandControlMessage(
-        'Deployment finalized.\n- Task: task-1\n- Checkpoint: abc123',
-      ),
     ).toBe(true);
   });
 

@@ -10,9 +10,6 @@ const SESSION_COMMAND_CONTROL_PATTERNS = [
   /^Failed to process messages before \/compact\. Try again\.$/,
   /^\/compact failed\. The session is unchanged\.$/,
   /^Conversation compacted\.$/,
-  /^Review snapshot updated\.(?:\n|$)/,
-  /^Review request recorded, but the owner workspace is not ready yet\.(?:\n|$)/,
-  /^Review is unavailable for this room\./,
 ];
 
 function normalizeSessionCommandText(

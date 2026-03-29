@@ -14,7 +14,9 @@ vi.mock('./config.js', () => ({
   CODEX_MAIN_SERVICE_ID: 'codex-main',
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   DATA_DIR: '/tmp/ejclaw-test-data',
+  REVIEWER_AGENT_TYPE: 'claude-code',
   SERVICE_SESSION_SCOPE: 'claude',
+  isClaudeService: vi.fn(() => true),
   normalizeServiceId: vi.fn((serviceId: string) =>
     serviceId === 'codex' ? 'codex-main' : serviceId,
   ),
@@ -23,6 +25,7 @@ vi.mock('./config.js', () => ({
 vi.mock('./db.js', () => ({
   createServiceHandoff: vi.fn(),
   getAllTasks: vi.fn(() => []),
+  getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
 }));
 
 vi.mock('./service-routing.js', () => ({
@@ -110,7 +113,6 @@ vi.mock('./memento-client.js', () => ({
 
 vi.mock('./paired-execution-context.js', () => ({
   completePairedExecutionContext: vi.fn(),
-  markRoomReviewReady: vi.fn(),
   preparePairedExecutionContext: vi.fn(() => undefined),
 }));
 
@@ -222,7 +224,7 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
-  it('injects structured silent-output instructions into the agent prompt', async () => {
+  it('passes the prompt through unchanged', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
 
     await runAgentForGroup(makeDeps(), {
@@ -230,15 +232,12 @@ describe('runAgentForGroup room memory', () => {
       prompt: 'hello',
       chatJid: 'group@test',
       runId: 'run-suppress',
-      suppressToken: '__TEST_SUPPRESS__',
     });
 
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        prompt: expect.stringMatching(
-          /If you have no user-visible content to send for this turn, output exactly this JSON and nothing else: \{"ejclaw":\{"visibility":"silent"\}\}[\s\S]*If you have already emitted any visible progress, status update, or partial answer earlier in this turn, do not end with the JSON object\. Finish with a short visible final conclusion for the user instead\./,
-        ),
+        prompt: 'hello',
       }),
       expect.any(Function),
       undefined,
@@ -273,7 +272,7 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
-  it('adds reviewer silence guidance when the current service is the reviewer for the chat', async () => {
+  it('keeps the reviewer prompt unchanged when the current service is the reviewer for the chat', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
@@ -289,15 +288,12 @@ describe('runAgentForGroup room memory', () => {
       prompt: 'hello',
       chatJid: 'group@test',
       runId: 'run-review-suppress',
-      suppressToken: '__TEST_SUPPRESS__',
     });
 
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        prompt: expect.stringMatching(
-          /If you have already emitted any visible progress, status update, or partial answer earlier in this turn, do not end with the JSON object\. Finish with a short visible final conclusion for the user instead\.[\s\S]*If you have not already emitted any visible progress, status update, or partial answer in this turn and you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the JSON object\./,
-        ),
+        prompt: 'hello',
       }),
       expect.any(Function),
       undefined,
@@ -438,6 +434,7 @@ describe('runAgentForGroup room memory', () => {
       pairedExecutionContext.completePairedExecutionContext,
     ).toHaveBeenCalledWith({
       taskId: 'paired-task-1',
+      role: 'owner',
       status: 'succeeded',
       summary: 'ok',
     });
@@ -515,6 +512,7 @@ describe('runAgentForGroup room memory', () => {
       pairedExecutionContext.completePairedExecutionContext,
     ).toHaveBeenCalledWith({
       taskId: 'paired-task-1',
+      role: 'owner',
       status: 'failed',
       summary:
         'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.',
