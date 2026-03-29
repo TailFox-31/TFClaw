@@ -760,7 +760,11 @@ async function runGithubCiTask(
     if (check.terminal) {
       await statusTracker.update('completed');
       if (check.completionMessage) {
-        await deps.sendMessage(task.chat_jid, check.completionMessage);
+        const send =
+          isPairedRoomJid(task.chat_jid) && deps.sendMessageViaReviewerBot
+            ? deps.sendMessageViaReviewerBot
+            : deps.sendMessage;
+        await send(task.chat_jid, check.completionMessage);
       }
       deleteTask(task.id);
       completedAndDeleted = true;
