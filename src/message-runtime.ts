@@ -571,7 +571,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             );
           }
           const finalizePrompt =
-            'The reviewer approved your work (DONE). Finalize: commit changes, push if appropriate, and report the result.';
+            'The reviewer approved your work (DONE). Finalize and report the result.';
           const { deliverySucceeded } = await executeTurn({
             group,
             prompt: finalizePrompt,
