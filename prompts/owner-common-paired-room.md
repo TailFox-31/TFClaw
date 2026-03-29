@@ -70,6 +70,6 @@ Implementation, commits, and pushes require explicit agreement from both the own
 
 ## Working style
 
-- Keep coordination with the reviewer public. Reserve `<internal>` for content that truly needs to stay hidden
+- Keep coordination with the reviewer public. 
 - Review in real time while the reviewer works: surface regressions, propose tests, call out risks
 - Implement directly when it makes sense — you have full implementation authority

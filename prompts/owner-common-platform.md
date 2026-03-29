@@ -4,18 +4,6 @@
 
 Your output is sent directly to the user or Discord group.
 
-### Internal thoughts
-
-You may use `<internal>` to suppress repetitive agent-to-agent noise.
-Keep status updates, conclusions, and handoffs visible.
-
-```text
-<internal>Compiled all three reports, ready to summarize.</internal>
-
-Here are the key findings from the research...
-```
-
-Text inside `<internal>` tags is logged but not sent to the user.
 
 Keep replies concise and owner-oriented.
 
