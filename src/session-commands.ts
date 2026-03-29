@@ -34,7 +34,7 @@ export function extractSessionCommand(
   if (text === '/compact') return '/compact';
   if (text === '/clear') return '/clear';
   if (text === '/review' || text === '/review-ready') return '/review';
-  if (text === '/stop' || text === '/cancel' || text === '/kill') return '/stop';
+  if (text === '/stop') return '/stop';
   return null;
 }
 
@@ -180,9 +180,7 @@ export async function handleSessionCommand(opts: {
     const killed = deps.killProcess();
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
-      killed
-        ? 'Agent stopped.'
-        : 'No agent is currently running in this room.',
+      killed ? 'Agent stopped.' : 'No agent is currently running in this room.',
     );
     return { handled: true, success: true };
   }
