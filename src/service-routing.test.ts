@@ -69,8 +69,8 @@ describe('service-routing failover leases', () => {
 
     expect(getEffectiveChannelLease('dc:paired')).toMatchObject({
       chat_jid: 'dc:paired',
-      owner_service_id: 'claude',
-      reviewer_service_id: 'codex-main',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
       explicit: false,
     });
   });

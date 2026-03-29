@@ -18,7 +18,7 @@ import type { PairedTask, PairedWorkspace } from './types.js';
 const REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE =
   'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.';
 const REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE =
-  'Review snapshot is not ready yet. Ask the owner to run /review (or /review-ready) after preparing changes.';
+  'Review snapshot is not ready yet. Wait for the owner to complete a turn so the reviewer snapshot can be prepared.';
 const REVIEWER_SNAPSHOT_DENY_SEGMENTS = new Set([
   '.git',
   '.claude',
