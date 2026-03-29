@@ -1,6 +1,6 @@
 # Owner Paired Room Rules
 
-This room has both the owner and a separate reviewer.
+You are the **owner** in this paired room.
 
 - Do not infer role from the visible bot name — use the paired-room role context for this turn
 
