@@ -1,7 +1,10 @@
 import { execFileSync } from 'child_process';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 import {
+  DATA_DIR,
   SERVICE_ID,
   normalizeServiceId,
   PAIRED_MAX_ROUND_TRIPS,
@@ -230,6 +233,17 @@ export function preparePairedExecutionContext(args: {
   }
   if (roomRoleContext.role === 'reviewer') {
     envOverrides.EJCLAW_REVIEWER_RUNTIME = '1';
+    // Use a separate Claude config dir so the reviewer's SDK session cache
+    // doesn't collide with the owner's. Without this, the Claude SDK picks
+    // up the owner's cached session from disk even when sessionId is undefined.
+    const reviewerSessionDir = path.join(
+      DATA_DIR,
+      'sessions',
+      `${group.folder}-reviewer`,
+      '.claude',
+    );
+    fs.mkdirSync(reviewerSessionDir, { recursive: true });
+    envOverrides.CLAUDE_CONFIG_DIR = reviewerSessionDir;
   }
 
   return {
@@ -375,7 +389,12 @@ export function completePairedExecutionContext(args: {
           updated_at: now,
         });
         logger.info(
-          { taskId, verdict, approvedHead, summary: args.summary?.slice(0, 100) },
+          {
+            taskId,
+            verdict,
+            approvedHead,
+            summary: args.summary?.slice(0, 100),
+          },
           'Reviewer approved — owner gets final turn to finalize',
         );
         break;
