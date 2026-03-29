@@ -1037,14 +1037,15 @@ async function main(): Promise<void> {
     log(`Draining ${pending.length} pending IPC messages into initial prompt`);
     prompt += '\n' + pending.join('\n');
   }
-  prompt = prependRoomRoleHeader(prompt, containerInput.roomRoleContext);
-
   // --- Slash command handling ---
-  // Only known session slash commands are handled here. This prevents
-  // accidental interception of user prompts that happen to start with '/'.
+  // Check BEFORE prepending room role header so /compact isn't masked.
   const KNOWN_SESSION_COMMANDS = new Set(['/compact']);
+  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(containerInput.prompt.trim());
+
+  if (!isSessionSlashCommand) {
+    prompt = prependRoomRoleHeader(prompt, containerInput.roomRoleContext);
+  }
   const trimmedPrompt = prompt.trim();
-  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(trimmedPrompt);
 
   if (isSessionSlashCommand) {
     log(`Handling session command: ${trimmedPrompt}`);

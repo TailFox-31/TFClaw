@@ -504,7 +504,8 @@ async function main(): Promise<void> {
     /* ignore */
   }
 
-  let prompt = containerInput.prompt;
+  const rawPrompt = containerInput.prompt;
+  let prompt = rawPrompt;
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK]\n\n${prompt}`;
   }
@@ -512,7 +513,12 @@ async function main(): Promise<void> {
   if (pending.length > 0) {
     prompt += '\n' + pending.join('\n');
   }
-  prompt = prependRoomRoleHeader(prompt, containerInput.roomRoleContext);
+  // Prepend room role header AFTER checking for session commands,
+  // so /compact is not masked by the header prefix.
+  const isSessionCommand = rawPrompt.trim() === '/compact';
+  if (!isSessionCommand) {
+    prompt = prependRoomRoleHeader(prompt, containerInput.roomRoleContext);
+  }
 
   try {
     log('Runtime selected: app-server');
