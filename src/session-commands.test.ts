@@ -234,8 +234,6 @@ describe('handleSessionCommand', () => {
     );
   });
 
-
-
   it('sends denial to interactable sender in non-main group', async () => {
     const deps = makeDeps();
     const result = await handleSessionCommand({

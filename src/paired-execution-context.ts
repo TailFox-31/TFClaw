@@ -257,8 +257,22 @@ export function completePairedExecutionContext(args: {
   const task = getPairedTaskById(taskId);
   if (!task) return;
 
-  // On failure, reset task to active so the flow isn't stuck
+  // On failure: for reviewers, still check verdict from summary — output may
+  // have been delivered even though the executor classified it as failed
+  // (e.g. intermediate buffer → null result). This prevents infinite loops.
   if (status !== 'succeeded') {
+    if (role === 'reviewer' && args.summary) {
+      const verdict = classifyReviewerVerdict(args.summary);
+      if (verdict === 'done' || verdict === 'blocked' || verdict === 'needs_context') {
+        const now = new Date().toISOString();
+        updatePairedTask(taskId, { status: verdict === 'done' ? 'merge_ready' : 'completed', updated_at: now });
+        logger.info(
+          { taskId, verdict, summary: args.summary?.slice(0, 100) },
+          'Reviewer verdict detected from failed execution — stopping ping-pong',
+        );
+        return;
+      }
+    }
     if (task.status !== 'active') {
       const now = new Date().toISOString();
       updatePairedTask(taskId, { status: 'active', updated_at: now });
