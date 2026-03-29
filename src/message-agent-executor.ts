@@ -240,7 +240,7 @@ export async function runAgentForGroup(
       phase: 'final',
     });
     completePairedExecutionContext({
-      executionId: pairedExecutionContext.execution.id,
+      taskId: pairedExecutionContext.task.id,
       status: pairedExecutionStatus,
       summary: pairedExecutionSummary,
     });
@@ -940,7 +940,7 @@ export async function runAgentForGroup(
   } finally {
     if (pairedExecutionContext) {
       completePairedExecutionContext({
-        executionId: pairedExecutionContext.execution.id,
+        taskId: pairedExecutionContext.task.id,
         status: pairedExecutionStatus,
         summary: pairedExecutionSummary,
         reviewerVerdict: pairedReviewerVerdict,

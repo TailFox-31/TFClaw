@@ -18,9 +18,6 @@ const REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE =
   'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.';
 const REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE =
   'Review snapshot is not ready yet. Ask the owner to run /review (or /review-ready) after preparing changes.';
-export const PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE =
-  'Plan review is required before formal review for this high-risk task.';
-
 const REVIEWER_SNAPSHOT_DENY_SEGMENTS = new Set([
   '.git',
   '.claude',
@@ -325,9 +322,9 @@ function makeWorkspaceRecord(args: {
     workspace_dir: args.workspaceDir,
     snapshot_source_dir:
       args.snapshotSourceDir ?? existing?.snapshot_source_dir ?? null,
-    snapshot_source_fingerprint:
+    snapshot_ref:
       args.snapshotSourceFingerprint ??
-      existing?.snapshot_source_fingerprint ??
+      existing?.snapshot_ref ??
       null,
     status: args.status ?? 'ready',
     snapshot_refreshed_at:
@@ -489,7 +486,6 @@ export function markPairedTaskReviewReady(taskId: string): {
 } | null {
   const requestedAt = new Date().toISOString();
   updatePairedTask(taskId, {
-    status: 'review_pending',
     review_requested_at: requestedAt,
     updated_at: requestedAt,
   });
@@ -518,14 +514,6 @@ export interface PreparedReviewerWorkspace {
 export function prepareReviewerWorkspaceForExecution(
   task: PairedTask,
 ): PreparedReviewerWorkspace {
-  if (task.risk_level === 'high' && task.plan_status !== 'approved') {
-    return {
-      workspace: null,
-      autoRefreshed: false,
-      blockMessage: PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE,
-    };
-  }
-
   const ownerWorkspace = getPairedWorkspace(task.id, 'owner') ?? null;
   if (!ownerWorkspace) {
     return {
@@ -555,11 +543,11 @@ export function prepareReviewerWorkspaceForExecution(
   const snapshotStale =
     !!reviewerWorkspace &&
     (reviewerWorkspace.status === 'stale' ||
-      reviewerWorkspace.snapshot_source_fingerprint !== currentFingerprint);
+      reviewerWorkspace.snapshot_ref !== currentFingerprint);
   const now = new Date().toISOString();
 
   if (snapshotMissing || snapshotStale) {
-    if (task.status === 'review_pending' || task.status === 'review_ready') {
+    if (task.status === 'review_ready') {
       const refreshedWorkspace = refreshReviewerSnapshotForPairedTask(task.id);
       updatePairedTask(task.id, {
         status: 'review_ready',
@@ -587,7 +575,7 @@ export function prepareReviewerWorkspaceForExecution(
           workspaceDir: reviewerWorkspace.workspace_dir,
           snapshotSourceDir: reviewerWorkspace.snapshot_source_dir,
           snapshotSourceFingerprint:
-            reviewerWorkspace.snapshot_source_fingerprint,
+            reviewerWorkspace.snapshot_ref,
           snapshotRefreshedAt: reviewerWorkspace.snapshot_refreshed_at,
           status: 'stale',
           createdAt: reviewerWorkspace.created_at,
@@ -595,7 +583,6 @@ export function prepareReviewerWorkspaceForExecution(
       );
     }
     updatePairedTask(task.id, {
-      status: 'review_pending',
       updated_at: now,
     });
     return {

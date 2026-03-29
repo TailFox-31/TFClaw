@@ -20,6 +20,7 @@ export {
 } from './agent-runner-snapshot.js';
 import { logger } from './logger.js';
 import { OUTPUT_END_MARKER, OUTPUT_START_MARKER } from './agent-protocol.js';
+import { runReviewerContainer } from './container-runner.js';
 import {
   AgentOutputPhase,
   AgentType,
@@ -67,6 +68,37 @@ export async function runAgentProcess(
   onOutput?: (output: AgentOutput) => Promise<void>,
   envOverrides?: Record<string, string>,
 ): Promise<AgentOutput> {
+  // ── Reviewer container mode ─────────────────────────────────────
+  // When EJCLAW_REVIEWER_RUNTIME is set in envOverrides, run the reviewer
+  // inside a Docker container with read-only source mount instead of
+  // as a host process. This provides kernel-level write protection.
+  const isReviewerContainer =
+    envOverrides?.EJCLAW_REVIEWER_RUNTIME === '1' &&
+    process.env.REVIEWER_CONTAINER_ENABLED !== '0';
+  if (isReviewerContainer) {
+    const ownerWorkspaceDir =
+      envOverrides?.EJCLAW_WORK_DIR || group.workDir || process.cwd();
+    return runReviewerContainer({
+      group,
+      input: {
+        prompt: input.prompt,
+        sessionId: input.sessionId,
+        groupFolder: input.groupFolder,
+        chatJid: input.chatJid,
+        runId: input.runId || `${Date.now()}`,
+        isMain: input.isMain,
+        assistantName: input.assistantName,
+      },
+      ownerWorkspaceDir,
+      envOverrides,
+      onOutput,
+      onProcess: (proc, containerName) => {
+        onProcess(proc, containerName, '');
+      },
+    });
+  }
+
+  // ── Host process mode (owner) ───────────────────────────────────
   const startTime = Date.now();
   const { env, groupDir, runnerDir } = prepareGroupEnvironment(
     group,

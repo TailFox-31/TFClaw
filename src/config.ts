@@ -87,6 +87,14 @@ export const RECOVERY_CONCURRENT_AGENTS = parseInt(
   getEnv('RECOVERY_CONCURRENT_AGENTS') || '3',
   10,
 );
+
+// ── Container isolation ───────────────────────────────────────────
+export const REVIEWER_CONTAINER_IMAGE =
+  getEnv('REVIEWER_CONTAINER_IMAGE') || 'ejclaw-reviewer:latest';
+export const CREDENTIAL_PROXY_PORT = parseInt(
+  getEnv('CREDENTIAL_PROXY_PORT') || '3001',
+  10,
+);
 export const RECOVERY_STAGGER_MS = parseInt(
   getEnv('RECOVERY_STAGGER_MS') || '2000',
   10,

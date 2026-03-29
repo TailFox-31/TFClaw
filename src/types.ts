@@ -25,74 +25,16 @@ export type AgentVisibility = 'public' | 'silent';
 
 export type PairedRoomRole = 'owner' | 'reviewer';
 
-export type PairedWorkspaceTopology = 'shadow-snapshot' | 'reviewer-cow';
-
 export type PairedTaskStatus =
   | 'active'
-  | 'draft'
-  | 'plan_review_pending'
-  | 'review_pending'
   | 'review_ready'
   | 'in_review'
-  | 'changes_requested'
   | 'merge_ready'
-  | 'merged'
-  | 'discarded'
-  | 'failed';
-
-export type PairedTaskPolicy = 'autonomous' | 'user_signoff_required';
-
-export type PairedRiskLevel = 'low' | 'high';
-
-export type PairedPlanStatus =
-  | 'not_requested'
-  | 'pending'
-  | 'approved'
-  | 'changes_requested';
-
-export type PairedGateTurnKind = 'implementation_start' | 'commit' | 'push';
-
-export type PairedReviewerVerdict =
-  | 'done'
-  | 'done_with_concerns'
-  | 'blocked'
-  | 'silent';
-
-export type PairedExecutionStatus =
-  | 'pending'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'cancelled';
+  | 'completed';
 
 export type PairedWorkspaceRole = 'owner' | 'reviewer';
 
-export type PairedWorkspaceStatus =
-  | 'provisioning'
-  | 'ready'
-  | 'stale'
-  | 'failed'
-  | 'archived';
-
-export type PairedApprovalStatus = 'pending' | 'approved' | 'rejected';
-
-export type PairedArtifactType =
-  | 'comment'
-  | 'report'
-  | 'patch'
-  | 'plan_brief'
-  | 'acceptance_criteria'
-  | 'risk_summary';
-
-export type PairedEventActorRole = PairedRoomRole | 'system';
-
-export type PairedEventType =
-  | 'set_risk'
-  | 'submit_plan'
-  | 'approve_plan'
-  | 'request_plan_changes'
-  | 'request_review'
-  | 'deploy_complete';
+export type PairedWorkspaceStatus = 'ready' | 'stale';
 
 export interface RoomRoleContext {
   serviceId: string;
@@ -106,7 +48,6 @@ export interface PairedProject {
   chat_jid: string;
   group_folder: string;
   canonical_work_dir: string;
-  workspace_topology: PairedWorkspaceTopology;
   created_at: string;
   updated_at: string;
 }
@@ -119,9 +60,7 @@ export interface PairedTask {
   reviewer_service_id: string;
   title: string | null;
   source_ref: string | null;
-  task_policy: PairedTaskPolicy;
-  risk_level: PairedRiskLevel;
-  plan_status: PairedPlanStatus;
+  plan_notes: string | null;
   review_requested_at: string | null;
   last_finalized_checkpoint?: string | null;
   gate_turn_kind?: PairedGateTurnKind | null;
@@ -133,66 +72,20 @@ export interface PairedTask {
   updated_at: string;
 }
 
-export interface PairedExecution {
-  id: string;
-  task_id: string;
-  service_id: string;
-  role: PairedWorkspaceRole;
-  workspace_id: string | null;
-  checkpoint_fingerprint?: string | null;
-  status: PairedExecutionStatus;
-  summary: string | null;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-}
-
 export interface PairedWorkspace {
   id: string;
   task_id: string;
   role: PairedWorkspaceRole;
   workspace_dir: string;
   snapshot_source_dir: string | null;
-  snapshot_source_fingerprint: string | null;
+  snapshot_ref: string | null;
   status: PairedWorkspaceStatus;
   snapshot_refreshed_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface PairedApproval {
-  id: number;
-  task_id: string;
-  service_id: string;
-  role: PairedWorkspaceRole;
-  status: PairedApprovalStatus;
-  note: string | null;
-  created_at: string;
-}
-
-export interface PairedArtifact {
-  id: number;
-  task_id: string;
-  execution_id: string | null;
-  service_id: string;
-  artifact_type: PairedArtifactType;
-  title: string | null;
-  content: string | null;
-  file_path: string | null;
-  created_at: string;
-}
-
-export interface PairedEvent {
-  id: number;
-  task_id: string;
-  event_type: PairedEventType;
-  actor_role: PairedEventActorRole;
-  source_service_id: string;
-  source_fingerprint: string | null;
-  dedupe_key: string;
-  payload_json: string | null;
-  created_at: string;
-}
+export type AgentResponsePolicy = 'normal' | 'silent-unless-addressed';
 
 export type StructuredAgentOutput =
   | {

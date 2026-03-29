@@ -1,0 +1,17 @@
+{
+  "name": "ejclaw-reviewer-runner",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Reviewer agent runner for EJClaw containers",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

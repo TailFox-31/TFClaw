@@ -12,20 +12,6 @@ const SESSION_COMMAND_CONTROL_PATTERNS = [
   /^Conversation compacted\.$/,
   /^Review snapshot updated\.(?:\n|$)/,
   /^Review request recorded, but the owner workspace is not ready yet\.(?:\n|$)/,
-  /^Plan review is required before formal review for this high-risk task\.(?:\n|$)/,
-  /^Task risk updated\.(?:\n|$)/,
-  /^Plan recorded\.(?:\n|$)/,
-  /^Plan approved\.(?:\n|$)/,
-  /^Plan changes requested\.(?:\n|$)/,
-  /^Risk updates must be handled by the owner service\.$/,
-  /^Plan recording must be handled by the owner service\.$/,
-  /^Plan approval must be handled by the reviewer service\.$/,
-  /^Plan review commands are only required for high-risk tasks\.$/,
-  /^Plan artifacts are incomplete\.(?:\n|$)/,
-  /^Deployment finalized\.(?:\n|$)/,
-  /^Deployment finalization must be handled by the owner service\.$/,
-  /^Deploy completion requires a merge-ready task or the same already-finalized checkpoint\.(?:\n|$)/,
-  /^Deploy completion requires a canonical workDir with a readable HEAD\.$/,
   /^Review is unavailable for this room\./,
 ];
 
@@ -48,13 +34,6 @@ export function extractSessionCommand(
   if (text === '/compact') return '/compact';
   if (text === '/clear') return '/clear';
   if (text === '/review' || text === '/review-ready') return '/review';
-  if (text === '/deploy-complete') return '/deploy-complete';
-  if (/^\/risk(?:\s|$)/.test(text)) return '/risk';
-  if (/^\/plan(?:\s|$)/.test(text)) return '/plan';
-  if (text === '/approve-plan') return '/approve-plan';
-  if (/^\/request-plan-changes(?:\s|$)/.test(text)) {
-    return '/request-plan-changes';
-  }
   return null;
 }
 
@@ -99,22 +78,7 @@ export interface SessionCommandDeps {
   isAdminSender: (msg: NewMessage) => boolean;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
-  markReviewReady: (dedupeKey: string) => Promise<string | null>;
-  setTaskRiskLevel: (
-    riskLevel: 'low' | 'high',
-    dedupeKey: string,
-  ) => Promise<string | null>;
-  recordPlan: (plan: {
-    planBrief: string;
-    acceptanceCriteria: string;
-    riskSummary: string;
-  }, dedupeKey: string) => Promise<string | null>;
-  approvePlan: (dedupeKey: string) => Promise<string | null>;
-  requestPlanChanges: (
-    note: string | undefined,
-    dedupeKey: string,
-  ) => Promise<string | null>;
-  finalizeDeployment: () => Promise<string | null>;
+  markReviewReady: () => Promise<string | null>;
 }
 
 function resultToText(result: string | object | null | undefined): string {
@@ -200,78 +164,11 @@ export async function handleSessionCommand(opts: {
   }
 
   if (command === '/review') {
-    const result = await deps.markReviewReady(cmdMsg.id);
+    const result = await deps.markReviewReady();
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       result ??
         'Review is unavailable for this room. Paired workspaces require a configured project workDir.',
-    );
-    return { handled: true, success: true };
-  }
-
-  if (command === '/deploy-complete') {
-    deps.advanceCursor(cmdMsg.timestamp);
-    await deps.sendMessage(
-      (await deps.finalizeDeployment()) ??
-        'Deploy finalization is unavailable for this room.',
-    );
-    return { handled: true, success: true };
-  }
-
-  if (command === '/risk') {
-    const riskArg = normalizedCommandText
-      .slice('/risk'.length)
-      .trim()
-      .toLowerCase();
-    const riskLevel =
-      riskArg === 'high' ? 'high' : riskArg === 'low' ? 'low' : null;
-    deps.advanceCursor(cmdMsg.timestamp);
-    await deps.sendMessage(
-      riskLevel
-        ? ((await deps.setTaskRiskLevel(riskLevel, cmdMsg.id)) ??
-            'Risk is unavailable for this room.')
-        : 'Usage: /risk <low|high>',
-    );
-    return { handled: true, success: true };
-  }
-
-  if (command === '/plan') {
-    const payload = normalizedCommandText.slice('/plan'.length).trim();
-    const parts = payload.split('||').map((part) => part.trim());
-    deps.advanceCursor(cmdMsg.timestamp);
-    if (parts.length !== 3 || parts.some((part) => !part)) {
-      await deps.sendMessage(
-        'Usage: /plan <plan brief> || <acceptance criteria> || <risk summary>',
-      );
-      return { handled: true, success: true };
-    }
-    await deps.sendMessage(
-      (await deps.recordPlan({
-        planBrief: parts[0],
-        acceptanceCriteria: parts[1],
-        riskSummary: parts[2],
-      }, cmdMsg.id)) ?? 'Plan recording is unavailable for this room.',
-    );
-    return { handled: true, success: true };
-  }
-
-  if (command === '/approve-plan') {
-    deps.advanceCursor(cmdMsg.timestamp);
-    await deps.sendMessage(
-      (await deps.approvePlan(cmdMsg.id)) ??
-        'Plan approval is unavailable for this room.',
-    );
-    return { handled: true, success: true };
-  }
-
-  if (command === '/request-plan-changes') {
-    const note = normalizedCommandText
-      .slice('/request-plan-changes'.length)
-      .trim();
-    deps.advanceCursor(cmdMsg.timestamp);
-    await deps.sendMessage(
-      (await deps.requestPlanChanges(note || undefined, cmdMsg.id)) ??
-        'Plan change requests are unavailable for this room.',
     );
     return { handled: true, success: true };
   }

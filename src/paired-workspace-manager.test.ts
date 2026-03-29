@@ -63,8 +63,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -75,11 +74,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: 'review the owner changes',
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'low',
-      plan_status: 'not_requested',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'draft',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });
@@ -133,7 +130,7 @@ describe('paired workspace manager', () => {
     ).toBeTruthy();
     expect(
       db.getPairedWorkspace('paired-task-1', 'reviewer')
-        ?.snapshot_source_fingerprint,
+        ?.snapshot_ref,
     ).toBeTruthy();
   });
 
@@ -155,8 +152,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -167,11 +163,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'low',
-      plan_status: 'not_requested',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'draft',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });
@@ -210,8 +204,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -222,11 +215,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: 'cross service review',
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'high',
-      plan_status: 'pending',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'draft',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });
@@ -288,8 +279,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -300,11 +290,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'low',
-      plan_status: 'not_requested',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'draft',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });
@@ -365,8 +353,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -377,11 +364,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'high',
-      plan_status: 'pending',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'draft',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });
@@ -508,8 +493,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -520,11 +504,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'low',
-      plan_status: 'not_requested',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'draft',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });
@@ -572,8 +554,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -584,11 +565,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'low',
-      plan_status: 'not_requested',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'draft',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });
@@ -630,8 +609,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -642,11 +620,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'low',
-      plan_status: 'pending',
+      plan_notes: null,
       review_requested_at: '2026-03-28T00:01:00.000Z',
-      status: 'review_pending',
+      status: 'review_ready',
       created_at: now,
       updated_at: '2026-03-28T00:01:00.000Z',
     });
@@ -694,8 +670,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -706,11 +681,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'low',
-      plan_status: 'not_requested',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'draft',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });
@@ -760,8 +733,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -772,11 +744,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'high',
-      plan_status: 'approved',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'draft',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });
@@ -851,8 +821,7 @@ describe('paired workspace manager', () => {
       chat_jid: 'dc:test',
       group_folder: 'paired-room',
       canonical_work_dir: canonicalDir,
-      workspace_topology: 'shadow-snapshot',
-      created_at: now,
+            created_at: now,
       updated_at: now,
     });
     db.createPairedTask({
@@ -863,11 +832,9 @@ describe('paired workspace manager', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      task_policy: 'autonomous',
-      risk_level: 'high',
-      plan_status: 'pending',
+      plan_notes: null,
       review_requested_at: null,
-      status: 'plan_review_pending',
+      status: 'active',
       created_at: now,
       updated_at: now,
     });

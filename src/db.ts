@@ -25,10 +25,6 @@ import { getTaskRuntimeTaskId } from './task-watch-status.js';
 import {
   NewMessage,
   AgentType,
-  PairedApproval,
-  PairedArtifact,
-  PairedEvent,
-  PairedExecution,
   PairedProject,
   PairedTask,
   PairedWorkspace,
@@ -241,10 +237,8 @@ function createSchema(database: Database.Database): void {
       chat_jid TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
       canonical_work_dir TEXT NOT NULL,
-      workspace_topology TEXT NOT NULL DEFAULT 'shadow-snapshot',
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      CHECK (workspace_topology IN ('shadow-snapshot', 'reviewer-cow'))
+      updated_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS paired_tasks (
       id TEXT PRIMARY KEY,
@@ -254,9 +248,7 @@ function createSchema(database: Database.Database): void {
       reviewer_service_id TEXT NOT NULL,
       title TEXT,
       source_ref TEXT,
-      task_policy TEXT NOT NULL DEFAULT 'autonomous',
-      risk_level TEXT NOT NULL DEFAULT 'low',
-      plan_status TEXT NOT NULL DEFAULT 'not_requested',
+      plan_notes TEXT,
       review_requested_at TEXT,
       last_finalized_checkpoint TEXT,
       gate_turn_kind TEXT,
@@ -266,137 +258,26 @@ function createSchema(database: Database.Database): void {
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      CHECK (task_policy IN ('autonomous', 'user_signoff_required')),
-      CHECK (risk_level IN ('low', 'high')),
-      CHECK (
-        plan_status IN (
-          'not_requested',
-          'pending',
-          'approved',
-          'changes_requested'
-        )
-      ),
-      CHECK (
-        gate_turn_kind IS NULL OR
-        gate_turn_kind IN ('implementation_start', 'commit', 'push')
-      ),
-      CHECK (
-        reviewer_verdict IS NULL OR
-        reviewer_verdict IN ('done', 'done_with_concerns', 'blocked', 'silent')
-      ),
-      CHECK (
-        status IN (
-          'active',
-          'draft',
-          'plan_review_pending',
-          'review_pending',
-          'review_ready',
-          'in_review',
-          'changes_requested',
-          'merge_ready',
-          'merged',
-          'discarded',
-          'failed'
-        )
-      )
+      CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed'))
     );
     CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
       ON paired_tasks(chat_jid, status, updated_at);
-    CREATE TABLE IF NOT EXISTS paired_executions (
-      id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL,
-      service_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      workspace_id TEXT,
-      checkpoint_fingerprint TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      summary TEXT,
-      created_at TEXT NOT NULL,
-      started_at TEXT,
-      completed_at TEXT,
-      CHECK (role IN ('owner', 'reviewer')),
-      CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_paired_executions_task
-      ON paired_executions(task_id, created_at);
     CREATE TABLE IF NOT EXISTS paired_workspaces (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
       role TEXT NOT NULL,
       workspace_dir TEXT NOT NULL,
       snapshot_source_dir TEXT,
-      snapshot_source_fingerprint TEXT,
-      status TEXT NOT NULL DEFAULT 'provisioning',
+      snapshot_ref TEXT,
+      status TEXT NOT NULL DEFAULT 'ready',
       snapshot_refreshed_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       CHECK (role IN ('owner', 'reviewer')),
-      CHECK (status IN ('provisioning', 'ready', 'stale', 'failed', 'archived'))
+      CHECK (status IN ('ready', 'stale'))
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_paired_workspaces_task_role
       ON paired_workspaces(task_id, role);
-    CREATE TABLE IF NOT EXISTS paired_approvals (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL,
-      service_id TEXT NOT NULL,
-      role TEXT NOT NULL,
-      status TEXT NOT NULL,
-      note TEXT,
-      created_at TEXT NOT NULL,
-      CHECK (role IN ('owner', 'reviewer')),
-      CHECK (status IN ('pending', 'approved', 'rejected'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_paired_approvals_task
-      ON paired_approvals(task_id, created_at);
-    CREATE TABLE IF NOT EXISTS paired_artifacts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL,
-      execution_id TEXT,
-      service_id TEXT NOT NULL,
-      artifact_type TEXT NOT NULL,
-      title TEXT,
-      content TEXT,
-      file_path TEXT,
-      created_at TEXT NOT NULL,
-      CHECK (
-        artifact_type IN (
-          'comment',
-          'report',
-          'patch',
-          'plan_brief',
-          'acceptance_criteria',
-          'risk_summary'
-        )
-      )
-    );
-    CREATE INDEX IF NOT EXISTS idx_paired_artifacts_task
-      ON paired_artifacts(task_id, created_at);
-    CREATE TABLE IF NOT EXISTS paired_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL,
-      event_type TEXT NOT NULL,
-      actor_role TEXT NOT NULL,
-      source_service_id TEXT NOT NULL,
-      source_fingerprint TEXT,
-      dedupe_key TEXT NOT NULL,
-      payload_json TEXT,
-      created_at TEXT NOT NULL,
-      CHECK (
-        event_type IN (
-          'set_risk',
-          'submit_plan',
-          'approve_plan',
-          'request_plan_changes',
-          'request_review',
-          'deploy_complete'
-        )
-      ),
-      CHECK (actor_role IN ('owner', 'reviewer', 'system'))
-    );
-    CREATE INDEX IF NOT EXISTS idx_paired_events_task
-      ON paired_events(task_id, created_at, id);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_paired_events_dedupe
-      ON paired_events(task_id, event_type, dedupe_key);
     CREATE TABLE IF NOT EXISTS channel_owner (
       chat_jid TEXT PRIMARY KEY,
       owner_service_id TEXT NOT NULL,
@@ -480,22 +361,6 @@ function createSchema(database: Database.Database): void {
   try {
     database.exec(
       `ALTER TABLE scheduled_tasks ADD COLUMN suspended_until TEXT`,
-    );
-  } catch {
-    /* column already exists */
-  }
-
-  try {
-    database.exec(
-      `ALTER TABLE paired_workspaces ADD COLUMN snapshot_source_fingerprint TEXT`,
-    );
-  } catch {
-    /* column already exists */
-  }
-
-  try {
-    database.exec(
-      `ALTER TABLE paired_executions ADD COLUMN checkpoint_fingerprint TEXT`,
     );
   } catch {
     /* column already exists */
@@ -691,26 +556,21 @@ function createSchema(database: Database.Database): void {
     );
   }
 
+  // Migration: drop legacy paired tables and rebuild simplified schema.
+  // Old tables (paired_executions, paired_approvals, paired_artifacts, paired_events)
+  // are no longer used. paired_tasks is rebuilt with simplified columns.
   const pairedTasksSqlRow = database
     .prepare(
       `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_tasks'`,
     )
     .get() as { sql?: string } | undefined;
   const pairedTasksSql = pairedTasksSqlRow?.sql || '';
-  const pairedTasksNeedsMigration =
-    pairedTasksSql &&
-    (!pairedTasksSql.includes("'review_pending'") ||
-      !pairedTasksSql.includes("'active'") ||
-      !pairedTasksSql.includes("'plan_review_pending'") ||
-      !pairedTasksSql.includes('task_policy TEXT') ||
-      !pairedTasksSql.includes('risk_level TEXT') ||
-      !pairedTasksSql.includes('plan_status TEXT') ||
-      !pairedTasksSql.includes('last_finalized_checkpoint TEXT') ||
-      !pairedTasksSql.includes('gate_turn_kind TEXT') ||
-      !pairedTasksSql.includes('reviewer_verdict TEXT'));
-  if (pairedTasksNeedsMigration) {
+  const pairedTasksNeedsRebuild =
+    pairedTasksSql && pairedTasksSql.includes('task_policy');
+  if (pairedTasksNeedsRebuild) {
+    database.exec(`DROP TABLE IF EXISTS paired_tasks`);
     database.exec(`
-      CREATE TABLE paired_tasks_new (
+      CREATE TABLE IF NOT EXISTS paired_tasks (
         id TEXT PRIMARY KEY,
         chat_jid TEXT NOT NULL,
         group_folder TEXT NOT NULL,
@@ -718,9 +578,7 @@ function createSchema(database: Database.Database): void {
         reviewer_service_id TEXT NOT NULL,
         title TEXT,
         source_ref TEXT,
-        task_policy TEXT NOT NULL DEFAULT 'autonomous',
-        risk_level TEXT NOT NULL DEFAULT 'low',
-        plan_status TEXT NOT NULL DEFAULT 'not_requested',
+        plan_notes TEXT,
         review_requested_at TEXT,
         last_finalized_checkpoint TEXT,
         gate_turn_kind TEXT,
@@ -730,239 +588,69 @@ function createSchema(database: Database.Database): void {
         status TEXT NOT NULL DEFAULT 'active',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        CHECK (task_policy IN ('autonomous', 'user_signoff_required')),
-        CHECK (risk_level IN ('low', 'high')),
-        CHECK (
-          plan_status IN (
-            'not_requested',
-            'pending',
-            'approved',
-            'changes_requested'
-          )
-        ),
-        CHECK (
-          gate_turn_kind IS NULL OR
-          gate_turn_kind IN ('implementation_start', 'commit', 'push')
-        ),
-        CHECK (
-          reviewer_verdict IS NULL OR
-          reviewer_verdict IN ('done', 'done_with_concerns', 'blocked', 'silent')
-        ),
-        CHECK (
-          status IN (
-            'active',
-            'draft',
-            'plan_review_pending',
-            'review_pending',
-            'review_ready',
-            'in_review',
-            'changes_requested',
-            'merge_ready',
-            'merged',
-            'discarded',
-            'failed'
-          )
-        )
+        CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed'))
       );
-    `);
-    database.exec(`
-      INSERT INTO paired_tasks_new (
-        id,
-        chat_jid,
-        group_folder,
-        owner_service_id,
-        reviewer_service_id,
-        title,
-        source_ref,
-        task_policy,
-        risk_level,
-        plan_status,
-        review_requested_at,
-        last_finalized_checkpoint,
-        gate_turn_kind,
-        reviewer_verdict,
-        reviewer_verdict_at,
-        reviewer_verdict_note,
-        status,
-        created_at,
-        updated_at
-      )
-      SELECT
-        id,
-        chat_jid,
-        group_folder,
-        owner_service_id,
-        reviewer_service_id,
-        title,
-        source_ref,
-        'autonomous',
-        'low',
-        CASE
-          WHEN status IN (
-            'review_pending',
-            'review_ready',
-            'in_review',
-            'changes_requested',
-            'merge_ready',
-            'merged'
-          ) THEN 'approved'
-          ELSE 'not_requested'
-        END,
-        review_requested_at,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        NULL,
-        status,
-        created_at,
-        updated_at
-      FROM paired_tasks;
-    `);
-    database.exec(`
-      DROP TABLE paired_tasks;
-      ALTER TABLE paired_tasks_new RENAME TO paired_tasks;
-    `);
-    database.exec(`
       CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
         ON paired_tasks(chat_jid, status, updated_at);
     `);
   }
 
-  const pairedEventsSqlRow = database
+  // Drop legacy tables that are no longer used
+  for (const table of [
+    'paired_executions',
+    'paired_approvals',
+    'paired_artifacts',
+    'paired_events',
+  ]) {
+    database.exec(`DROP TABLE IF EXISTS ${table}`);
+  }
+
+  // Rebuild paired_workspaces if it has old schema
+  const pairedWsSqlRow = database
     .prepare(
-      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_events'`,
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_workspaces'`,
     )
     .get() as { sql?: string } | undefined;
-  const pairedEventsSql = pairedEventsSqlRow?.sql || '';
-  const pairedEventsNeedsMigration =
-    pairedEventsSql && !pairedEventsSql.includes("'deploy_complete'");
-  if (pairedEventsNeedsMigration) {
+  const pairedWsSql = pairedWsSqlRow?.sql || '';
+  if (pairedWsSql && pairedWsSql.includes('snapshot_source_fingerprint')) {
+    database.exec(`DROP TABLE IF EXISTS paired_workspaces`);
     database.exec(`
-      CREATE TABLE paired_events_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+      CREATE TABLE IF NOT EXISTS paired_workspaces (
+        id TEXT PRIMARY KEY,
         task_id TEXT NOT NULL,
-        event_type TEXT NOT NULL,
-        actor_role TEXT NOT NULL,
-        source_service_id TEXT NOT NULL,
-        source_fingerprint TEXT,
-        dedupe_key TEXT NOT NULL,
-        payload_json TEXT,
+        role TEXT NOT NULL,
+        workspace_dir TEXT NOT NULL,
+        snapshot_source_dir TEXT,
+        snapshot_ref TEXT,
+        status TEXT NOT NULL DEFAULT 'ready',
+        snapshot_refreshed_at TEXT,
         created_at TEXT NOT NULL,
-        CHECK (
-          event_type IN (
-            'set_risk',
-            'submit_plan',
-            'approve_plan',
-            'request_plan_changes',
-            'request_review',
-            'deploy_complete'
-          )
-        ),
-        CHECK (actor_role IN ('owner', 'reviewer', 'system'))
+        updated_at TEXT NOT NULL,
+        CHECK (role IN ('owner', 'reviewer')),
+        CHECK (status IN ('ready', 'stale'))
       );
-    `);
-    database.exec(`
-      INSERT INTO paired_events_new (
-        id,
-        task_id,
-        event_type,
-        actor_role,
-        source_service_id,
-        source_fingerprint,
-        dedupe_key,
-        payload_json,
-        created_at
-      )
-      SELECT
-        id,
-        task_id,
-        event_type,
-        actor_role,
-        source_service_id,
-        source_fingerprint,
-        dedupe_key,
-        payload_json,
-        created_at
-      FROM paired_events;
-    `);
-    database.exec(`
-      DROP TABLE paired_events;
-      ALTER TABLE paired_events_new RENAME TO paired_events;
-    `);
-    database.exec(`
-      CREATE INDEX IF NOT EXISTS idx_paired_events_task
-        ON paired_events(task_id, created_at, id);
-    `);
-    database.exec(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_paired_events_dedupe
-        ON paired_events(task_id, event_type, dedupe_key);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_paired_workspaces_task_role
+        ON paired_workspaces(task_id, role);
     `);
   }
 
-  const pairedArtifactsSqlRow = database
+  // Rebuild paired_projects if it has old schema
+  const pairedProjSqlRow = database
     .prepare(
-      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_artifacts'`,
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_projects'`,
     )
     .get() as { sql?: string } | undefined;
-  const pairedArtifactsSql = pairedArtifactsSqlRow?.sql || '';
-  const pairedArtifactsNeedsMigration =
-    pairedArtifactsSql && !pairedArtifactsSql.includes("'plan_brief'");
-  if (pairedArtifactsNeedsMigration) {
+  const pairedProjSql = pairedProjSqlRow?.sql || '';
+  if (pairedProjSql && pairedProjSql.includes('workspace_topology')) {
+    database.exec(`DROP TABLE IF EXISTS paired_projects`);
     database.exec(`
-      CREATE TABLE paired_artifacts_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id TEXT NOT NULL,
-        execution_id TEXT,
-        service_id TEXT NOT NULL,
-        artifact_type TEXT NOT NULL,
-        title TEXT,
-        content TEXT,
-        file_path TEXT,
+      CREATE TABLE IF NOT EXISTS paired_projects (
+        chat_jid TEXT PRIMARY KEY,
+        group_folder TEXT NOT NULL,
+        canonical_work_dir TEXT NOT NULL,
         created_at TEXT NOT NULL,
-        CHECK (
-          artifact_type IN (
-            'comment',
-            'report',
-            'patch',
-            'plan_brief',
-            'acceptance_criteria',
-            'risk_summary'
-          )
-        )
+        updated_at TEXT NOT NULL
       );
-    `);
-    database.exec(`
-      INSERT INTO paired_artifacts_new (
-        id,
-        task_id,
-        execution_id,
-        service_id,
-        artifact_type,
-        title,
-        content,
-        file_path,
-        created_at
-      )
-      SELECT
-        id,
-        task_id,
-        execution_id,
-        service_id,
-        artifact_type,
-        title,
-        content,
-        file_path,
-        created_at
-      FROM paired_artifacts;
-    `);
-    database.exec(`
-      DROP TABLE paired_artifacts;
-      ALTER TABLE paired_artifacts_new RENAME TO paired_artifacts;
-    `);
-    database.exec(`
-      CREATE INDEX IF NOT EXISTS idx_paired_artifacts_task
-        ON paired_artifacts(task_id, created_at);
     `);
   }
 
@@ -2111,22 +1799,19 @@ export function upsertPairedProject(project: PairedProject): void {
         chat_jid,
         group_folder,
         canonical_work_dir,
-        workspace_topology,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(chat_jid) DO UPDATE SET
         group_folder = excluded.group_folder,
         canonical_work_dir = excluded.canonical_work_dir,
-        workspace_topology = excluded.workspace_topology,
         updated_at = excluded.updated_at
     `,
   ).run(
     project.chat_jid,
     project.group_folder,
     project.canonical_work_dir,
-    project.workspace_topology,
     project.created_at,
     project.updated_at,
   );
@@ -2149,9 +1834,7 @@ export function createPairedTask(task: PairedTask): void {
         reviewer_service_id,
         title,
         source_ref,
-        task_policy,
-        risk_level,
-        plan_status,
+        plan_notes,
         review_requested_at,
         last_finalized_checkpoint,
         gate_turn_kind,
@@ -2162,7 +1845,7 @@ export function createPairedTask(task: PairedTask): void {
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     task.id,
@@ -2172,9 +1855,7 @@ export function createPairedTask(task: PairedTask): void {
     task.reviewer_service_id,
     task.title,
     task.source_ref,
-    task.task_policy,
-    task.risk_level,
-    task.plan_status,
+    task.plan_notes,
     task.review_requested_at,
     task.last_finalized_checkpoint ?? null,
     task.gate_turn_kind ?? null,
@@ -2218,7 +1899,7 @@ export function getLatestOpenPairedTaskForChat(
         SELECT *
           FROM paired_tasks
          WHERE chat_jid = ?
-           AND status NOT IN ('merged', 'discarded', 'failed')
+           AND status NOT IN ('completed')
          ORDER BY updated_at DESC
          LIMIT 1
       `,
@@ -2233,9 +1914,7 @@ export function updatePairedTask(
       PairedTask,
       | 'title'
       | 'source_ref'
-      | 'task_policy'
-      | 'risk_level'
-      | 'plan_status'
+      | 'plan_notes'
       | 'review_requested_at'
       | 'last_finalized_checkpoint'
       | 'gate_turn_kind'
@@ -2258,17 +1937,9 @@ export function updatePairedTask(
     fields.push('source_ref = ?');
     values.push(updates.source_ref);
   }
-  if (updates.task_policy !== undefined) {
-    fields.push('task_policy = ?');
-    values.push(updates.task_policy);
-  }
-  if (updates.risk_level !== undefined) {
-    fields.push('risk_level = ?');
-    values.push(updates.risk_level);
-  }
-  if (updates.plan_status !== undefined) {
-    fields.push('plan_status = ?');
-    values.push(updates.plan_status);
+  if (updates.plan_notes !== undefined) {
+    fields.push('plan_notes = ?');
+    values.push(updates.plan_notes);
   }
   if (updates.review_requested_at !== undefined) {
     fields.push('review_requested_at = ?');
@@ -2311,97 +1982,6 @@ export function updatePairedTask(
   );
 }
 
-export function createPairedExecution(execution: PairedExecution): void {
-  db.prepare(
-    `
-      INSERT INTO paired_executions (
-        id,
-        task_id,
-        service_id,
-        role,
-        workspace_id,
-        checkpoint_fingerprint,
-        status,
-        summary,
-        created_at,
-        started_at,
-        completed_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-  ).run(
-    execution.id,
-    execution.task_id,
-    execution.service_id,
-    execution.role,
-    execution.workspace_id,
-    execution.checkpoint_fingerprint ?? null,
-    execution.status,
-    execution.summary,
-    execution.created_at,
-    execution.started_at,
-    execution.completed_at,
-  );
-}
-
-export function getPairedExecutionById(
-  id: string,
-): PairedExecution | undefined {
-  return db.prepare('SELECT * FROM paired_executions WHERE id = ?').get(id) as
-    | PairedExecution
-    | undefined;
-}
-
-export function updatePairedExecution(
-  id: string,
-  updates: Partial<
-    Pick<
-      PairedExecution,
-      | 'workspace_id'
-      | 'checkpoint_fingerprint'
-      | 'status'
-      | 'summary'
-      | 'started_at'
-      | 'completed_at'
-    >
-  >,
-): void {
-  const fields: string[] = [];
-  const values: unknown[] = [];
-
-  if (updates.workspace_id !== undefined) {
-    fields.push('workspace_id = ?');
-    values.push(updates.workspace_id);
-  }
-  if (updates.checkpoint_fingerprint !== undefined) {
-    fields.push('checkpoint_fingerprint = ?');
-    values.push(updates.checkpoint_fingerprint);
-  }
-  if (updates.status !== undefined) {
-    fields.push('status = ?');
-    values.push(updates.status);
-  }
-  if (updates.summary !== undefined) {
-    fields.push('summary = ?');
-    values.push(updates.summary);
-  }
-  if (updates.started_at !== undefined) {
-    fields.push('started_at = ?');
-    values.push(updates.started_at);
-  }
-  if (updates.completed_at !== undefined) {
-    fields.push('completed_at = ?');
-    values.push(updates.completed_at);
-  }
-
-  if (fields.length === 0) return;
-
-  values.push(id);
-  db.prepare(
-    `UPDATE paired_executions SET ${fields.join(', ')} WHERE id = ?`,
-  ).run(...values);
-}
-
 export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
   db.prepare(
     `
@@ -2411,7 +1991,7 @@ export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
         role,
         workspace_dir,
         snapshot_source_dir,
-        snapshot_source_fingerprint,
+        snapshot_ref,
         status,
         snapshot_refreshed_at,
         created_at,
@@ -2421,7 +2001,7 @@ export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
       ON CONFLICT(id) DO UPDATE SET
         workspace_dir = excluded.workspace_dir,
         snapshot_source_dir = excluded.snapshot_source_dir,
-        snapshot_source_fingerprint = excluded.snapshot_source_fingerprint,
+        snapshot_ref = excluded.snapshot_ref,
         status = excluded.status,
         snapshot_refreshed_at = excluded.snapshot_refreshed_at,
         updated_at = excluded.updated_at
@@ -2432,7 +2012,7 @@ export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
     workspace.role,
     workspace.workspace_dir,
     workspace.snapshot_source_dir,
-    workspace.snapshot_source_fingerprint,
+    workspace.snapshot_ref,
     workspace.status,
     workspace.snapshot_refreshed_at,
     workspace.created_at,
@@ -2455,224 +2035,6 @@ export function listPairedWorkspacesForTask(taskId: string): PairedWorkspace[] {
       'SELECT * FROM paired_workspaces WHERE task_id = ? ORDER BY created_at',
     )
     .all(taskId) as PairedWorkspace[];
-}
-
-export function listPairedExecutionsForTask(taskId: string): PairedExecution[] {
-  return db
-    .prepare(
-      'SELECT * FROM paired_executions WHERE task_id = ? ORDER BY created_at, id',
-    )
-    .all(taskId) as PairedExecution[];
-}
-
-export function cancelSupersededPairedExecutions(args: {
-  taskId: string;
-  role: PairedExecution['role'];
-  exceptExecutionId?: string;
-  note?: string | null;
-}): number {
-  const now = new Date().toISOString();
-  const result = db
-    .prepare(
-      `
-        UPDATE paired_executions
-           SET status = 'cancelled',
-               summary = COALESCE(summary, ?),
-               completed_at = COALESCE(completed_at, ?)
-         WHERE task_id = ?
-           AND role = ?
-           AND status = 'running'
-           AND (? IS NULL OR id <> ?)
-      `,
-    )
-    .run(
-      args.note ?? null,
-      now,
-      args.taskId,
-      args.role,
-      args.exceptExecutionId ?? null,
-      args.exceptExecutionId ?? null,
-    );
-  return result.changes;
-}
-
-export function createPairedApproval(
-  approval: Omit<PairedApproval, 'id'>,
-): number {
-  const result = db
-    .prepare(
-      `
-        INSERT INTO paired_approvals (
-          task_id,
-          service_id,
-          role,
-          status,
-          note,
-          created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?)
-      `,
-    )
-    .run(
-      approval.task_id,
-      approval.service_id,
-      approval.role,
-      approval.status,
-      approval.note,
-      approval.created_at,
-    );
-  return Number(result.lastInsertRowid);
-}
-
-export function listPairedApprovalsForTask(taskId: string): PairedApproval[] {
-  return db
-    .prepare(
-      'SELECT * FROM paired_approvals WHERE task_id = ? ORDER BY created_at, id',
-    )
-    .all(taskId) as PairedApproval[];
-}
-
-export function createPairedArtifact(
-  artifact: Omit<PairedArtifact, 'id'>,
-): number {
-  const result = db
-    .prepare(
-      `
-        INSERT INTO paired_artifacts (
-          task_id,
-          execution_id,
-          service_id,
-          artifact_type,
-          title,
-          content,
-          file_path,
-          created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    )
-    .run(
-      artifact.task_id,
-      artifact.execution_id,
-      artifact.service_id,
-      artifact.artifact_type,
-      artifact.title,
-      artifact.content,
-      artifact.file_path,
-      artifact.created_at,
-    );
-  return Number(result.lastInsertRowid);
-}
-
-export function listPairedArtifactsForTask(taskId: string): PairedArtifact[] {
-  return db
-    .prepare(
-      'SELECT * FROM paired_artifacts WHERE task_id = ? ORDER BY created_at, id',
-    )
-    .all(taskId) as PairedArtifact[];
-}
-
-export function getPairedEventById(id: number): PairedEvent | undefined {
-  return db.prepare('SELECT * FROM paired_events WHERE id = ?').get(id) as
-    | PairedEvent
-    | undefined;
-}
-
-export function getPairedEventByDedupeKey(args: {
-  taskId: string;
-  eventType: PairedEvent['event_type'];
-  dedupeKey: string;
-}): PairedEvent | undefined {
-  return db
-    .prepare(
-      `
-        SELECT *
-          FROM paired_events
-         WHERE task_id = ?
-           AND event_type = ?
-           AND dedupe_key = ?
-      `,
-    )
-    .get(args.taskId, args.eventType, args.dedupeKey) as
-    | PairedEvent
-    | undefined;
-}
-
-export function listPairedEventsForTask(taskId: string): PairedEvent[] {
-  return db
-    .prepare(
-      'SELECT * FROM paired_events WHERE task_id = ? ORDER BY created_at, id',
-    )
-    .all(taskId) as PairedEvent[];
-}
-
-export function applyPairedEvent<T>(args: {
-  event: Omit<PairedEvent, 'id'>;
-  onApply?: () => T;
-}): {
-  applied: boolean;
-  event: PairedEvent;
-  result: T | null;
-} {
-  return db.transaction(() => {
-    const insertResult = db
-      .prepare(
-        `
-          INSERT OR IGNORE INTO paired_events (
-            task_id,
-            event_type,
-            actor_role,
-            source_service_id,
-            source_fingerprint,
-            dedupe_key,
-            payload_json,
-            created_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        args.event.task_id,
-        args.event.event_type,
-        args.event.actor_role,
-        args.event.source_service_id,
-        args.event.source_fingerprint,
-        args.event.dedupe_key,
-        args.event.payload_json,
-        args.event.created_at,
-      );
-
-    if (insertResult.changes === 0) {
-      const existing = getPairedEventByDedupeKey({
-        taskId: args.event.task_id,
-        eventType: args.event.event_type,
-        dedupeKey: args.event.dedupe_key,
-      });
-      if (!existing) {
-        throw new Error(
-          `Paired event dedupe lookup failed for ${args.event.task_id}:${args.event.event_type}:${args.event.dedupe_key}`,
-        );
-      }
-      return {
-        applied: false,
-        event: existing,
-        result: null as T | null,
-      };
-    }
-
-    const inserted = getPairedEventById(Number(insertResult.lastInsertRowid));
-    if (!inserted) {
-      throw new Error(
-        `Paired event insert lookup failed for row ${insertResult.lastInsertRowid}`,
-      );
-    }
-
-    return {
-      applied: true,
-      event: inserted,
-      result: args.onApply ? args.onApply() : (null as T | null),
-    };
-  })();
 }
 
 /**

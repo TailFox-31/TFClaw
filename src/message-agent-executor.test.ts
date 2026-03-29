@@ -660,25 +660,11 @@ describe('runAgentForGroup room memory', () => {
         reviewer_service_id: 'codex-main',
         title: null,
         source_ref: 'HEAD',
-        task_policy: 'autonomous',
-        risk_level: 'low',
-        plan_status: 'not_requested',
+        plan_notes: null,
         review_requested_at: null,
-        status: 'draft',
+        status: 'active',
         created_at: '2026-03-28T00:00:00.000Z',
         updated_at: '2026-03-28T00:00:00.000Z',
-      },
-      execution: {
-        id: 'run-room-role:claude',
-        task_id: 'paired-task-1',
-        service_id: 'claude',
-        role: 'owner',
-        workspace_id: 'paired-task-1:owner',
-        status: 'running',
-        summary: null,
-        created_at: '2026-03-28T00:00:00.000Z',
-        started_at: '2026-03-28T00:00:00.000Z',
-        completed_at: null,
       },
       workspace: {
         id: 'paired-task-1:owner',
@@ -686,7 +672,7 @@ describe('runAgentForGroup room memory', () => {
         role: 'owner',
         workspace_dir: '/tmp/paired/owner',
         snapshot_source_dir: null,
-        snapshot_source_fingerprint: null,
+        snapshot_ref: null,
         status: 'ready',
         snapshot_refreshed_at: null,
         created_at: '2026-03-28T00:00:00.000Z',
@@ -695,7 +681,6 @@ describe('runAgentForGroup room memory', () => {
       envOverrides: {
         EJCLAW_WORK_DIR: '/tmp/paired/owner',
         EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
-        EJCLAW_PAIRED_EXECUTION_ID: 'run-room-role:claude',
         EJCLAW_PAIRED_ROLE: 'owner',
       },
     });
@@ -717,19 +702,16 @@ describe('runAgentForGroup room memory', () => {
       expect.objectContaining({
         EJCLAW_WORK_DIR: '/tmp/paired/owner',
         EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
-        EJCLAW_PAIRED_EXECUTION_ID: 'run-room-role:claude',
         EJCLAW_PAIRED_ROLE: 'owner',
       }),
     );
     expect(
       pairedExecutionContext.completePairedExecutionContext,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        executionId: 'run-room-role:claude',
-        status: 'succeeded',
-        summary: 'ok',
-      }),
-    );
+    ).toHaveBeenCalledWith({
+      taskId: 'paired-task-1',
+      status: 'succeeded',
+      summary: 'ok',
+    });
   });
 
   it('blocks reviewer execution when an in-review snapshot became stale and does not spawn the runner', async () => {
@@ -759,30 +741,15 @@ describe('runAgentForGroup room memory', () => {
         reviewer_service_id: 'claude',
         title: null,
         source_ref: 'HEAD',
-        task_policy: 'autonomous',
-        risk_level: 'high',
-        plan_status: 'approved',
+        plan_notes: null,
         review_requested_at: null,
-        status: 'draft',
+        status: 'active',
         created_at: '2026-03-28T00:00:00.000Z',
         updated_at: '2026-03-28T00:00:00.000Z',
-      },
-      execution: {
-        id: 'run-blocked-reviewer:claude',
-        task_id: 'paired-task-1',
-        service_id: 'claude',
-        role: 'reviewer',
-        workspace_id: null,
-        status: 'running',
-        summary: null,
-        created_at: '2026-03-28T00:00:00.000Z',
-        started_at: '2026-03-28T00:00:00.000Z',
-        completed_at: null,
       },
       workspace: null,
       envOverrides: {
         EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
-        EJCLAW_PAIRED_EXECUTION_ID: 'run-blocked-reviewer:claude',
         EJCLAW_PAIRED_ROLE: 'reviewer',
         EJCLAW_REVIEWER_RUNTIME: '1',
       },
@@ -817,7 +784,7 @@ describe('runAgentForGroup room memory', () => {
     expect(
       pairedExecutionContext.completePairedExecutionContext,
     ).toHaveBeenCalledWith({
-      executionId: 'run-blocked-reviewer:claude',
+      taskId: 'paired-task-1',
       status: 'failed',
       summary:
         'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.',
