@@ -7,6 +7,7 @@ import {
   DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  REVIEWER_AGENT_TYPE,
   SERVICE_ID,
   SERVICE_AGENT_TYPE,
   isSessionCommandSenderAllowed,
@@ -46,6 +47,7 @@ import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import {
   findChannel,
+  findChannelByName,
   formatOutbound,
   normalizeMessageForDedupe,
 } from './router.js';
@@ -437,6 +439,15 @@ async function main(): Promise<void> {
   }
 
   // Start subsystems (independently of connection handler)
+  // Resolve the reviewer channel so cron output in paired rooms is posted
+  // via the reviewer bot — the owner then treats it as a peer request.
+  const reviewerChannelName =
+    REVIEWER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
+  const reviewerChannelForCron = findChannelByName(
+    channels,
+    reviewerChannelName,
+  );
+
   startSchedulerLoop({
     registeredGroups: () => registeredGroups,
     getSessions: () => sessions,
@@ -445,6 +456,12 @@ async function main(): Promise<void> {
       queue.registerProcess(groupJid, proc, processName, ipcDir),
     sendMessage: (jid, rawText) =>
       sendFormattedChannelMessage(channels, jid, rawText),
+    sendMessageViaReviewerBot: reviewerChannelForCron
+      ? async (jid, rawText) => {
+          const text = formatOutbound(rawText);
+          if (text) await reviewerChannelForCron.sendMessage(jid, text);
+        }
+      : undefined,
     sendTrackedMessage: (jid, rawText) =>
       sendFormattedTrackedChannelMessage(channels, jid, rawText),
     editTrackedMessage: (jid, messageId, rawText) =>

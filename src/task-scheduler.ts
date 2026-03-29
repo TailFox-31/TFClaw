@@ -20,6 +20,7 @@ import {
   deleteTask,
   getDueTasks,
   getTaskById,
+  isPairedRoomJid,
   logTaskRun,
   updateTask,
   updateTaskAfterRun,
@@ -161,6 +162,8 @@ export interface SchedulerDependencies {
     ipcDir: string,
   ) => void;
   sendMessage: (jid: string, text: string) => Promise<void>;
+  /** Send a message via the reviewer bot identity so the owner treats it as a peer request. */
+  sendMessageViaReviewerBot?: (jid: string, text: string) => Promise<void>;
   sendTrackedMessage?: (jid: string, text: string) => Promise<string | null>;
   editTrackedMessage?: (
     jid: string,
@@ -402,7 +405,13 @@ async function runTask(
           const outputText = getAgentOutputText(streamedOutput);
           if (outputText) {
             attemptResult = outputText;
-            await deps.sendMessage(task.chat_jid, outputText);
+            // In paired rooms, post cron output via reviewer bot so the
+            // owner treats it as a peer request and acts on it.
+            const send =
+              isPairedRoomJid(task.chat_jid) && deps.sendMessageViaReviewerBot
+                ? deps.sendMessageViaReviewerBot
+                : deps.sendMessage;
+            await send(task.chat_jid, outputText);
           }
 
           if (streamedOutput.status === 'error') {
