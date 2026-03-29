@@ -104,10 +104,14 @@ export function getProcessableMessages(
   messages: Parameters<typeof filterProcessableMessages>[0],
   channel?: Channel,
 ) {
+  const isPaired = isPairedRoomJid(chatJid);
   return filterProcessableMessages(
     messages,
-    isPairedRoomJid(chatJid),
-    channel?.isOwnMessage?.bind(channel),
+    isPaired,
+    // In paired rooms (unified mode), don't filter by isOwnMessage —
+    // both bots need to see each other's messages for the ping-pong flow.
+    // Loop prevention is handled by filterLoopingPairedBotMessages + round_trip_count.
+    isPaired ? undefined : channel?.isOwnMessage?.bind(channel),
   ).filter((message) => !isTaskStatusControlMessage(message.content));
 }
 
