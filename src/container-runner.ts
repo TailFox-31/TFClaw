@@ -488,8 +488,8 @@ export async function runReviewerContainer(args: {
   );
 
   // Run a turn inside the persistent container via docker exec.
-  // Inject credentials at exec-time so token rotation is picked up
-  // without recreating the container.
+  // Inject credentials and model config at exec-time so token rotation
+  // and per-role model overrides are picked up without recreating the container.
   const execArgs = ['exec', '-i'];
   const authMode = detectAuthMode();
   if (authMode === 'api-key') {
@@ -503,6 +503,21 @@ export async function runReviewerContainer(args: {
       process.env.ANTHROPIC_AUTH_TOKEN ||
       '';
     execArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
+  }
+  // Inject model/effort overrides at exec-time so per-role config
+  // takes effect even with persistent containers.
+  const modelEnvKeys = [
+    'CLAUDE_MODEL',
+    'CLAUDE_EFFORT',
+    'CODEX_MODEL',
+    'CODEX_EFFORT',
+  ];
+  if (envOverrides) {
+    for (const key of modelEnvKeys) {
+      if (envOverrides[key]) {
+        execArgs.push('-e', `${key}=${envOverrides[key]}`);
+      }
+    }
   }
   execArgs.push(containerName, 'node', '/app/dist/index.js');
 

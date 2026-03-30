@@ -20,6 +20,11 @@ vi.mock('./config.js', () => ({
   normalizeServiceId: vi.fn((serviceId: string) =>
     serviceId === 'codex' ? 'codex-main' : serviceId,
   ),
+  getRoleModelConfig: vi.fn(() => ({
+    model: undefined,
+    effort: undefined,
+    fallbackEnabled: true,
+  })),
 }));
 
 vi.mock('./db.js', () => ({

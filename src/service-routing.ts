@@ -97,8 +97,7 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
 
   return {
     chat_jid: chatJid,
-    owner_service_id:
-      CLAUDE_SERVICE_ID,
+    owner_service_id: CLAUDE_SERVICE_ID,
     reviewer_service_id: null,
     arbiter_service_id: null,
     activated_at: null,

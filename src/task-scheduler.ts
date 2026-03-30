@@ -4,11 +4,7 @@ import fs from 'fs';
 import { getAgentOutputText } from './agent-output.js';
 import { getErrorMessage } from './utils.js';
 
-import {
-  ASSISTANT_NAME,
-  SCHEDULER_POLL_INTERVAL,
-  TIMEZONE,
-} from './config.js';
+import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
   AgentOutput,
   runAgentProcess,

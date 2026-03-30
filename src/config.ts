@@ -125,6 +125,42 @@ export function isArbiterEnabled(): boolean {
   return ARBITER_AGENT_TYPE !== undefined;
 }
 
+// ── Per-role model configuration ─────────────────────────────────
+
+export interface RoleModelConfig {
+  /** Model name override (e.g. 'claude-opus-4-6', 'gpt-5.4'). */
+  model?: string;
+  /** Effort level override. */
+  effort?: string;
+  /** Whether to fall back to codex when primary provider fails. Default: true. */
+  fallbackEnabled: boolean;
+}
+
+function buildRoleModelConfig(envPrefix: string): RoleModelConfig {
+  return {
+    model: getEnv(`${envPrefix}_MODEL`) || undefined,
+    effort: getEnv(`${envPrefix}_EFFORT`) || undefined,
+    fallbackEnabled: getEnv(`${envPrefix}_FALLBACK_ENABLED`) !== 'false',
+  };
+}
+
+export const OWNER_MODEL_CONFIG = buildRoleModelConfig('OWNER');
+export const REVIEWER_MODEL_CONFIG = buildRoleModelConfig('REVIEWER');
+export const ARBITER_MODEL_CONFIG = buildRoleModelConfig('ARBITER');
+
+export function getRoleModelConfig(
+  role: 'owner' | 'reviewer' | 'arbiter',
+): RoleModelConfig {
+  switch (role) {
+    case 'owner':
+      return OWNER_MODEL_CONFIG;
+    case 'reviewer':
+      return REVIEWER_MODEL_CONFIG;
+    case 'arbiter':
+      return ARBITER_MODEL_CONFIG;
+  }
+}
+
 // Max owner↔reviewer round trips per task. 0 = unlimited.
 const rawMaxRoundTrips = getEnv('PAIRED_MAX_ROUND_TRIPS') || '10';
 export const PAIRED_MAX_ROUND_TRIPS =

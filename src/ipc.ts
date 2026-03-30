@@ -3,11 +3,7 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import {
-  DATA_DIR,
-  IPC_POLL_INTERVAL,
-  TIMEZONE,
-} from './config.js';
+import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { readJsonFile } from './utils.js';
 import { AvailableGroup } from './agent-runner.js';
 import {

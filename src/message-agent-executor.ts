@@ -41,6 +41,7 @@ import {
   SERVICE_SESSION_SCOPE,
   REVIEWER_AGENT_TYPE,
   isClaudeService,
+  getRoleModelConfig,
 } from './config.js';
 import {
   activateCodexFailover,
@@ -177,6 +178,19 @@ export async function runAgentForGroup(
     roomRoleContext,
     hasHumanMessage: args.hasHumanMessage,
   });
+  // Inject role-specific model overrides into envOverrides
+  if (pairedExecutionContext) {
+    const roleConfig = getRoleModelConfig(activeRole);
+    if (roleConfig.model) {
+      const modelKey = isClaudeCodeAgent ? 'CLAUDE_MODEL' : 'CODEX_MODEL';
+      pairedExecutionContext.envOverrides[modelKey] = roleConfig.model;
+    }
+    if (roleConfig.effort) {
+      const effortKey = isClaudeCodeAgent ? 'CLAUDE_EFFORT' : 'CODEX_EFFORT';
+      pairedExecutionContext.envOverrides[effortKey] = roleConfig.effort;
+    }
+  }
+
   const effectivePrompt = prompt;
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
@@ -206,6 +220,15 @@ export async function runAgentForGroup(
       return false;
     }
     if (currentLease.reviewer_service_id === null) {
+      return false;
+    }
+    // Per-role fallback toggle
+    const roleConfig = getRoleModelConfig(activeRole);
+    if (!roleConfig.fallbackEnabled) {
+      logger.info(
+        { chatJid, group: group.name, role: activeRole, reason },
+        'Fallback disabled for role, skipping handoff',
+      );
       return false;
     }
 
