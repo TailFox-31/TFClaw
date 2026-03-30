@@ -60,13 +60,9 @@ let cachedData: KimiUsageData | null = null;
 function getKimiConfig(): { baseUrl: string; authToken: string } | null {
   // Try MoA config first, then fallback config
   const authToken =
-    getEnv('MOA_KIMI_API_KEY') ||
-    getEnv('FALLBACK_AUTH_TOKEN') ||
-    '';
+    getEnv('MOA_KIMI_API_KEY') || getEnv('FALLBACK_AUTH_TOKEN') || '';
   const baseUrl =
-    getEnv('MOA_KIMI_BASE_URL') ||
-    getEnv('FALLBACK_BASE_URL') ||
-    '';
+    getEnv('MOA_KIMI_BASE_URL') || getEnv('FALLBACK_BASE_URL') || '';
   if (!baseUrl || !authToken) return null;
   return { baseUrl, authToken };
 }
@@ -184,9 +180,7 @@ function formatMembershipLabel(level?: string): string {
   return labelMap[cleaned] || cleaned;
 }
 
-export function buildKimiUsageRows(
-  data: KimiUsageData | null,
-): UsageRow[] {
+export function buildKimiUsageRows(data: KimiUsageData | null): UsageRow[] {
   if (!data) return [];
 
   const memberLabel = formatMembershipLabel(data.membershipLevel);

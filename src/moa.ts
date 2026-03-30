@@ -15,6 +15,8 @@ export interface MoaModelConfig {
   model: string;
   baseUrl: string;
   apiKey: string;
+  /** API format: 'openai' (default) or 'anthropic' (Messages API). */
+  apiFormat: 'openai' | 'anthropic';
 }
 
 export interface MoaConfig {
@@ -38,37 +40,70 @@ async function queryModel(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(
-      `${model.baseUrl.replace(/\/+$/, '')}/chat/completions`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${model.apiKey}`,
-        },
-        body: JSON.stringify({
+    const base = model.baseUrl.replace(/\/+$/, '');
+    const isAnthropic = model.apiFormat === 'anthropic';
+
+    const url = isAnthropic
+      ? `${base}/v1/messages`
+      : `${base}/chat/completions`;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (isAnthropic) {
+      headers['x-api-key'] = model.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+    } else {
+      headers['Authorization'] = `Bearer ${model.apiKey}`;
+    }
+
+    const body = isAnthropic
+      ? {
           model: model.model,
+          system: systemPrompt,
+          max_tokens: 2048,
+          messages: [{ role: 'user', content: userPrompt }],
+        }
+      : {
+          model: model.model,
+          max_tokens: 2048,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
-          max_tokens: 2048,
-        }),
-        signal: controller.signal,
-      },
-    );
+        };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
+      const respBody = await response.text().catch(() => '');
       throw new Error(
-        `${response.status} ${response.statusText}: ${body.slice(0, 200)}`,
+        `${response.status} ${response.statusText}: ${respBody.slice(0, 200)}`,
       );
     }
 
-    const data = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const content = data.choices?.[0]?.message?.content;
+    const data = await response.json();
+
+    // Parse response based on format
+    let content: string | undefined;
+    if (isAnthropic) {
+      const blocks = (data as { content?: { type: string; text: string }[] })
+        .content;
+      content = blocks
+        ?.filter((b: { type: string }) => b.type === 'text')
+        .map((b: { text: string }) => b.text)
+        .join('');
+    } else {
+      content = (
+        data as { choices?: { message?: { content?: string } }[] }
+      ).choices?.[0]?.message?.content;
+    }
+
     if (!content) throw new Error('Empty response from model');
     return content;
   } finally {

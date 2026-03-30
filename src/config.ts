@@ -183,7 +183,10 @@ function parseMoaReferenceModels(): MoaModelConfig[] {
       const baseUrl = getEnv(`${prefix}_BASE_URL`) || '';
       const apiKey = getEnv(`${prefix}_API_KEY`) || '';
       if (!model || !baseUrl || !apiKey) return null;
-      return { name, model, baseUrl, apiKey };
+      const rawFormat = getEnv(`${prefix}_API_FORMAT`) || '';
+      const apiFormat: 'openai' | 'anthropic' =
+        rawFormat === 'anthropic' ? 'anthropic' : 'openai';
+      return { name, model, baseUrl, apiKey, apiFormat };
     })
     .filter((m): m is MoaModelConfig => m !== null);
 }
