@@ -39,6 +39,30 @@ export function pairedCursorKey(
   return isReviewerTurn ? `${chatJid}:reviewer` : chatJid;
 }
 
+/**
+ * Auto-resolve the cursor key based on current paired task status.
+ * Non-paired rooms always return chatJid.
+ * Paired rooms return role-specific keys so owner/reviewer/arbiter
+ * cursors are independent.
+ */
+export function resolveCursorKey(
+  chatJid: string,
+  taskStatus?: string | null,
+): string {
+  if (!isPairedRoomJid(chatJid)) return chatJid;
+  if (!taskStatus) return chatJid;
+  switch (taskStatus) {
+    case 'review_ready':
+    case 'in_review':
+      return `${chatJid}:reviewer`;
+    case 'arbiter_requested':
+    case 'in_arbitration':
+      return `${chatJid}:arbiter`;
+    default:
+      return chatJid;
+  }
+}
+
 export function createImplicitContinuationTracker(idleTimeout: number) {
   const implicitContinuationUntil = new Map<string, number>();
 

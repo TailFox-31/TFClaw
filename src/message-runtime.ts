@@ -41,7 +41,7 @@ import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
   advanceLastAgentCursor,
   createImplicitContinuationTracker,
-  pairedCursorKey,
+  resolveCursorKey,
   filterLoopingPairedBotMessages,
   getProcessableMessages,
   hasAllowedTrigger,
@@ -634,7 +634,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               deps.saveState,
               chatJid,
               cursor,
-              `${chatJid}:reviewer`,
+              resolveCursorKey(chatJid, pendingReviewTask?.status),
             );
           }
 
@@ -665,7 +665,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               deps.saveState,
               chatJid,
               cursor,
-              `${chatJid}:arbiter`,
+              resolveCursorKey(chatJid, pendingReviewTask?.status),
             );
           }
 
@@ -839,9 +839,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         : useReviewerChannel
           ? reviewerChannel
           : channel;
-      const cursorKey = useArbiterChannel
-        ? `${chatJid}:arbiter`
-        : pairedCursorKey(chatJid, !!useReviewerChannel);
+      const cursorKey = resolveCursorKey(chatJid, pendingTaskForChannel?.status);
 
       // Arbiter turns use a dedicated context prompt; regular turns use formatted messages.
       let prompt: string;
@@ -1049,17 +1047,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             const loopPendingTask = isPairedRoomJid(chatJid)
               ? getLatestOpenPairedTaskForChat(chatJid)
               : null;
-            const loopIsReviewerTurn =
-              !!loopPendingTask &&
-              (loopPendingTask.status === 'review_ready' ||
-                loopPendingTask.status === 'in_review');
-            const loopIsArbiterTurn =
-              !!loopPendingTask &&
-              (loopPendingTask.status === 'arbiter_requested' ||
-                loopPendingTask.status === 'in_arbitration');
-            const loopCursorKey = loopIsArbiterTurn
-              ? `${chatJid}:arbiter`
-              : pairedCursorKey(chatJid, loopIsReviewerTurn);
+            const loopCursorKey = resolveCursorKey(chatJid, loopPendingTask?.status);
 
             const rawPendingMessages = getMessagesSinceSeq(
               chatJid,
