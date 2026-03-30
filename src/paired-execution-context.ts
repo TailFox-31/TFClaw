@@ -222,15 +222,17 @@ export function preparePairedExecutionContext(args: {
     // turn. merge_ready is only reset when a human message is present —
     // without it, this is a finalize turn after reviewer approval and
     // resetting would prevent task completion.
-    const needsReset =
-      latestTask.round_trip_count > 0 ||
-      (latestTask.status === 'merge_ready' && args.hasHumanMessage === true) ||
+    // Only reset round_trip_count when a human message is present —
+    // bot-only ping-pong must accumulate the counter for loop detection.
+    const hasHuman = args.hasHumanMessage === true;
+    const needsStatusReset =
+      (latestTask.status === 'merge_ready' && hasHuman) ||
       latestTask.status === 'review_ready' ||
       latestTask.status === 'in_review';
-    if (needsReset) {
+    if (hasHuman || needsStatusReset) {
       updatePairedTask(latestTask.id, {
-        round_trip_count: 0,
-        status: 'active',
+        ...(hasHuman ? { round_trip_count: 0 } : {}),
+        ...(needsStatusReset ? { status: 'active' as const } : {}),
         updated_at: now,
       });
     }
