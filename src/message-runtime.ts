@@ -272,6 +272,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     options?: {
       startSeq?: number | null;
       endSeq?: number | null;
+      hasHumanMessage?: boolean;
     },
   ): Promise<'success' | 'error'> =>
     runAgentForGroup(
@@ -290,6 +291,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         runId,
         startSeq: options?.startSeq,
         endSeq: options?.endSeq,
+        hasHumanMessage: options?.hasHumanMessage,
         onOutput,
       },
     );
@@ -302,6 +304,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     channel: Channel;
     startSeq: number | null;
     endSeq: number | null;
+    hasHumanMessage?: boolean;
   }): Promise<{
     outputStatus: 'success' | 'error';
     deliverySucceeded: boolean;
@@ -358,7 +361,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         chatJid,
         runId,
         (result) => turnController.handleOutput(result),
-        { startSeq, endSeq },
+        { startSeq, endSeq, hasHumanMessage: args.hasHumanMessage },
       );
 
       const { deliverySucceeded, visiblePhase } =
@@ -755,6 +758,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           pendingTaskForChannel.status === 'in_review');
       const turnChannel = useReviewerChannel ? reviewerChannel : channel;
 
+      const hasHumanMsg = !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
       const { deliverySucceeded, visiblePhase } = await executeTurn({
         group,
         prompt,
@@ -763,6 +767,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         channel: turnChannel,
         startSeq,
         endSeq,
+        hasHumanMessage: hasHumanMsg,
       });
 
       if (!deliverySucceeded) {

@@ -78,6 +78,7 @@ export async function runAgentForGroup(
     runId: string;
     startSeq?: number | null;
     endSeq?: number | null;
+    hasHumanMessage?: boolean;
     onOutput?: (output: AgentOutput) => Promise<void>;
   },
 ): Promise<'success' | 'error'> {
@@ -159,6 +160,7 @@ export async function runAgentForGroup(
     chatJid,
     runId,
     roomRoleContext,
+    hasHumanMessage: args.hasHumanMessage,
   });
   const effectivePrompt = prompt;
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';

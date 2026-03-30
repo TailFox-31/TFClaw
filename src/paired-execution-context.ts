@@ -198,6 +198,7 @@ export function preparePairedExecutionContext(args: {
   chatJid: string;
   runId: string;
   roomRoleContext?: RoomRoleContext;
+  hasHumanMessage?: boolean;
 }): PreparedPairedExecutionContext | undefined {
   const { group, chatJid, roomRoleContext } = args;
   if (!roomRoleContext || !group.workDir) {
@@ -217,9 +218,13 @@ export function preparePairedExecutionContext(args: {
   if (roomRoleContext.role === 'owner') {
     // New human message → new ping-pong cycle. Reset round trip counter
     // AND status so the owner turn is not treated as a finalize turn.
+    // Reset status on new human message so the owner gets a fresh working
+    // turn. merge_ready is only reset when a human message is present —
+    // without it, this is a finalize turn after reviewer approval and
+    // resetting would prevent task completion.
     const needsReset =
       latestTask.round_trip_count > 0 ||
-      latestTask.status === 'merge_ready' ||
+      (latestTask.status === 'merge_ready' && args.hasHumanMessage === true) ||
       latestTask.status === 'review_ready' ||
       latestTask.status === 'in_review';
     if (needsReset) {
