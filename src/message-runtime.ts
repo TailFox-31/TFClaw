@@ -535,6 +535,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     );
     const arbiterChannel = foundArbiterChannel || channel;
 
+    // Resolve the correct Discord channel for a given task status.
+    const resolveChannel = (taskStatus?: string | null): Channel => {
+      switch (taskStatus) {
+        case 'review_ready':
+        case 'in_review':
+          return reviewerChannel;
+        case 'arbiter_requested':
+        case 'in_arbitration':
+          return arbiterChannel;
+        default:
+          return channel;
+      }
+    };
+
     if (isPairedRoomJid(chatJid)) {
       logger.info(
         {
@@ -558,23 +572,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       (group.agentType || 'claude-code') as 'claude-code' | 'codex',
     );
     if (openWorkItem) {
-      // Use reviewer channel if the pending task is in review state
       const pendingTask = isPairedRoomJid(chatJid)
         ? getLatestOpenPairedTaskForChat(chatJid)
         : null;
-      const isReviewerWorkItem =
-        pendingTask &&
-        (pendingTask.status === 'review_ready' ||
-          pendingTask.status === 'in_review');
-      const isArbiterWorkItem =
-        pendingTask &&
-        (pendingTask.status === 'arbiter_requested' ||
-          pendingTask.status === 'in_arbitration');
-      const deliveryChannel = isArbiterWorkItem
-        ? arbiterChannel
-        : isReviewerWorkItem
-          ? reviewerChannel
-          : channel;
+      const deliveryChannel = resolveChannel(pendingTask?.status);
       const delivered = await deliverOpenWorkItem(
         deliveryChannel,
         openWorkItem,
@@ -643,7 +644,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             prompt: reviewPrompt,
             chatJid,
             runId,
-            channel: reviewerChannel,
+            channel: resolveChannel(pendingReviewTask?.status),
             startSeq: null,
             endSeq: null,
           });
@@ -656,7 +657,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           (pendingReviewTask.status === 'arbiter_requested' ||
             pendingReviewTask.status === 'in_arbitration')
         ) {
-          // Advance only the arbiter cursor — do NOT touch the owner cursor
           const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
           const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
           if (cursor != null) {
@@ -686,7 +686,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             prompt: arbiterPrompt,
             chatJid,
             runId,
-            channel: arbiterChannel,
+            channel: resolveChannel(pendingReviewTask?.status),
             startSeq: null,
             endSeq: null,
           });
@@ -826,24 +826,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const pendingTaskForChannel = isPairedRoomJid(chatJid)
         ? getLatestOpenPairedTaskForChat(chatJid)
         : null;
-      const useReviewerChannel =
-        pendingTaskForChannel &&
-        (pendingTaskForChannel.status === 'review_ready' ||
-          pendingTaskForChannel.status === 'in_review');
-      const useArbiterChannel =
-        pendingTaskForChannel &&
-        (pendingTaskForChannel.status === 'arbiter_requested' ||
-          pendingTaskForChannel.status === 'in_arbitration');
-      const turnChannel = useArbiterChannel
-        ? arbiterChannel
-        : useReviewerChannel
-          ? reviewerChannel
-          : channel;
-      const cursorKey = resolveCursorKey(chatJid, pendingTaskForChannel?.status);
+      const taskStatus = pendingTaskForChannel?.status;
+      const turnChannel = resolveChannel(taskStatus);
+      const cursorKey = resolveCursorKey(chatJid, taskStatus);
 
       // Arbiter turns use a dedicated context prompt; regular turns use formatted messages.
+      const isArbiterTurn =
+        taskStatus === 'arbiter_requested' ||
+        taskStatus === 'in_arbitration';
       let prompt: string;
-      if (useArbiterChannel && pendingTaskForChannel) {
+      if (isArbiterTurn && pendingTaskForChannel) {
         const arbiterMsgs = labelPairedSenders(
           chatJid,
           getRecentChatMessages(chatJid, 20),
@@ -1047,7 +1039,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             const loopPendingTask = isPairedRoomJid(chatJid)
               ? getLatestOpenPairedTaskForChat(chatJid)
               : null;
-            const loopCursorKey = resolveCursorKey(chatJid, loopPendingTask?.status);
+            const loopCursorKey = resolveCursorKey(
+              chatJid,
+              loopPendingTask?.status,
+            );
 
             const rawPendingMessages = getMessagesSinceSeq(
               chatJid,
