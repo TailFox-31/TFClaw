@@ -26,20 +26,23 @@ const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
 const TRANSCRIPTION_CACHE_DIR = path.join(CACHE_DIR, 'transcriptions');
 
 /**
- * Download a Discord image attachment to local disk.
+ * Download a Discord attachment to local disk.
  * Returns the absolute path to the saved file.
  */
-async function downloadImage(att: Attachment): Promise<string> {
+async function downloadAttachment(
+  att: Attachment,
+  defaultExt = '.bin',
+): Promise<string> {
   const res = await fetch(att.url);
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const buffer = Buffer.from(await res.arrayBuffer());
 
   fs.mkdirSync(ATTACHMENTS_DIR, { recursive: true });
-  const ext = path.extname(att.name || 'image.png') || '.png';
+  const ext = path.extname(att.name || `file${defaultExt}`) || defaultExt;
   const filename = `${Date.now()}-${att.id}${ext}`;
   const filePath = path.join(ATTACHMENTS_DIR, filename);
   fs.writeFileSync(filePath, buffer);
-  logger.info({ file: filename, size: buffer.length }, 'Image downloaded');
+  logger.info({ file: filename, size: buffer.length }, 'Attachment downloaded');
   return filePath;
 }
 
@@ -254,25 +257,40 @@ export class DiscordChannel implements Channel {
         }
       }
 
-      // Handle attachments — transcribe audio, placeholder for others
+      // Handle attachments — transcribe voice messages, download files
+      const isVoiceMessage = message.flags.has(MessageFlags.IsVoiceMessage);
       if (message.attachments.size > 0) {
         const attachmentDescriptions = await Promise.all(
           [...message.attachments.values()].map(async (att) => {
             const contentType = att.contentType || '';
-            if (contentType.startsWith('audio/')) {
+            // Voice messages → transcribe; regular audio files → download
+            if (
+              contentType.startsWith('audio/') &&
+              (isVoiceMessage || att.duration != null)
+            ) {
               return transcribeAudio(att);
-            } else if (contentType.startsWith('image/')) {
+            } else if (
+              contentType.startsWith('audio/') ||
+              contentType.startsWith('image/')
+            ) {
               try {
-                const imgPath = await downloadImage(att);
-                return `[Image: ${imgPath}]`;
+                const filePath = await downloadAttachment(
+                  att,
+                  contentType.startsWith('image/') ? '.png' : '.wav',
+                );
+                const label = contentType.startsWith('image/')
+                  ? 'Image'
+                  : 'Audio';
+                return `[${label}: ${filePath}]`;
               } catch (err) {
-                logger.error({ err, file: att.name }, 'Image download failed');
-                return `[Image: ${att.name || 'image'} (download failed)]`;
+                logger.error(
+                  { err, file: att.name },
+                  'Attachment download failed',
+                );
+                return `[File: ${att.name || 'file'} (download failed)]`;
               }
             } else if (contentType.startsWith('video/')) {
               return `[Video: ${att.name || 'video'}]`;
-            } else if (contentType.startsWith('audio/')) {
-              return `[Audio: ${att.name || 'audio'}]`;
             } else if (
               contentType.startsWith('text/') ||
               /\.(txt|md|json|csv|log|xml|yaml|yml|toml|ini|cfg|conf|sh|bash|zsh|py|js|ts|jsx|tsx|html|css|sql|rs|go|java|c|cpp|h|hpp|rb|php|swift|kt|scala|r|lua|pl|ex|exs|hs|ml|clj|dart|v|zig|nim|ps1|bat|cmd|mjs|cjs)$/i.test(
