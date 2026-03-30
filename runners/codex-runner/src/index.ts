@@ -281,6 +281,7 @@ async function executeAppServerTurn(
   client: CodexAppServerClient,
   threadId: string,
   prompt: string,
+  retryCount = 0,
 ): Promise<{ result: string | null; error?: string }> {
   let lastProgressMessage: string | null = null;
   const activeTurn = await client.startTurn(threadId, parseAppServerInput(prompt), {
@@ -351,6 +352,10 @@ async function executeAppServerTurn(
     }
     if (state.status === 'interrupted' && consumeCloseSentinel()) {
       return { result };
+    }
+    if (state.status === 'interrupted' && retryCount < 1) {
+      log('Codex turn interrupted, retrying once...');
+      return executeAppServerTurn(client, threadId, prompt, retryCount + 1);
     }
     return {
       result,
