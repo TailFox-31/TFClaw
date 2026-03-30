@@ -161,6 +161,46 @@ export function getRoleModelConfig(
   }
 }
 
+// ── Mixture of Agents (MoA) ──────────────────────────────────────
+
+import type { MoaConfig, MoaModelConfig } from './moa.js';
+
+const MOA_BASE_URL = getEnv('MOA_BASE_URL') || 'https://openrouter.ai/api/v1';
+const MOA_API_KEY = getEnv('MOA_API_KEY') || '';
+
+function parseMoaModels(envKey: string): MoaModelConfig[] {
+  const raw = getEnv(envKey) || '';
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((model) => ({
+      name: model.split('/').pop() || model,
+      model,
+      baseUrl: MOA_BASE_URL,
+      apiKey: MOA_API_KEY,
+    }));
+}
+
+export function getMoaConfig(): MoaConfig {
+  const referenceModels = parseMoaModels('MOA_REFERENCE_MODELS');
+  const aggregatorModel = getEnv('MOA_AGGREGATOR_MODEL') || '';
+  return {
+    enabled:
+      getEnv('MOA_ENABLED') === 'true' &&
+      referenceModels.length > 0 &&
+      !!aggregatorModel &&
+      !!MOA_API_KEY,
+    referenceModels,
+    aggregator: {
+      name: aggregatorModel.split('/').pop() || aggregatorModel,
+      model: aggregatorModel,
+      baseUrl: MOA_BASE_URL,
+      apiKey: MOA_API_KEY,
+    },
+  };
+}
+
 // Max owner↔reviewer round trips per task. 0 = unlimited.
 const rawMaxRoundTrips = getEnv('PAIRED_MAX_ROUND_TRIPS') || '10';
 export const PAIRED_MAX_ROUND_TRIPS =

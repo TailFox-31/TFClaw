@@ -25,6 +25,20 @@ vi.mock('./config.js', () => ({
     effort: undefined,
     fallbackEnabled: true,
   })),
+  getMoaConfig: vi.fn(() => ({ enabled: false, referenceModels: [], aggregator: {} })),
+  TIMEZONE: 'Asia/Seoul',
+}));
+
+vi.mock('./arbiter-context.js', () => ({
+  buildArbiterContextPrompt: vi.fn(() => ''),
+}));
+
+vi.mock('./moa.js', () => ({
+  runMoaArbiter: vi.fn(),
+}));
+
+vi.mock('./platform-prompts.js', () => ({
+  readArbiterPrompt: vi.fn(() => ''),
 }));
 
 vi.mock('./db.js', () => ({

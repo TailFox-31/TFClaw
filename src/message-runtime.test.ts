@@ -23,6 +23,8 @@ vi.mock('./config.js', () => ({
   isClaudeService: vi.fn(() => true),
   isReviewService: vi.fn(() => false),
   isSessionCommandSenderAllowed: vi.fn(() => false),
+  getMoaConfig: vi.fn(() => ({ enabled: false, referenceModels: [], aggregator: {} })),
+  TIMEZONE: 'Asia/Seoul',
 }));
 
 vi.mock('./paired-execution-context.js', () => ({
