@@ -111,6 +111,47 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const continuationTracker = createImplicitContinuationTracker(
     deps.idleTimeout,
   );
+  // In paired rooms, replace bot sender_name with role label so agents
+  // know who is the owner and who is the reviewer regardless of bot nickname.
+  const labelPairedSenders = (
+    chatJid: string,
+    messages: NewMessage[],
+  ): NewMessage[] => {
+    if (!isPairedRoomJid(chatJid)) return messages;
+    const lease = getEffectiveChannelLease(chatJid);
+    // Build bot-user-id → channel-name mapping from connected channels
+    const botIdToChannelName = new Map<string, string>();
+    for (const ch of deps.channels) {
+      if (!ch.isConnected()) continue;
+      // Probe each bot message to find which channel owns it
+      for (const msg of messages) {
+        if (msg.is_bot_message && ch.isOwnMessage?.(msg)) {
+          botIdToChannelName.set(msg.sender, ch.name);
+        }
+      }
+    }
+    // Map channel name → service ID
+    const channelToService: Record<string, string> = {
+      discord: 'claude',
+      'discord-codex': 'codex-main',
+      'discord-review': 'codex-review',
+    };
+    return messages.map((msg) => {
+      if (!msg.is_bot_message) return msg;
+      const channelName = botIdToChannelName.get(msg.sender);
+      if (!channelName) return msg;
+      const serviceId = channelToService[channelName];
+      if (!serviceId) return msg;
+      const role =
+        serviceId === lease.owner_service_id
+          ? '오너'
+          : serviceId === lease.reviewer_service_id
+            ? '리뷰어'
+            : msg.sender_name;
+      return { ...msg, sender_name: role };
+    });
+  };
+
   const isBotOnlyPairedRoomTurn = (
     chatJid: string,
     messages: NewMessage[],
@@ -677,7 +718,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         return true;
       }
 
-      const prompt = formatMessages(missedMessages, deps.timezone);
+      const prompt = formatMessages(
+        labelPairedSenders(chatJid, missedMessages),
+        deps.timezone,
+      );
       const startSeq = missedMessages[0].seq ?? null;
       const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
       if (endSeq !== null) {
@@ -881,7 +925,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               pendingMessages.length > 0
                 ? pendingMessages
                 : processableGroupMessages;
-            const formatted = formatMessages(messagesToSend, deps.timezone);
+            const formatted = formatMessages(
+              labelPairedSenders(chatJid, messagesToSend),
+              deps.timezone,
+            );
             const isBotOnlyPairedFollowUp = isBotOnlyPairedRoomTurn(
               chatJid,
               messagesToSend,
