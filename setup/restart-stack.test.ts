@@ -155,7 +155,7 @@ describe('restartStackServices', () => {
         serviceManager: 'systemd',
         serviceId: 'codex-main',
       }),
-    ).toThrow('Run `npm run setup -- --step service`');
+    ).toThrow('Run `bun run setup -- --step service`');
   });
 
   it('does not hide a general start failure behind direct fallback', () => {

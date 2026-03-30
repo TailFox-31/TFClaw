@@ -23,8 +23,8 @@ Groq를 쓰면 `whisper-large-v3-turbo`, OpenAI를 쓰면 `whisper-1` 경로를 
 ## 2. 재시작
 
 ```bash
-npm run build
-npm run setup -- --step service
+bun run build
+bun run setup -- --step service
 ```
 
 이미 서비스가 떠 있다면 플랫폼에 맞게 재시작만 해도 됩니다.
@@ -57,4 +57,4 @@ tail -f logs/ejclaw.log | grep -iE 'transcri|audio'
 **채널에서는 보이는데 에이전트가 못 읽음**
 
 - 채널 등록과 서비스 상태를 먼저 확인합니다.
-- `npm run setup -- --step verify` 결과에서 `REGISTERED_GROUPS`와 `SERVICE`를 같이 봅니다.
+- `bun run setup -- --step verify` 결과에서 `REGISTERED_GROUPS`와 `SERVICE`를 같이 봅니다.

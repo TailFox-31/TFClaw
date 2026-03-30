@@ -61,9 +61,9 @@ ollama pull llama3.2
 ## 4. 빌드와 검증
 
 ```bash
-npm run build:runners
-npm run build
-npm run setup -- --step service
+bun run build:runners
+bun run build
+bun run setup -- --step service
 ```
 
 디스코드에서 테스트:

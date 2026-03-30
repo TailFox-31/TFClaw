@@ -149,13 +149,13 @@ describe('systemd unit generation', () => {
 
   it('sets correct ExecStart', () => {
     const unit = generateSystemdUnit(
-      '/usr/bin/node',
+      '/usr/bin/bun',
       '/srv/ejclaw',
       '/home/user',
       false,
     );
     expect(unit).toContain(
-      'ExecStart=/usr/bin/node /srv/ejclaw/dist/index.js',
+      'ExecStart=/usr/bin/bun /srv/ejclaw/dist/index.js',
     );
   });
 });
@@ -207,7 +207,7 @@ describe('service definitions', () => {
   it('generates a oneshot stack restart unit', () => {
     const unit = buildStackRestartSystemdUnit(
       '/srv/ejclaw',
-      '/usr/bin/node',
+      '/usr/bin/bun',
       '/home/user',
     );
 

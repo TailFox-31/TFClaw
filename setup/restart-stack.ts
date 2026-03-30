@@ -9,7 +9,7 @@ export const STACK_RESTART_UNIT_NAME = 'ejclaw-stack-restart.service';
 const UNIT_NOT_FOUND_PATTERN =
   /(Unit .* not found|Could not find the requested service|not-found)/i;
 const MANAGED_SERVICE_CALLER_FALLBACK_MESSAGE =
-  'Stack restart unit is not installed yet. Run `npm run setup -- --step service` from an external shell before retrying from a managed EJClaw service.';
+  'Stack restart unit is not installed yet. Run `bun run setup -- --step service` from an external shell before retrying from a managed EJClaw service.';
 
 interface RestartStackDeps {
   execFileSyncImpl?: typeof execFileSync;

@@ -48,9 +48,9 @@ PARALLEL_API_KEY=...
 ## 5. 빌드와 검증
 
 ```bash
-npm run build:runners
-npm run build
-npm run setup -- --step service
+bun run build:runners
+bun run build
+bun run setup -- --step service
 ```
 
 디스코드 테스트 예시:

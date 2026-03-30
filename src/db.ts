@@ -2271,9 +2271,7 @@ export function claimServiceHandoff(id: number): boolean {
        WHERE id = ?
          AND status = 'pending'`,
   ).run(id);
-  return (
-    (db.prepare('SELECT changes() as c').get() as { c: number }).c > 0
-  );
+  return (db.prepare('SELECT changes() as c').get() as { c: number }).c > 0;
 }
 
 export function completeServiceHandoff(id: number): void {

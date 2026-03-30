@@ -5,7 +5,7 @@ function printUsageAndExit(): never {
   console.error(
     [
       'Usage:',
-      '  tsx src/restart-context-cli.ts write --chat-jid <jid> --summary <text> [--verify <text> ...] [--service-id <id> ...]',
+      '  bun src/restart-context-cli.ts write --chat-jid <jid> --summary <text> [--verify <text> ...] [--service-id <id> ...]',
     ].join('\n'),
   );
   process.exit(1);

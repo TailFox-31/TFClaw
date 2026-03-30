@@ -11,12 +11,12 @@ description: Debug EJClaw runtime issues on the current Discord-only, host-proce
 
 1. 타입과 테스트부터 확인
    ```bash
-   npm run typecheck
-   npm test
+   bun run typecheck
+   bun test
    ```
 2. 서비스 상태 확인
    ```bash
-   npm run setup -- --step verify
+   bun run setup -- --step verify
    ```
 3. 런타임 로그 확인
    ```bash
@@ -26,7 +26,7 @@ description: Debug EJClaw runtime issues on the current Discord-only, host-proce
    ```
 4. 러너 빌드 확인
    ```bash
-   npm run build:runners
+   bun run build:runners
    ```
 
 ## 핵심 파일
@@ -46,7 +46,7 @@ description: Debug EJClaw runtime issues on the current Discord-only, host-proce
 
 ```bash
 grep -n '^DISCORD_BOT_TOKEN=' .env
-npm run setup -- --step verify
+bun run setup -- --step verify
 ```
 
 - `DISCORD_BOT_TOKEN`이 없으면 채널이 안 붙습니다.

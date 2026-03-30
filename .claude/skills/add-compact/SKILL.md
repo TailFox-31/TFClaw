@@ -31,10 +31,10 @@ description: Verify or port the existing /compact session command in current EJC
 ## 검증
 
 ```bash
-npm run typecheck
-npm test
-npm run build:runners
-npm run build
+bun run typecheck
+bun test
+bun run build:runners
+bun run build
 ```
 
 그 다음 디스코드에서 확인합니다.

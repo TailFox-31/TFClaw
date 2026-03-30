@@ -58,13 +58,13 @@ description: Customize Discord-only EJClaw behavior, routing, integrations, prom
 작게 바꿨으면 최소 이 정도는 확인합니다.
 
 ```bash
-npm run typecheck
-npm test
+bun run typecheck
+bun test
 ```
 
 러너나 실행 경로를 건드렸으면 추가로 확인합니다.
 
 ```bash
-npm run build:runners
-npm run setup -- --step verify
+bun run build:runners
+bun run setup -- --step verify
 ```

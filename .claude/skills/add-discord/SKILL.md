@@ -13,7 +13,7 @@ description: Finish Discord bot setup and registration for EJClaw.
 
 - `src/channels/discord.ts`가 존재하는지
 - `package.json`에 `discord.js`가 있는지
-- `npm run typecheck`가 통과하는지
+- `bun run typecheck`가 통과하는지
 
 ## 2. 봇 토큰 준비
 
@@ -47,7 +47,7 @@ DISCORD_CODEX_BOT_TOKEN=<second-token>
 메인 채널:
 
 ```bash
-npm run setup -- --step register -- \
+bun run setup -- --step register -- \
   --jid dc:<channel-id> \
   --name "<server-name> #<channel-name>" \
   --folder discord_main \
@@ -59,7 +59,7 @@ npm run setup -- --step register -- \
 보조 채널:
 
 ```bash
-npm run setup -- --step register -- \
+bun run setup -- --step register -- \
   --jid dc:<channel-id> \
   --name "<server-name> #<channel-name>" \
   --folder discord_<channel-name> \
@@ -69,10 +69,10 @@ npm run setup -- --step register -- \
 ## 5. 빌드와 검증
 
 ```bash
-npm run build
-npm run build:runners
-npm run setup -- --step service
-npm run setup -- --step verify
+bun run build
+bun run build:runners
+bun run setup -- --step service
+bun run setup -- --step verify
 ```
 
 필요하면 로그 확인:

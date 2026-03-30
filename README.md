@@ -100,9 +100,9 @@ Reviewer (persistent Docker container):
 ```bash
 git clone https://github.com/phj1081/EJClaw.git
 cd EJClaw
-npm install
-npm run build:runners
-npm run build
+bun install
+bun run build:runners
+bun run build
 ```
 
 ### Environment
@@ -152,16 +152,16 @@ journalctl --user -u ejclaw -f     # Follow logs
 Build on server, not locally:
 
 ```bash
-ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && npm run build && npm run build:runners && systemctl --user restart ejclaw'
+ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && bun run build && bun run build:runners && systemctl --user restart ejclaw'
 ```
 
 ## Development
 
 ```bash
-npm run build                # Build main project
-npm run build:runners        # Install + build both runners
-npm run dev                  # Dev mode with hot reload
-npm test                     # Run tests
+bun run build                # Build main project
+bun run build:runners        # Install + build both runners
+bun run dev                  # Dev mode with hot reload
+bun test                     # Run tests
 ```
 
 ## License

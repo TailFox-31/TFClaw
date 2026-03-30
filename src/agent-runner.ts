@@ -152,12 +152,12 @@ export async function runAgentProcess(
   if (!fs.existsSync(distEntry)) {
     logger.error(
       { runnerDir, chatJid: input.chatJid, runId: input.runId },
-      'Runner not built. Run: cd runners/agent-runner && npm install && npm run build',
+      'Runner not built. Run: cd runners/agent-runner && bun install && bun run build',
     );
     return {
       status: 'error',
       result: null,
-      error: `Runner not built at ${distEntry}. Run npm run build:runners first.`,
+      error: `Runner not built at ${distEntry}. Run bun run build:runners first.`,
     };
   }
 

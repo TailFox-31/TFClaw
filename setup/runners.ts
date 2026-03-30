@@ -15,7 +15,7 @@ export async function run(_args: string[]): Promise<void> {
   let buildOk = false;
   logger.info('Building agent runners');
   try {
-    execSync('npm run build:runners', {
+    execSync('bun run build:runners', {
       cwd: projectRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
