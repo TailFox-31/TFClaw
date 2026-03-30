@@ -192,6 +192,50 @@ export function stopReviewerContainer(groupFolder: string): void {
   }
 }
 
+/**
+ * Remove all running reviewer containers so they are recreated on the next
+ * reviewer turn with fresh credentials. Called after token rotation/refresh
+ * because the persistent container's Claude Code SDK process holds the token
+ * that was baked in at `docker run` time — `docker exec -e` only updates the
+ * env for newly spawned processes, not the already-running SDK.
+ */
+export function recreateAllReviewerContainers(): void {
+  try {
+    const output = execFileSync(
+      CONTAINER_RUNTIME_BIN,
+      ['ps', '--filter', 'name=ejclaw-reviewer-', '--format', '{{.Names}}'],
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000 },
+    ).trim();
+
+    const containers = output.split('\n').filter(Boolean);
+    if (containers.length === 0) {
+      logger.debug('No reviewer containers to recreate after token refresh');
+      return;
+    }
+
+    for (const name of containers) {
+      try {
+        execFileSync(CONTAINER_RUNTIME_BIN, ['rm', '-f', name], {
+          stdio: 'pipe',
+          timeout: 10000,
+        });
+      } catch {
+        /* already gone */
+      }
+    }
+
+    logger.info(
+      { count: containers.length, names: containers },
+      'Removed reviewer containers after token refresh — will recreate on next turn',
+    );
+  } catch (err) {
+    logger.warn(
+      { err },
+      'Failed to list/remove reviewer containers after token refresh',
+    );
+  }
+}
+
 // ── Mount builder ─────────────────────────────────────────────────
 
 export function buildReviewerMounts(

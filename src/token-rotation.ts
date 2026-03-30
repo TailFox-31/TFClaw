@@ -33,6 +33,18 @@ const tokens: TokenState[] = [];
 let currentIndex = 0;
 let initialized = false;
 
+// ── Post-rotation callback ──────────────────────────────────────
+// Invoked after a successful token rotation so that callers (e.g.
+// index.ts) can tear down reviewer containers whose SDK process
+// still holds the old token.
+type TokenRotationCallback = () => void;
+let onTokenRotatedCallback: TokenRotationCallback | null = null;
+
+/** Register a callback to be invoked after a successful token rotation. */
+export function onTokenRotated(cb: TokenRotationCallback): void {
+  onTokenRotatedCallback = cb;
+}
+
 export function initTokenRotation(): void {
   if (initialized) return;
   initialized = true;
@@ -140,6 +152,13 @@ export function rotateToken(
       `Rotated to token #${currentIndex + 1}/${tokens.length}`,
     );
     saveState();
+    if (onTokenRotatedCallback) {
+      try {
+        onTokenRotatedCallback();
+      } catch {
+        /* best effort — don't break rotation flow */
+      }
+    }
     return true;
   }
 

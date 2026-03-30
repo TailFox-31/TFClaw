@@ -76,8 +76,10 @@ import { initCodexTokenRotation } from './codex-token-rotation.js';
 import {
   hasAvailableClaudeToken,
   initTokenRotation,
+  onTokenRotated,
 } from './token-rotation.js';
 import {
+  onTokenRefreshed,
   startTokenRefreshLoop,
   stopTokenRefreshLoop,
 } from './token-refresh.js';
@@ -87,6 +89,7 @@ import {
 } from './service-routing.js';
 import { FAILOVER_MIN_DURATION_MS } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { recreateAllReviewerContainers } from './container-runner.js';
 import { cleanupOrphans, PROXY_BIND_HOST } from './container-runtime.js';
 
 // Token rotation is initialized lazily on first use or at startup below
@@ -333,6 +336,11 @@ async function main(): Promise<void> {
   );
   cleanupOrphans();
 
+  // Recreate reviewer containers when OAuth tokens are rotated or refreshed.
+  // Persistent containers hold the old token in their running SDK process;
+  // removing them forces re-creation with fresh credentials on next turn.
+  onTokenRotated(recreateAllReviewerContainers);
+  onTokenRefreshed(recreateAllReviewerContainers);
   startTokenRefreshLoop();
 
   loadState();

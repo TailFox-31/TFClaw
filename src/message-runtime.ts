@@ -442,8 +442,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     if (isReviewerHandoff) {
       const revChName =
         REVIEWER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
-      handoffChannel =
-        findChannelByName(deps.channels, revChName) || channel;
+      handoffChannel = findChannelByName(deps.channels, revChName) || channel;
     }
 
     const runId = `handoff-${handoff.id}`;
