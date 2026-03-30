@@ -37,6 +37,13 @@ type RunPhase =
   | 'running_task'
   | 'closing_messages';
 
+const VALID_TRANSITIONS: Record<RunPhase, readonly RunPhase[]> = {
+  idle: ['running_messages', 'running_task'],
+  running_messages: ['closing_messages', 'idle'],
+  closing_messages: ['idle'],
+  running_task: ['idle'],
+};
+
 interface GroupState {
   runPhase: RunPhase;
   runningTaskId: string | null;
@@ -54,15 +61,59 @@ interface GroupState {
   startedAt: number | null;
 }
 
-/** Reset all run-related fields to idle. Shared by runForGroup and runTask finally blocks. */
-function resetRunState(state: GroupState): void {
-  state.runPhase = 'idle';
+function transitionRunPhase(
+  state: GroupState,
+  groupJid: string,
+  nextPhase: RunPhase,
+  metadata?: {
+    reason?: string;
+    runId?: string | null;
+    taskId?: string | null;
+  },
+): void {
+  const fromPhase = state.runPhase;
+  if (fromPhase === nextPhase) return;
+
+  const validNextPhases = VALID_TRANSITIONS[fromPhase];
+  if (!validNextPhases.includes(nextPhase)) {
+    logger.error(
+      {
+        groupJid,
+        fromPhase,
+        toPhase: nextPhase,
+        validNextPhases,
+        reason: metadata?.reason,
+        runId: metadata?.runId,
+        taskId: metadata?.taskId,
+      },
+      'Invalid group run phase transition',
+    );
+  }
+
+  state.runPhase = nextPhase;
+  logger.info(
+    {
+      groupJid,
+      fromPhase,
+      toPhase: nextPhase,
+      transition: `${fromPhase} → ${nextPhase}`,
+      reason: metadata?.reason,
+      runId: metadata?.runId,
+      taskId: metadata?.taskId,
+    },
+    'Group run phase changed',
+  );
+}
+
+/** Reset all run-related fields, then transition back to idle. */
+function resetRunState(state: GroupState, groupJid: string): void {
   state.currentRunId = null;
   state.runningTaskId = null;
   state.startedAt = null;
   state.process = null;
   state.processName = null;
   state.ipcDir = null;
+  transitionRunPhase(state, groupJid, 'idle');
 }
 
 /** Validate that flat fields are consistent with runPhase. Called after every transition. */
@@ -465,7 +516,10 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     if (state.runPhase === 'idle' || !state.ipcDir) return;
     if (state.runPhase === 'running_messages') {
-      state.runPhase = 'closing_messages';
+      transitionRunPhase(state, groupJid, 'closing_messages', {
+        reason: metadata?.reason,
+        runId: metadata?.runId ?? state.currentRunId,
+      });
       assertRunPhaseInvariants(state, groupJid);
     }
 
@@ -546,10 +600,10 @@ export class GroupQueue {
   ): Promise<void> {
     const state = this.getGroup(groupJid);
     const runId = this.createRunId();
-    state.runPhase = 'running_messages';
     state.currentRunId = runId;
     state.pendingMessages = false;
     state.startedAt = Date.now();
+    transitionRunPhase(state, groupJid, 'running_messages', { runId, reason });
     assertRunPhaseInvariants(state, groupJid);
     this.activeCount++;
 
@@ -589,7 +643,6 @@ export class GroupQueue {
     } finally {
       this.clearPostCloseTimers(state);
       const durationMs = state.startedAt ? Date.now() - state.startedAt : null;
-      const fromPhase = state.runPhase;
       logger.info(
         {
           groupJid,
@@ -597,13 +650,12 @@ export class GroupQueue {
           reason,
           outcome,
           durationMs,
-          transition: `${fromPhase} → idle`,
           pendingMessages: state.pendingMessages,
           pendingTasks: state.pendingTasks.length,
         },
         'Finished group message run',
       );
-      resetRunState(state);
+      resetRunState(state, groupJid);
       assertRunPhaseInvariants(state, groupJid);
       this.activeCount--;
       this.drainGroup(groupJid);
@@ -612,9 +664,9 @@ export class GroupQueue {
 
   private async runTask(groupJid: string, task: QueuedTask): Promise<void> {
     const state = this.getGroup(groupJid);
-    state.runPhase = 'running_task';
     state.runningTaskId = task.id;
     state.startedAt = Date.now();
+    transitionRunPhase(state, groupJid, 'running_task', { taskId: task.id });
     assertRunPhaseInvariants(state, groupJid);
     this.activeCount++;
     this.activeTaskCount++;
@@ -641,7 +693,6 @@ export class GroupQueue {
       const durationMs = state.startedAt ? Date.now() - state.startedAt : null;
       logger.info(
         {
-          transition: 'running_task → idle',
           groupJid,
           taskId: task.id,
           outcome,
@@ -651,7 +702,7 @@ export class GroupQueue {
         },
         'Finished queued task',
       );
-      resetRunState(state);
+      resetRunState(state, groupJid);
       assertRunPhaseInvariants(state, groupJid);
       this.activeCount--;
       this.activeTaskCount--;
