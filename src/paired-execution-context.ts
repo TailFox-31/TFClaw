@@ -81,10 +81,13 @@ function classifyArbiterVerdict(
   const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
   if (!cleaned) return 'unknown';
   const firstLine = cleaned.split('\n')[0].trim();
-  if (/^\*{0,2}PROCEED\*{0,2}\b/i.test(firstLine)) return 'proceed';
-  if (/^\*{0,2}REVISE\*{0,2}\b/i.test(firstLine)) return 'revise';
-  if (/^\*{0,2}RESET\*{0,2}\b/i.test(firstLine)) return 'reset';
-  if (/^\*{0,2}ESCALATE\*{0,2}\b/i.test(firstLine)) return 'escalate';
+  // Match verdict keywords with optional prefix like "VERDICT:" and markdown bold
+  const verdictMatch = firstLine.match(
+    /\*{0,2}(?:VERDICT\s*[:—-]\s*)?(PROCEED|REVISE|RESET|ESCALATE)\*{0,2}/i,
+  );
+  if (verdictMatch) {
+    return verdictMatch[1].toLowerCase() as ArbiterVerdictResult;
+  }
   return 'unknown';
 }
 
