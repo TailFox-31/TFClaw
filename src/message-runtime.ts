@@ -449,9 +449,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         REVIEWER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
       handoffChannel = findChannelByName(deps.channels, revChName) || channel;
     } else if (isArbiterHandoff) {
-      const arbChName =
-        ARBITER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
-      handoffChannel = findChannelByName(deps.channels, arbChName) || channel;
+      handoffChannel =
+        findChannelByName(deps.channels, 'discord-review') || channel;
     }
 
     const runId = `handoff-${handoff.id}`;
@@ -527,11 +526,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     );
     const reviewerChannel = foundReviewerChannel || channel;
 
-    // Arbiter channel: route arbiter output through the appropriate bot.
-    const arbiterChannelName =
-      isPairedRoomJid(chatJid) && ARBITER_AGENT_TYPE === 'claude-code'
-        ? 'discord'
-        : 'discord-review';
+    // Arbiter always uses discord-review bot regardless of model —
+    // the arbiter role is tied to the 3rd bot, not the model behind it.
+    const arbiterChannelName = 'discord-review';
     const foundArbiterChannel = findChannelByName(
       deps.channels,
       arbiterChannelName,
