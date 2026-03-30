@@ -41,6 +41,7 @@ import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
   advanceLastAgentCursor,
   createImplicitContinuationTracker,
+  resolveActiveRole,
   resolveCursorKey,
   filterLoopingPairedBotMessages,
   getProcessableMessages,
@@ -536,18 +537,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const arbiterChannel = foundArbiterChannel || channel;
 
     // Resolve the correct Discord channel for a given task status.
-    const resolveChannel = (taskStatus?: string | null): Channel => {
-      switch (taskStatus) {
-        case 'review_ready':
-        case 'in_review':
-          return reviewerChannel;
-        case 'arbiter_requested':
-        case 'in_arbitration':
-          return arbiterChannel;
-        default:
-          return channel;
-      }
+    const roleToChannel: Record<string, Channel> = {
+      owner: channel,
+      reviewer: reviewerChannel,
+      arbiter: arbiterChannel,
     };
+    const resolveChannel = (taskStatus?: string | null): Channel =>
+      roleToChannel[resolveActiveRole(taskStatus)] ?? channel;
 
     if (isPairedRoomJid(chatJid)) {
       logger.info(
@@ -832,8 +828,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       // Arbiter turns use a dedicated context prompt; regular turns use formatted messages.
       const isArbiterTurn =
-        taskStatus === 'arbiter_requested' ||
-        taskStatus === 'in_arbitration';
+        taskStatus === 'arbiter_requested' || taskStatus === 'in_arbitration';
       let prompt: string;
       if (isArbiterTurn && pendingTaskForChannel) {
         const arbiterMsgs = labelPairedSenders(
