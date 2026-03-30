@@ -4,6 +4,12 @@ import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isTaskStatusControlMessage } from './task-watch-status.js';
 import {
+  ARBITER_AGENT_TYPE,
+  OWNER_AGENT_TYPE,
+  REVIEWER_AGENT_TYPE,
+} from './config.js';
+import {
+  type AgentType,
   type Channel,
   type NewMessage,
   type RegisteredGroup,
@@ -55,6 +61,38 @@ export function resolveCursorKey(
   if (!isPairedRoomJid(chatJid)) return chatJid;
   const role = resolveActiveRole(taskStatus);
   return role === 'owner' ? chatJid : `${chatJid}:${role}`;
+}
+
+/** Resolve the effective agent type for a role, considering per-role overrides. */
+export function resolveEffectiveAgentType(
+  role: 'owner' | 'reviewer' | 'arbiter',
+  groupAgentType: AgentType | undefined,
+): AgentType {
+  const groupDefault: AgentType = groupAgentType || 'claude-code';
+  switch (role) {
+    case 'reviewer':
+      return REVIEWER_AGENT_TYPE !== groupDefault
+        ? REVIEWER_AGENT_TYPE
+        : groupDefault;
+    case 'arbiter':
+      return ARBITER_AGENT_TYPE != null && ARBITER_AGENT_TYPE !== groupDefault
+        ? ARBITER_AGENT_TYPE
+        : groupDefault;
+    default:
+      return groupDefault;
+  }
+}
+
+/** Session folder key for a role. Owner uses groupFolder, others use groupFolder:role. */
+export function resolveSessionFolder(
+  groupFolder: string,
+  role: 'owner' | 'reviewer' | 'arbiter',
+  groupAgentType: AgentType | undefined,
+): string {
+  const effectiveType = resolveEffectiveAgentType(role, groupAgentType);
+  const groupDefault: AgentType = groupAgentType || 'claude-code';
+  if (effectiveType === groupDefault) return groupFolder;
+  return `${groupFolder}:${role}`;
 }
 
 export function createImplicitContinuationTracker(idleTimeout: number) {

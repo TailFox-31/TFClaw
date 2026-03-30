@@ -23,7 +23,11 @@ import {
   completePairedExecutionContext,
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
-import { resolveActiveRole } from './message-runtime-rules.js';
+import {
+  resolveActiveRole,
+  resolveEffectiveAgentType,
+  resolveSessionFolder,
+} from './message-runtime-rules.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import {
   classifyRotationTrigger,
@@ -35,11 +39,8 @@ import {
   shouldRetryFreshSessionOnAgentFailure,
 } from './session-recovery.js';
 import {
-  ARBITER_AGENT_TYPE,
-  CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
   SERVICE_SESSION_SCOPE,
-  REVIEWER_AGENT_TYPE,
   isClaudeService,
   getRoleModelConfig,
 } from './config.js';
@@ -107,34 +108,20 @@ export async function runAgentForGroup(
   const reviewerMode = activeRole === 'reviewer';
   const arbiterMode = activeRole === 'arbiter';
 
-  // Override agent type based on role config (OWNER_AGENT_TYPE / REVIEWER_AGENT_TYPE).
-  // When the reviewer uses a different agent type than the group default,
-  // swap in the configured type for the duration of this execution.
-  const reviewerAgentTypeOverride =
-    reviewerMode && REVIEWER_AGENT_TYPE !== (group.agentType || 'claude-code');
-  const arbiterAgentTypeOverride =
-    arbiterMode &&
-    ARBITER_AGENT_TYPE != null &&
-    ARBITER_AGENT_TYPE !== (group.agentType || 'claude-code');
-  const effectiveAgentType = arbiterAgentTypeOverride
-    ? ARBITER_AGENT_TYPE!
-    : reviewerAgentTypeOverride
-      ? REVIEWER_AGENT_TYPE
-      : group.agentType || 'claude-code';
-  const effectiveGroup = arbiterAgentTypeOverride
-    ? { ...group, agentType: ARBITER_AGENT_TYPE! }
-    : reviewerAgentTypeOverride
-      ? { ...group, agentType: REVIEWER_AGENT_TYPE }
+  const effectiveAgentType = resolveEffectiveAgentType(
+    activeRole,
+    group.agentType,
+  );
+  const effectiveGroup =
+    effectiveAgentType !== (group.agentType || 'claude-code')
+      ? { ...group, agentType: effectiveAgentType }
       : group;
   const isClaudeCodeAgent = effectiveAgentType === 'claude-code';
-
-  // When the reviewer/arbiter uses a different agent type than the group default,
-  // use a separate session key so owner, reviewer, and arbiter sessions don't collide.
-  const sessionFolder = arbiterAgentTypeOverride
-    ? `${group.folder}:arbiter`
-    : reviewerAgentTypeOverride
-      ? `${group.folder}:reviewer`
-      : group.folder;
+  const sessionFolder = resolveSessionFolder(
+    group.folder,
+    activeRole,
+    group.agentType,
+  );
   const sessionId = sessions[sessionFolder];
   const memoryBriefing = sessionId
     ? undefined
@@ -478,10 +465,7 @@ export async function runAgentForGroup(
         groupFolder: group.folder,
         runId,
         provider: effectiveAgentType,
-        reviewerMode,
-        arbiterMode,
-        reviewerAgentTypeOverride,
-        arbiterAgentTypeOverride,
+        role: activeRole,
       },
       `Using provider: ${effectiveAgentType}`,
     );

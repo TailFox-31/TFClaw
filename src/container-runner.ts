@@ -40,8 +40,7 @@ import type { RegisteredGroup } from './types.js';
 
 // ── Config ────────────────────────────────────────────────────────
 
-const CONTAINER_IMAGE =
-  process.env.REVIEWER_CONTAINER_IMAGE || 'ejclaw-reviewer:latest';
+import { REVIEWER_CONTAINER_IMAGE as CONTAINER_IMAGE } from './config.js';
 
 // ── Types ─────────────────────────────────────────────────────────
 
