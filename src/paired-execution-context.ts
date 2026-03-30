@@ -484,6 +484,16 @@ export function completePairedExecutionContext(args: {
       case 'done_with_concerns':
       case 'continue':
       default:
+        // If both sides keep echoing DONE_WITH_CONCERNS without progress,
+        // stop the loop after 3 round trips to prevent infinite ping-pong.
+        if (task.round_trip_count >= 3) {
+          updatePairedTask(taskId, { status: 'completed', updated_at: now });
+          logger.info(
+            { taskId, verdict, roundTrips: task.round_trip_count },
+            'Stopped ping-pong after repeated DONE_WITH_CONCERNS — escalating to user',
+          );
+          break;
+        }
         // Owner needs to address feedback — ping-pong continues
         updatePairedTask(taskId, { status: 'active', updated_at: now });
         logger.info(
