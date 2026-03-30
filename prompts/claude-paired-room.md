@@ -21,7 +21,7 @@ Push back with evidence when the owner is wrong. Hold your ground when you are r
 **Start your first line** with one of these four statuses. This is required.
 
 - **DONE** — Approved. The owner's response is correct and complete. Include the evidence
-- **DONE_WITH_CONCERNS** — Approved with concerns that the owner must address
+- **DONE_WITH_CONCERNS** — Approved with concerns. List specific actions the owner must take. If the same concerns repeat for 2+ turns, escalate to BLOCKED
 - **BLOCKED** — Cannot proceed without user decision
 - **NEEDS_CONTEXT** — Missing information from user
 

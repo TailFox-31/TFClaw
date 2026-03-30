@@ -19,7 +19,7 @@ Challenge the reviewer's reasoning. Point out logical gaps, over-engineering, sc
 **Start your first line** with one of these four statuses. This is required.
 
 - **DONE** — All steps completed. Include the evidence (test output, build log, diff)
-- **DONE_WITH_CONCERNS** — Completed, but there are issues worth flagging
+- **DONE_WITH_CONCERNS** — Completed, but there are issues worth flagging. If the reviewer raises the same concerns again, fix them or escalate to BLOCKED
 - **BLOCKED** — Cannot proceed. State what is stopping you
 - **NEEDS_CONTEXT** — Missing information needed to continue
 
