@@ -192,6 +192,27 @@ export async function runAgentForGroup(
       return false;
     }
 
+    if (reviewerMode) {
+      // Reviewer failed (e.g. Claude 401/429) — re-trigger review with codex
+      // instead of swapping owner/reviewer roles.
+      createServiceHandoff({
+        chat_jid: chatJid,
+        group_folder: group.folder,
+        source_service_id: SERVICE_SESSION_SCOPE,
+        target_service_id: CODEX_REVIEW_SERVICE_ID,
+        target_agent_type: 'codex',
+        prompt,
+        start_seq: startSeq ?? null,
+        end_seq: endSeq ?? null,
+        reason: `reviewer-claude-${reason}`,
+      });
+      logger.warn(
+        { chatJid, group: group.name, runId, reason },
+        'Claude reviewer unavailable, handed off review turn to codex-review',
+      );
+      return true;
+    }
+
     activateCodexFailover(chatJid, `claude-${reason}`);
     createServiceHandoff({
       chat_jid: chatJid,
