@@ -73,7 +73,7 @@ interface SessionsIndex {
 
 type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+  | { type: 'image'; source: { type: 'base64'; media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; data: string } };
 
 interface SDKUserMessage {
   type: 'user';
@@ -140,7 +140,7 @@ function buildMultimodalContent(text: string): string | ContentBlock[] {
       }
       const data = fs.readFileSync(imgPath).toString('base64');
       const ext = path.extname(imgPath).toLowerCase();
-      const mediaType = MIME_TYPES[ext] || 'image/png';
+      const mediaType = (MIME_TYPES[ext] || 'image/png') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
       blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
       log(`Added image block: ${imgPath} (${mediaType})`);
     } catch (err) {
