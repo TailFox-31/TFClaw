@@ -13,6 +13,7 @@ import {
   USAGE_DASHBOARD_ENABLED,
   getMoaConfig,
 } from './config.js';
+import { fetchKimiUsage, buildKimiUsageRows } from './kimi-usage.js';
 import { getGlobalFailoverInfo } from './service-routing.js';
 import {
   fetchAllClaudeUsage,
@@ -87,6 +88,7 @@ const RENDERER_USAGE_REFRESH_MS = 30_000;
 let statusMessageId: string | null = null;
 let cachedUsageContent = '';
 let cachedClaudeAccounts: ClaudeAccountUsage[] = [];
+let cachedKimiUsage: import('./kimi-usage.js').KimiUsageData | null = null;
 let usageUpdateInProgress = false;
 let channelMetaCache = new Map<string, ChannelMeta>();
 let channelMetaLastRefresh = 0;
@@ -471,6 +473,13 @@ async function buildUsageContent(): Promise<string> {
     }
   }
 
+  // Kimi usage
+  try {
+    cachedKimiUsage = await fetchKimiUsage();
+  } catch (err) {
+    logger.warn({ err }, 'Failed to fetch Kimi usage for dashboard');
+  }
+
   const lines: string[] = ['📊 *사용량*'];
   const bar = (pct: number) => {
     const filled = Math.max(0, Math.min(5, Math.round(pct / 20)));
@@ -501,6 +510,10 @@ async function buildUsageContent(): Promise<string> {
       ...extractCodexUsageRows(codexSnapshot, USAGE_SNAPSHOT_MAX_AGE_MS),
     );
   }
+
+  // Group 3: Kimi coding plan
+  const kimiRows = buildKimiUsageRows(cachedKimiUsage);
+  claudeBotRows.push(...kimiRows);
 
   lines.push(...renderUsageTable(claudeBotRows, codexBotRows));
 
@@ -571,9 +584,10 @@ function buildModelConfigSection(): string {
   for (const role of roleConfigs) {
     if (!role.agentType && role.label === 'Arbiter') continue;
     const type = role.agentType || '—';
-    const defaultModel = type === 'codex'
-      ? (process.env.CODEX_MODEL || 'codex')
-      : (process.env.CLAUDE_MODEL || 'claude');
+    const defaultModel =
+      type === 'codex'
+        ? process.env.CODEX_MODEL || 'codex'
+        : process.env.CLAUDE_MODEL || 'claude';
     const model = role.model || defaultModel;
     lines.push(`  **${role.label}** — ${type} \`${model}\``);
   }

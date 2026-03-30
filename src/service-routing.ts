@@ -187,10 +187,7 @@ let globalFailoverActive = false;
 let globalFailoverReason: string | null = null;
 let globalFailoverActivatedAt: string | null = null;
 
-export function activateCodexFailover(
-  _chatJid: string,
-  reason: string,
-): void {
+export function activateCodexFailover(_chatJid: string, reason: string): void {
   globalFailoverActive = true;
   globalFailoverReason = reason;
   globalFailoverActivatedAt = new Date().toISOString();
@@ -238,9 +235,7 @@ export interface ActiveFailoverLease {
 export function getActiveCodexFailoverLeases(): ActiveFailoverLease[] {
   // Global failover: report as a single pseudo-lease
   if (globalFailoverActive) {
-    return [
-      { chatJid: '*', activatedAt: globalFailoverActivatedAt },
-    ];
+    return [{ chatJid: '*', activatedAt: globalFailoverActivatedAt }];
   }
   return [];
 }
