@@ -19,6 +19,7 @@ import { getServiceDefs, type ServiceDef } from './service-defs.js';
  */
 
 const baseServiceDef: ServiceDef = {
+  kind: 'primary',
   description: 'EJClaw Personal Assistant',
   launchdLabel: 'com.ejclaw',
   logName: 'ejclaw',
@@ -126,6 +127,7 @@ describe('systemd unit generation', () => {
     const unit = buildSystemdUnit(
       {
         ...baseServiceDef,
+        kind: 'codex',
         environmentFile: '/srv/ejclaw/.env.codex',
         extraEnv: { ASSISTANT_NAME: 'codex' },
         logName: 'ejclaw-codex',
@@ -183,6 +185,11 @@ describe('service definitions', () => {
       'ejclaw',
       'ejclaw-codex',
       'ejclaw-review',
+    ]);
+    expect(defs.map((def) => def.kind)).toEqual([
+      'primary',
+      'codex',
+      'review',
     ]);
   });
 

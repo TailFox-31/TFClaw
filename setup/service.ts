@@ -59,14 +59,12 @@ export async function run(_args: string[]): Promise<void> {
   fs.mkdirSync(path.join(projectRoot, 'logs'), { recursive: true });
 
   const serviceDefs = getServiceDefs(projectRoot);
-  if (serviceDefs.some((def) => def.name === 'ejclaw-codex')) {
+  for (const def of serviceDefs) {
+    if (def.kind === 'primary' || !def.environmentFile) {
+      continue;
+    }
     logger.info(
-      'Detected .env.codex — will also install ejclaw-codex service',
-    );
-  }
-  if (serviceDefs.some((def) => def.name === 'ejclaw-review')) {
-    logger.info(
-      'Detected .env.codex-review — will also install ejclaw-review service',
+      `Detected ${path.basename(def.environmentFile)} — will also install ${def.name} service`,
     );
   }
 

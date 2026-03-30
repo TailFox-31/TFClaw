@@ -184,10 +184,10 @@ export async function run(_args: string[]): Promise<void> {
     (service) => service.status === 'running',
   );
   const codexConfigured = serviceDefs.some(
-    (service) => service.name === 'ejclaw-codex',
+    (service) => service.kind === 'codex',
   );
   const reviewConfigured = serviceDefs.some(
-    (service) => service.name === 'ejclaw-review',
+    (service) => service.kind === 'review',
   );
 
   const status =
