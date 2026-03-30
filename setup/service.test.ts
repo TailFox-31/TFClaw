@@ -3,8 +3,13 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { buildRuntimePathEnv, buildStackRestartSystemdUnit } from './service.js';
-import { getServiceDefs } from './service-defs.js';
+import {
+  buildLaunchdPlist,
+  buildRuntimePathEnv,
+  buildStackRestartSystemdUnit,
+  buildSystemdUnit,
+} from './service.js';
+import { getServiceDefs, type ServiceDef } from './service-defs.js';
 
 /**
  * Tests for service configuration generation.
@@ -13,105 +18,49 @@ import { getServiceDefs } from './service-defs.js';
  * without actually loading services.
  */
 
-// Helper: generate a plist string the same way service.ts does
-function generatePlist(
-  nodePath: string,
-  projectRoot: string,
-  homeDir: string,
-): string {
-  const runtimePath = buildRuntimePathEnv(nodePath, homeDir);
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.ejclaw</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>${nodePath}</string>
-        <string>${projectRoot}/dist/index.js</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>${projectRoot}</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>EnvironmentVariables</key>
-    <dict>
-        <key>PATH</key>
-        <string>${runtimePath}</string>
-        <key>HOME</key>
-        <string>${homeDir}</string>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>${projectRoot}/logs/ejclaw.log</string>
-    <key>StandardErrorPath</key>
-    <string>${projectRoot}/logs/ejclaw.error.log</string>
-</dict>
-</plist>`;
-}
-
-function generateSystemdUnit(
-  nodePath: string,
-  projectRoot: string,
-  homeDir: string,
-  isSystem: boolean,
-): string {
-  const runtimePath = buildRuntimePathEnv(nodePath, homeDir);
-
-  return `[Unit]
-Description=EJClaw Personal Assistant
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=${nodePath} ${projectRoot}/dist/index.js
-WorkingDirectory=${projectRoot}
-Restart=always
-RestartSec=5
-Environment=HOME=${homeDir}
-Environment=PATH=${runtimePath}
-StandardOutput=append:${projectRoot}/logs/ejclaw.log
-StandardError=append:${projectRoot}/logs/ejclaw.error.log
-
-[Install]
-WantedBy=${isSystem ? 'multi-user.target' : 'default.target'}`;
-}
+const baseServiceDef: ServiceDef = {
+  description: 'EJClaw Personal Assistant',
+  launchdLabel: 'com.ejclaw',
+  logName: 'ejclaw',
+  name: 'ejclaw',
+};
 
 describe('plist generation', () => {
   it('contains the correct label', () => {
-    const plist = generatePlist(
-      '/usr/local/bin/node',
+    const plist = buildLaunchdPlist(
+      baseServiceDef,
       '/home/user/ejclaw',
+      '/usr/local/bin/node',
       '/home/user',
     );
     expect(plist).toContain('<string>com.ejclaw</string>');
   });
 
   it('uses the correct node path', () => {
-    const plist = generatePlist(
-      '/opt/node/bin/node',
+    const plist = buildLaunchdPlist(
+      baseServiceDef,
       '/home/user/ejclaw',
+      '/opt/node/bin/node',
       '/home/user',
     );
     expect(plist).toContain('<string>/opt/node/bin/node</string>');
   });
 
   it('points to dist/index.js', () => {
-    const plist = generatePlist(
-      '/usr/local/bin/node',
+    const plist = buildLaunchdPlist(
+      baseServiceDef,
       '/home/user/ejclaw',
+      '/usr/local/bin/node',
       '/home/user',
     );
     expect(plist).toContain('/home/user/ejclaw/dist/index.js');
   });
 
   it('sets log paths', () => {
-    const plist = generatePlist(
-      '/usr/local/bin/node',
+    const plist = buildLaunchdPlist(
+      baseServiceDef,
       '/home/user/ejclaw',
+      '/usr/local/bin/node',
       '/home/user',
     );
     expect(plist).toContain('ejclaw.log');
@@ -127,9 +76,10 @@ describe('systemd unit generation', () => {
   });
 
   it('user unit uses default.target', () => {
-    const unit = generateSystemdUnit(
-      '/usr/bin/node',
+    const unit = buildSystemdUnit(
+      baseServiceDef,
       '/home/user/ejclaw',
+      '/usr/bin/node',
       '/home/user',
       false,
     );
@@ -137,9 +87,10 @@ describe('systemd unit generation', () => {
   });
 
   it('system unit uses multi-user.target', () => {
-    const unit = generateSystemdUnit(
-      '/usr/bin/node',
+    const unit = buildSystemdUnit(
+      baseServiceDef,
       '/home/user/ejclaw',
+      '/usr/bin/node',
       '/home/user',
       true,
     );
@@ -147,9 +98,10 @@ describe('systemd unit generation', () => {
   });
 
   it('contains restart policy', () => {
-    const unit = generateSystemdUnit(
-      '/usr/bin/node',
+    const unit = buildSystemdUnit(
+      baseServiceDef,
       '/home/user/ejclaw',
+      '/usr/bin/node',
       '/home/user',
       false,
     );
@@ -158,15 +110,35 @@ describe('systemd unit generation', () => {
   });
 
   it('sets correct ExecStart', () => {
-    const unit = generateSystemdUnit(
-      '/usr/bin/bun',
+    const unit = buildSystemdUnit(
+      baseServiceDef,
       '/srv/ejclaw',
+      '/usr/bin/bun',
       '/home/user',
       false,
     );
     expect(unit).toContain(
       'ExecStart=/usr/bin/bun /srv/ejclaw/dist/index.js',
     );
+  });
+
+  it('preserves EnvironmentFile and extraEnv in the actual builder', () => {
+    const unit = buildSystemdUnit(
+      {
+        ...baseServiceDef,
+        environmentFile: '/srv/ejclaw/.env.codex',
+        extraEnv: { ASSISTANT_NAME: 'codex' },
+        logName: 'ejclaw-codex',
+        name: 'ejclaw-codex',
+      },
+      '/srv/ejclaw',
+      '/usr/bin/bun',
+      '/home/user',
+      false,
+    );
+
+    expect(unit).toContain('EnvironmentFile=/srv/ejclaw/.env.codex');
+    expect(unit).toContain('Environment=ASSISTANT_NAME=codex');
   });
 });
 

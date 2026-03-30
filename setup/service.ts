@@ -148,39 +148,7 @@ function setupLaunchd(
   );
   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
 
-  const envEntries = buildLaunchdEnvironmentEntries(
-    nodePath,
-    homeDir,
-    def.extraEnv,
-  );
-
-  const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>${def.launchdLabel}</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>${nodePath}</string>
-        <string>${projectRoot}/dist/index.js</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>${projectRoot}</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>EnvironmentVariables</key>
-    <dict>
-${envEntries.join('\n')}
-    </dict>
-    <key>StandardOutPath</key>
-    <string>${projectRoot}/logs/${def.logName}.log</string>
-    <key>StandardErrorPath</key>
-    <string>${projectRoot}/logs/${def.logName}.error.log</string>
-</dict>
-</plist>`;
+  const plist = buildLaunchdPlist(def, projectRoot, nodePath, homeDir);
 
   fs.writeFileSync(plistPath, plist);
   logger.info({ plistPath, service: def.name }, 'Wrote launchd plist');
@@ -216,6 +184,47 @@ ${envEntries.join('\n')}
     STATUS: 'success',
     LOG: 'logs/setup.log',
   });
+}
+
+export function buildLaunchdPlist(
+  def: ServiceDef,
+  projectRoot: string,
+  nodePath: string,
+  homeDir: string,
+): string {
+  const envEntries = buildLaunchdEnvironmentEntries(
+    nodePath,
+    homeDir,
+    def.extraEnv,
+  );
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${def.launchdLabel}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${nodePath}</string>
+        <string>${projectRoot}/dist/index.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${projectRoot}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+${envEntries.join('\n')}
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${projectRoot}/logs/${def.logName}.log</string>
+    <key>StandardErrorPath</key>
+    <string>${projectRoot}/logs/${def.logName}.error.log</string>
+</dict>
+</plist>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -364,6 +373,25 @@ function setupSystemdUnit(
   const unitPath = getUnitPath(def.name, homeDir, runningAsRoot);
   fs.mkdirSync(path.dirname(unitPath), { recursive: true });
 
+  const unit = buildSystemdUnit(
+    def,
+    projectRoot,
+    nodePath,
+    homeDir,
+    runningAsRoot,
+  );
+
+  fs.writeFileSync(unitPath, unit);
+  logger.info({ unitPath, service: def.name }, 'Wrote systemd unit');
+}
+
+export function buildSystemdUnit(
+  def: ServiceDef,
+  projectRoot: string,
+  nodePath: string,
+  homeDir: string,
+  runningAsRoot: boolean,
+): string {
   const envLines = buildSystemdEnvironmentLines(
     nodePath,
     homeDir,
@@ -375,7 +403,7 @@ function setupSystemdUnit(
     ? `EnvironmentFile=${def.environmentFile}\n`
     : '';
 
-  const unit = `[Unit]
+  return `[Unit]
 Description=${def.description}
 After=network.target
 
@@ -391,9 +419,6 @@ StandardError=append:${projectRoot}/logs/${def.logName}.error.log
 
 [Install]
 WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
-
-  fs.writeFileSync(unitPath, unit);
-  logger.info({ unitPath, service: def.name }, 'Wrote systemd unit');
 }
 
 export function buildStackRestartSystemdUnit(
