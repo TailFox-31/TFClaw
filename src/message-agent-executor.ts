@@ -23,6 +23,7 @@ import {
   completePairedExecutionContext,
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
+import { resolveActiveRole } from './message-runtime-rules.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import {
   classifyRotationTrigger,
@@ -95,16 +96,15 @@ export async function runAgentForGroup(
   const pairedTask = currentLease.reviewer_service_id
     ? getLatestOpenPairedTaskForChat(chatJid)
     : null;
+  const activeRole = resolveActiveRole(pairedTask?.status);
   const effectiveServiceId =
-    pairedTask &&
-    (pairedTask.status === 'arbiter_requested' || pairedTask.status === 'in_arbitration')
+    activeRole === 'arbiter'
       ? currentLease.arbiter_service_id!
-      : pairedTask &&
-          (pairedTask.status === 'review_ready' || pairedTask.status === 'in_review')
+      : activeRole === 'reviewer'
         ? currentLease.reviewer_service_id!
         : currentLease.owner_service_id;
-  const reviewerMode = effectiveServiceId === currentLease.reviewer_service_id;
-  const arbiterMode = effectiveServiceId === currentLease.arbiter_service_id;
+  const reviewerMode = activeRole === 'reviewer';
+  const arbiterMode = activeRole === 'arbiter';
 
   // Override agent type based on role config (OWNER_AGENT_TYPE / REVIEWER_AGENT_TYPE).
   // When the reviewer uses a different agent type than the group default,
@@ -112,7 +112,9 @@ export async function runAgentForGroup(
   const reviewerAgentTypeOverride =
     reviewerMode && REVIEWER_AGENT_TYPE !== (group.agentType || 'claude-code');
   const arbiterAgentTypeOverride =
-    arbiterMode && ARBITER_AGENT_TYPE != null && ARBITER_AGENT_TYPE !== (group.agentType || 'claude-code');
+    arbiterMode &&
+    ARBITER_AGENT_TYPE != null &&
+    ARBITER_AGENT_TYPE !== (group.agentType || 'claude-code');
   const effectiveAgentType = arbiterAgentTypeOverride
     ? ARBITER_AGENT_TYPE!
     : reviewerAgentTypeOverride

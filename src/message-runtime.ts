@@ -602,11 +602,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         const pendingReviewTask = isPairedRoomJid(chatJid)
           ? getLatestOpenPairedTaskForChat(chatJid)
           : null;
-        if (
-          pendingReviewTask &&
-          (pendingReviewTask.status === 'review_ready' ||
-            pendingReviewTask.status === 'in_review')
-        ) {
+        const pendingRole = resolveActiveRole(pendingReviewTask?.status);
+        if (pendingReviewTask && pendingRole === 'reviewer') {
           // No processable messages remain. Review workspace state using the
           // user's request as context, but don't re-inject filtered raw bot
           // output from older turns into the next review prompt.
@@ -646,12 +643,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           return deliverySucceeded;
         }
 
-        // arbiter_requested / in_arbitration: run arbiter turn
-        if (
-          pendingReviewTask &&
-          (pendingReviewTask.status === 'arbiter_requested' ||
-            pendingReviewTask.status === 'in_arbitration')
-        ) {
+        if (pendingReviewTask && pendingRole === 'arbiter') {
           const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
           const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
           if (cursor != null) {
@@ -826,10 +818,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const cursorKey = resolveCursorKey(chatJid, taskStatus);
 
       // Arbiter turns use a dedicated context prompt; regular turns use formatted messages.
-      const isArbiterTurn =
-        taskStatus === 'arbiter_requested' || taskStatus === 'in_arbitration';
+      const turnRole = resolveActiveRole(taskStatus);
       let prompt: string;
-      if (isArbiterTurn && pendingTaskForChannel) {
+      if (turnRole === 'arbiter' && pendingTaskForChannel) {
         const arbiterMsgs = labelPairedSenders(
           chatJid,
           getRecentChatMessages(chatJid, 20),
