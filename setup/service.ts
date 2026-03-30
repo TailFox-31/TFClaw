@@ -89,6 +89,47 @@ export async function run(_args: string[]): Promise<void> {
   }
 }
 
+export function buildRuntimePathEnv(nodePath: string, homeDir: string): string {
+  return `${path.dirname(nodePath)}:/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:${homeDir}/.npm-global/bin`;
+}
+
+function buildLaunchdEnvironmentEntries(
+  nodePath: string,
+  homeDir: string,
+  extraEnv?: Record<string, string>,
+): string[] {
+  const envEntries = [
+    `        <key>PATH</key>`,
+    `        <string>${buildRuntimePathEnv(nodePath, homeDir)}</string>`,
+    `        <key>HOME</key>`,
+    `        <string>${homeDir}</string>`,
+  ];
+  if (extraEnv) {
+    for (const [k, v] of Object.entries(extraEnv)) {
+      envEntries.push(`        <key>${k}</key>`);
+      envEntries.push(`        <string>${v}</string>`);
+    }
+  }
+  return envEntries;
+}
+
+function buildSystemdEnvironmentLines(
+  nodePath: string,
+  homeDir: string,
+  extraEnv?: Record<string, string>,
+): string[] {
+  const envLines = [
+    `Environment=HOME=${homeDir}`,
+    `Environment=PATH=${buildRuntimePathEnv(nodePath, homeDir)}`,
+  ];
+  if (extraEnv) {
+    for (const [k, v] of Object.entries(extraEnv)) {
+      envLines.push(`Environment=${k}=${v}`);
+    }
+  }
+  return envLines;
+}
+
 /* ------------------------------------------------------------------ */
 /*  macOS (launchd)                                                    */
 /* ------------------------------------------------------------------ */
@@ -107,19 +148,11 @@ function setupLaunchd(
   );
   fs.mkdirSync(path.dirname(plistPath), { recursive: true });
 
-  // Build extra env dict entries
-  const envEntries = [
-    `        <key>PATH</key>`,
-    `        <string>${path.dirname(nodePath)}:/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:${homeDir}/.npm-global/bin</string>`,
-    `        <key>HOME</key>`,
-    `        <string>${homeDir}</string>`,
-  ];
-  if (def.extraEnv) {
-    for (const [k, v] of Object.entries(def.extraEnv)) {
-      envEntries.push(`        <key>${k}</key>`);
-      envEntries.push(`        <string>${v}</string>`);
-    }
-  }
+  const envEntries = buildLaunchdEnvironmentEntries(
+    nodePath,
+    homeDir,
+    def.extraEnv,
+  );
 
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -331,16 +364,11 @@ function setupSystemdUnit(
   const unitPath = getUnitPath(def.name, homeDir, runningAsRoot);
   fs.mkdirSync(path.dirname(unitPath), { recursive: true });
 
-  // Build Environment= lines
-  const envLines = [
-    `Environment=HOME=${homeDir}`,
-    `Environment=PATH=${path.dirname(nodePath)}:/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:${homeDir}/.npm-global/bin`,
-  ];
-  if (def.extraEnv) {
-    for (const [k, v] of Object.entries(def.extraEnv)) {
-      envLines.push(`Environment=${k}=${v}`);
-    }
-  }
+  const envLines = buildSystemdEnvironmentLines(
+    nodePath,
+    homeDir,
+    def.extraEnv,
+  );
 
   // EnvironmentFile line (optional — for codex service loading .env.codex)
   const envFileLine = def.environmentFile
@@ -373,10 +401,7 @@ export function buildStackRestartSystemdUnit(
   nodePath: string,
   homeDir: string,
 ): string {
-  const envLines = [
-    `Environment=HOME=${homeDir}`,
-    `Environment=PATH=${path.dirname(nodePath)}:/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:${homeDir}/.npm-global/bin`,
-  ];
+  const envLines = buildSystemdEnvironmentLines(nodePath, homeDir);
 
   return `[Unit]
 Description=EJClaw Stack Restart Orchestrator

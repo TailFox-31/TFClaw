@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { buildStackRestartSystemdUnit } from './service.js';
+import { buildRuntimePathEnv, buildStackRestartSystemdUnit } from './service.js';
 import { getServiceDefs } from './service-defs.js';
 
 /**
@@ -19,6 +19,8 @@ function generatePlist(
   projectRoot: string,
   homeDir: string,
 ): string {
+  const runtimePath = buildRuntimePathEnv(nodePath, homeDir);
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -39,7 +41,7 @@ function generatePlist(
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin</string>
+        <string>${runtimePath}</string>
         <key>HOME</key>
         <string>${homeDir}</string>
     </dict>
@@ -57,6 +59,8 @@ function generateSystemdUnit(
   homeDir: string,
   isSystem: boolean,
 ): string {
+  const runtimePath = buildRuntimePathEnv(nodePath, homeDir);
+
   return `[Unit]
 Description=EJClaw Personal Assistant
 After=network.target
@@ -68,7 +72,7 @@ WorkingDirectory=${projectRoot}
 Restart=always
 RestartSec=5
 Environment=HOME=${homeDir}
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin
+Environment=PATH=${runtimePath}
 StandardOutput=append:${projectRoot}/logs/ejclaw.log
 StandardError=append:${projectRoot}/logs/ejclaw.error.log
 
@@ -116,6 +120,12 @@ describe('plist generation', () => {
 });
 
 describe('systemd unit generation', () => {
+  it('shares the runtime PATH builder across service formats', () => {
+    expect(buildRuntimePathEnv('/usr/bin/bun', '/home/user')).toBe(
+      '/usr/bin:/usr/local/bin:/usr/bin:/bin:/home/user/.local/bin:/home/user/.npm-global/bin',
+    );
+  });
+
   it('user unit uses default.target', () => {
     const unit = generateSystemdUnit(
       '/usr/bin/node',
