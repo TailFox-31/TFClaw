@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc",
     "build:runners": "bun install --cwd runners/agent-runner && bun run --cwd runners/agent-runner build && bun install --cwd runners/codex-runner && bun run --cwd runners/codex-runner build",
+    "build:container": "docker build -f container/Dockerfile -t ejclaw-reviewer:latest .",
     "restart:stack": "bash scripts/restart-ejclaw-stack.sh",
     "restart:hint": "bun src/restart-context-cli.ts write",
     "start": "bun dist/index.js",

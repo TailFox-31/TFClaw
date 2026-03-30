@@ -114,6 +114,7 @@ cd EJClaw
 bun install
 bun run build:runners
 bun run build
+bun run build:container          # Build reviewer Docker image
 ```
 
 ### Environment
@@ -157,7 +158,7 @@ MOA_GLM_API_FORMAT=anthropic
 ### Deploy
 
 ```bash
-ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && bun run build && bun run build:runners && systemctl --user restart ejclaw'
+ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && bun run build && bun run build:runners && bun run build:container && systemctl --user restart ejclaw'
 ```
 
 ## Development
@@ -165,6 +166,7 @@ ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && bun run build && bun run
 ```bash
 bun run build                # Build main project
 bun run build:runners        # Install + build both runners
+bun run build:container      # Rebuild reviewer Docker image
 bun run dev                  # Dev mode with hot reload
 bun test                     # Run tests
 ```

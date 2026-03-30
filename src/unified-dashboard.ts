@@ -1,4 +1,5 @@
 import { execSync } from 'child_process';
+import fs from 'fs';
 import os from 'os';
 
 import {
@@ -524,7 +525,17 @@ async function buildUsageContent(): Promise<string> {
   const cpuCount = os.cpus().length;
   const cpuPct = Math.round((loadAvg[1] / cpuCount) * 100);
   const totalMem = os.totalmem();
-  const usedMem = totalMem - os.freemem();
+  // os.freemem() includes buffers/cache as "used" — misleading.
+  // Read MemAvailable from /proc/meminfo for actual available memory.
+  let availableMem = os.freemem();
+  try {
+    const meminfo = fs.readFileSync('/proc/meminfo', 'utf-8');
+    const match = meminfo.match(/MemAvailable:\s+(\d+)\s+kB/);
+    if (match) availableMem = parseInt(match[1], 10) * 1024;
+  } catch {
+    /* non-Linux or unreadable — fall back to os.freemem() */
+  }
+  const usedMem = totalMem - availableMem;
   const memPct = Math.round((usedMem / totalMem) * 100);
   const memUsedGB = (usedMem / 1073741824).toFixed(1);
   const memTotalGB = (totalMem / 1073741824).toFixed(1);
