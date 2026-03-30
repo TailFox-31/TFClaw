@@ -472,6 +472,34 @@ export function completePairedExecutionContext(args: {
       return;
     }
 
+    // Owner blocked/needs_context → request arbiter (same as reviewer path).
+    // Without this, only reviewer verdicts can summon the arbiter, leaving
+    // owner-side deadlocks (e.g. owner can't implement reviewer's request)
+    // without a resolution mechanism.
+    if (task.status !== 'merge_ready') {
+      const normalOwnerVerdict = classifyReviewerVerdict(args.summary);
+      if (
+        (normalOwnerVerdict === 'blocked' ||
+          normalOwnerVerdict === 'needs_context') &&
+        isArbiterEnabled()
+      ) {
+        updatePairedTask(taskId, {
+          status: 'arbiter_requested',
+          arbiter_requested_at: now,
+          updated_at: now,
+        });
+        logger.info(
+          {
+            taskId,
+            ownerVerdict: normalOwnerVerdict,
+            summary: args.summary?.slice(0, 100),
+          },
+          'Owner blocked/needs_context — requesting arbiter',
+        );
+        return;
+      }
+    }
+
     // Normal turn → auto-trigger reviewer (if within round trip limit)
     if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
       logger.info(
