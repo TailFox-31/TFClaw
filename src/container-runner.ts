@@ -261,6 +261,16 @@ export function buildReviewerMounts(
     });
   }
 
+  // Attachments directory: read-only (Discord file uploads downloaded here)
+  const attachmentsDir = path.join(DATA_DIR, 'attachments');
+  if (fs.existsSync(attachmentsDir)) {
+    mounts.push({
+      hostPath: attachmentsDir,
+      containerPath: attachmentsDir,
+      readonly: true,
+    });
+  }
+
   // Group folder: writable (logs, session data)
   mounts.push({
     hostPath: groupDir,
@@ -439,7 +449,10 @@ export async function runReviewerContainer(args: {
   const execArgs = ['exec', '-i'];
   const authMode = detectAuthMode();
   if (authMode === 'api-key') {
-    execArgs.push('-e', `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY || ''}`);
+    execArgs.push(
+      '-e',
+      `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY || ''}`,
+    );
   } else {
     const oauthToken =
       process.env.CLAUDE_CODE_OAUTH_TOKEN ||
@@ -450,11 +463,9 @@ export async function runReviewerContainer(args: {
   execArgs.push(containerName, 'node', '/app/dist/index.js');
 
   return new Promise<AgentOutput>((resolve) => {
-    const proc = spawn(
-      CONTAINER_RUNTIME_BIN,
-      execArgs,
-      { stdio: ['pipe', 'pipe', 'pipe'] },
-    );
+    const proc = spawn(CONTAINER_RUNTIME_BIN, execArgs, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
 
     onProcess?.(proc, containerName);
 
