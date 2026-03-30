@@ -28,11 +28,12 @@ User message
   → Owner responds (implementation, answer, etc.)
     → Reviewer auto-triggered (critical review, design check)
       → Verdict:
-          DONE              → Owner finalizes → Task completed
+          DONE              → Owner finalizes → Task completed → @user ✅
           DONE_WITH_CONCERNS → Owner addresses feedback → loop
           BLOCKED/NEEDS_CONTEXT
             ├─ Arbiter enabled → Arbiter judges → PROCEED/REVISE/RESET/ESCALATE
-            └─ Arbiter disabled → Escalate to user
+            └─ Arbiter disabled → Escalate to user → @user ⚠️
+      → Owner BLOCKED/NEEDS_CONTEXT → Arbiter (same path as reviewer)
       → Deadlock (3+ round trips without progress)
           → Arbiter summoned → binding verdict → loop resumes
 ```
@@ -53,11 +54,14 @@ No extra SDK processes. External references use lightweight API calls (Anthropic
 ## Features
 
 - **Tribunal 3-agent system** — Owner/reviewer/arbiter with on-demand deadlock resolution
+- **Discord-independent communication** — Agent-to-agent data flows directly via DB, Discord is display-only
 - **Mixture of Agents** — External model opinions (Kimi, GLM) enrich arbiter verdicts
 - **Per-role model selection** — `OWNER_MODEL`, `REVIEWER_MODEL`, `ARBITER_MODEL` + effort + fallback toggle
 - **Container-isolated reviewer** — Persistent Docker container with read-only source mount
 - **Global failover** — Account-level Claude failure → all channels switch to codex, auto-recovers
 - **Post-approval change detection** — Re-triggers review if owner modifies code after approval
+- **Auto user notification** — @mention on task completion (✅ done, ⚠️ escalated)
+- **Loop protection** — Deadlock threshold, merge_ready oscillation guard, arbiter re-invocation limit
 - **Voice transcription** — Groq Whisper (primary) / OpenAI Whisper (fallback)
 - **Token rotation** — Multi-account Claude/Codex rotation on rate limits
 - **Kimi usage dashboard** — Coding plan 5h/7d usage displayed alongside Claude/Codex

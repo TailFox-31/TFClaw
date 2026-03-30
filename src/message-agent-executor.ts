@@ -1051,7 +1051,10 @@ export async function runAgentForGroup(
     // Notify user when paired task reaches a terminal state that requires attention.
     if (pairedExecutionContext) {
       const finishedTask = getPairedTaskById(pairedExecutionContext.task.id);
-      if (finishedTask?.status === 'completed' && finishedTask.completion_reason) {
+      if (
+        finishedTask?.status === 'completed' &&
+        finishedTask.completion_reason
+      ) {
         const sender = getLastHumanMessageSender(chatJid);
         const mention = sender ? `<@${sender}>` : '';
         const notifications: Record<string, string> = {
