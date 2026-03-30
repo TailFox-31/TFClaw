@@ -46,8 +46,7 @@ import {
   getRoleModelConfig,
   getMoaConfig,
 } from './config.js';
-import { buildArbiterContextPrompt } from './arbiter-context.js';
-import { runMoaArbiter } from './moa.js';
+import { collectMoaReferences, formatMoaReferencesForPrompt } from './moa.js';
 import { readArbiterPrompt } from './platform-prompts.js';
 import {
   activateCodexFailover,
@@ -183,7 +182,48 @@ export async function runAgentForGroup(
     }
   }
 
-  const effectivePrompt = prompt;
+  // ── MoA prompt enrichment ─────────────────────────────────────
+  // When MoA is enabled and we're in arbiter mode, query external API
+  // models (Kimi, GLM, etc.) in parallel for their opinions, then inject
+  // those opinions into the arbiter's prompt. The SDK-based arbiter
+  // agent naturally aggregates all perspectives.
+  let moaEnrichedPrompt = prompt;
+  const moaConfig = getMoaConfig();
+  if (arbiterMode && moaConfig.enabled && pairedExecutionContext) {
+    logger.info(
+      {
+        chatJid,
+        group: group.name,
+        runId,
+        models: moaConfig.referenceModels.map((m) => m.name),
+      },
+      'MoA: collecting reference opinions before arbiter',
+    );
+
+    const systemPrompt =
+      readArbiterPrompt(process.cwd()) || 'You are an arbiter.';
+
+    const references = await collectMoaReferences({
+      config: moaConfig,
+      systemPrompt,
+      contextPrompt: prompt,
+    });
+
+    const moaSection = formatMoaReferencesForPrompt(references);
+    if (moaSection) {
+      moaEnrichedPrompt = prompt + '\n' + moaSection;
+      logger.info(
+        {
+          chatJid,
+          successCount: references.filter((r) => !r.error).length,
+          totalCount: references.length,
+        },
+        'MoA: injected reference opinions into arbiter prompt',
+      );
+    }
+  }
+
+  const effectivePrompt = moaEnrichedPrompt;
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
   let pairedExecutionCompleted = false;
@@ -326,75 +366,6 @@ export async function runAgentForGroup(
     });
     pairedExecutionCompleted = true;
     return 'success';
-  }
-
-  // ── MoA arbiter path ────────────────────────────────────────────
-  // When MoA is enabled and we're in arbiter mode, query multiple
-  // models in parallel instead of spawning a single agent process.
-  const moaConfig = getMoaConfig();
-  if (arbiterMode && moaConfig.enabled && pairedExecutionContext) {
-    logger.info(
-      {
-        chatJid,
-        group: group.name,
-        runId,
-        referenceModels: moaConfig.referenceModels.map((m) => m.model),
-        aggregator: moaConfig.aggregator.model,
-      },
-      'Running MoA arbiter instead of single agent',
-    );
-
-    const systemPrompt =
-      readArbiterPrompt(process.cwd()) || 'You are an arbiter.';
-    const contextPrompt = buildArbiterContextPrompt({
-      chatJid,
-      taskId: pairedExecutionContext.task.id,
-      roundTripCount: pairedExecutionContext.task.round_trip_count,
-      timezone: TIMEZONE,
-    });
-
-    try {
-      const moaResult = await runMoaArbiter({
-        config: moaConfig,
-        systemPrompt,
-        contextPrompt,
-      });
-
-      pairedExecutionSummary = moaResult.verdict.slice(0, 500);
-      pairedExecutionStatus = 'succeeded';
-
-      // Build display text with reference model opinions
-      const referenceSection = moaResult.referenceResponses
-        .filter((r) => !r.error)
-        .map((r) => `**${r.model}**: ${r.response.split('\n')[0]}`)
-        .join('\n');
-      const displayText = referenceSection
-        ? `${moaResult.verdict}\n\n---\n*MoA references: ${moaResult.referenceResponses.filter((r) => !r.error).length} models queried*\n${referenceSection}`
-        : moaResult.verdict;
-
-      await onOutput?.({
-        status: 'success',
-        result: null,
-        output: { visibility: 'public', text: displayText },
-        phase: 'final',
-      });
-    } catch (error) {
-      logger.error(
-        { chatJid, group: group.name, runId, error },
-        'MoA arbiter failed',
-      );
-      pairedExecutionSummary = 'ESCALATE\nMoA arbiter failed';
-      pairedExecutionStatus = 'failed';
-    }
-
-    completePairedExecutionContext({
-      taskId: pairedExecutionContext.task.id,
-      role: 'arbiter',
-      status: pairedExecutionStatus,
-      summary: pairedExecutionSummary,
-    });
-    pairedExecutionCompleted = true;
-    return pairedExecutionStatus === 'succeeded' ? 'success' : 'error';
   }
 
   const runAttempt = async (

@@ -165,39 +165,35 @@ export function getRoleModelConfig(
 
 import type { MoaConfig, MoaModelConfig } from './moa.js';
 
-const MOA_BASE_URL = getEnv('MOA_BASE_URL') || 'https://openrouter.ai/api/v1';
-const MOA_API_KEY = getEnv('MOA_API_KEY') || '';
-
-function parseMoaModels(envKey: string): MoaModelConfig[] {
-  const raw = getEnv(envKey) || '';
-  return raw
+/**
+ * Parse MOA reference models from env.
+ * Format: MOA_REF_MODELS=kimi,glm (comma-separated names)
+ * Each model: MOA_{NAME}_MODEL, MOA_{NAME}_BASE_URL, MOA_{NAME}_API_KEY
+ */
+function parseMoaReferenceModels(): MoaModelConfig[] {
+  const names = (getEnv('MOA_REF_MODELS') || '')
     .split(',')
     .map((s) => s.trim())
-    .filter(Boolean)
-    .map((model) => ({
-      name: model.split('/').pop() || model,
-      model,
-      baseUrl: MOA_BASE_URL,
-      apiKey: MOA_API_KEY,
-    }));
+    .filter(Boolean);
+
+  return names
+    .map((name) => {
+      const prefix = `MOA_${name.toUpperCase()}`;
+      const model = getEnv(`${prefix}_MODEL`) || '';
+      const baseUrl = getEnv(`${prefix}_BASE_URL`) || '';
+      const apiKey = getEnv(`${prefix}_API_KEY`) || '';
+      if (!model || !baseUrl || !apiKey) return null;
+      return { name, model, baseUrl, apiKey };
+    })
+    .filter((m): m is MoaModelConfig => m !== null);
 }
 
 export function getMoaConfig(): MoaConfig {
-  const referenceModels = parseMoaModels('MOA_REFERENCE_MODELS');
-  const aggregatorModel = getEnv('MOA_AGGREGATOR_MODEL') || '';
+  const referenceModels = parseMoaReferenceModels();
   return {
     enabled:
-      getEnv('MOA_ENABLED') === 'true' &&
-      referenceModels.length > 0 &&
-      !!aggregatorModel &&
-      !!MOA_API_KEY,
+      getEnv('MOA_ENABLED') === 'true' && referenceModels.length > 0,
     referenceModels,
-    aggregator: {
-      name: aggregatorModel.split('/').pop() || aggregatorModel,
-      model: aggregatorModel,
-      baseUrl: MOA_BASE_URL,
-      apiKey: MOA_API_KEY,
-    },
   };
 }
 

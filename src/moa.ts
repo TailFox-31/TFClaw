@@ -1,9 +1,12 @@
 /**
- * Mixture of Agents (MoA) for arbiter verdicts.
+ * Mixture of Agents (MoA) — lightweight reference opinions.
  *
- * Queries multiple LLM models in parallel, then aggregates their
- * opinions into a single binding verdict. Uses OpenAI-compatible
- * chat completions API (works with OpenRouter, direct providers, etc.)
+ * Queries external API models (Kimi, GLM, etc.) in parallel for their
+ * opinions on the deadlock. These opinions are then injected into the
+ * SDK-based arbiter's prompt so it can aggregate all perspectives.
+ *
+ * No extra SDK processes. The existing arbiter (Claude/Codex subscription)
+ * naturally becomes the aggregator.
  */
 import { logger } from './logger.js';
 
@@ -17,7 +20,12 @@ export interface MoaModelConfig {
 export interface MoaConfig {
   enabled: boolean;
   referenceModels: MoaModelConfig[];
-  aggregator: MoaModelConfig;
+}
+
+export interface MoaReferenceResult {
+  model: string;
+  response: string;
+  error?: string;
 }
 
 async function queryModel(
@@ -52,7 +60,9 @@ async function queryModel(
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new Error(`${response.status} ${response.statusText}: ${body.slice(0, 200)}`);
+      throw new Error(
+        `${response.status} ${response.statusText}: ${body.slice(0, 200)}`,
+      );
     }
 
     const data = (await response.json()) as {
@@ -66,20 +76,23 @@ async function queryModel(
   }
 }
 
-export async function runMoaArbiter(args: {
+/**
+ * Query all reference models in parallel and return their opinions.
+ * These are injected into the SDK arbiter's prompt — the arbiter
+ * aggregates them into a final verdict.
+ */
+export async function collectMoaReferences(args: {
   config: MoaConfig;
   systemPrompt: string;
   contextPrompt: string;
-}): Promise<{
-  verdict: string;
-  referenceResponses: { model: string; response: string; error?: string }[];
-}> {
+}): Promise<MoaReferenceResult[]> {
   const { config, systemPrompt, contextPrompt } = args;
 
-  // Phase 1: Query reference models in parallel
   logger.info(
-    { modelCount: config.referenceModels.length },
-    'MoA: querying reference models',
+    {
+      models: config.referenceModels.map((m) => m.name),
+    },
+    'MoA: querying reference models for opinions',
   );
 
   const results = await Promise.allSettled(
@@ -88,7 +101,7 @@ export async function runMoaArbiter(args: {
     ),
   );
 
-  const referenceResponses = results.map((result, i) => {
+  return results.map((result, i) => {
     const model = config.referenceModels[i].name;
     if (result.status === 'fulfilled') {
       logger.info(
@@ -104,68 +117,31 @@ export async function runMoaArbiter(args: {
     logger.warn({ model, error }, 'MoA: reference model failed');
     return { model, response: '', error };
   });
+}
 
-  const successfulResponses = referenceResponses.filter((r) => !r.error);
+/**
+ * Format reference opinions into a section that gets appended
+ * to the arbiter's prompt.
+ */
+export function formatMoaReferencesForPrompt(
+  references: MoaReferenceResult[],
+): string | null {
+  const successful = references.filter((r) => !r.error && r.response);
+  if (successful.length === 0) return null;
 
-  if (successfulResponses.length === 0) {
-    logger.error('MoA: all reference models failed, using ESCALATE');
-    return {
-      verdict:
-        'ESCALATE\n\nAll reference models failed to respond. Human judgment required.',
-      referenceResponses,
-    };
-  }
-
-  // Phase 2: Aggregate via aggregator model
-  const opinions = successfulResponses
-    .map((r, i) => `### Opinion ${i + 1} (${r.model}):\n${r.response}`)
+  const opinions = successful
+    .map((r) => `### ${r.model}:\n${r.response}`)
     .join('\n\n---\n\n');
 
-  const aggregatorPrompt = [
-    contextPrompt,
+  return [
     '',
-    '---',
-    '',
-    `The following ${successfulResponses.length} independent AI models have each reviewed the deadlock and provided their analysis:`,
+    `<moa-references count="${successful.length}">`,
+    `The following ${successful.length} independent AI models have also reviewed this deadlock:`,
     '',
     opinions,
     '',
-    '---',
-    '',
-    'Consider all perspectives above. Where they agree, that strengthens the case.',
-    'Where they disagree, weigh the evidence each side presents.',
-    'Render your final verdict. Start your first line with: PROCEED, REVISE, RESET, or ESCALATE.',
+    'Consider these perspectives alongside the conversation. Where they agree, that strengthens the case.',
+    'Where they disagree, weigh the evidence. Your verdict is final.',
+    '</moa-references>',
   ].join('\n');
-
-  logger.info(
-    { aggregator: config.aggregator.name },
-    'MoA: running aggregator',
-  );
-
-  try {
-    const verdict = await queryModel(
-      config.aggregator,
-      systemPrompt,
-      aggregatorPrompt,
-      90_000,
-    );
-    logger.info(
-      {
-        aggregator: config.aggregator.name,
-        verdictPreview: verdict.slice(0, 100),
-      },
-      'MoA: aggregator verdict rendered',
-    );
-    return { verdict, referenceResponses };
-  } catch (error) {
-    // Aggregator failed — fall back to majority vote from reference models
-    logger.warn(
-      { error },
-      'MoA: aggregator failed, falling back to first successful reference',
-    );
-    return {
-      verdict: successfulResponses[0].response,
-      referenceResponses,
-    };
-  }
 }

@@ -25,7 +25,11 @@ vi.mock('./config.js', () => ({
     effort: undefined,
     fallbackEnabled: true,
   })),
-  getMoaConfig: vi.fn(() => ({ enabled: false, referenceModels: [], aggregator: {} })),
+  getMoaConfig: vi.fn(() => ({
+    enabled: false,
+    referenceModels: [],
+    aggregator: {},
+  })),
   TIMEZONE: 'Asia/Seoul',
 }));
 
