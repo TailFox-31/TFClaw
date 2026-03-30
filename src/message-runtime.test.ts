@@ -863,7 +863,10 @@ describe('createMessageRuntime', () => {
 
     expect(result).toBe(true);
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
-    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, 'arbiter 확인 완료');
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'arbiter 확인 완료',
+    );
   });
 
   it('allows follow-up messages without a trigger after a visible reply in non-main groups', async () => {

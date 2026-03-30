@@ -667,14 +667,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const buildPendingPairedTurn = (
       task: PairedTask,
       rawMissedMessages: NewMessage[],
-    ):
-      | {
-          prompt: string;
-          channel: Channel;
-          cursor: string | number | null;
-          cursorKey?: string;
-        }
-      | null => {
+    ): {
+      prompt: string;
+      channel: Channel;
+      cursor: string | number | null;
+      cursorKey?: string;
+    } | null => {
       const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
       const cursor = lastRaw?.seq ?? lastRaw?.timestamp ?? null;
       const taskStatus = task.status;
