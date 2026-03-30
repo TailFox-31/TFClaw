@@ -181,11 +181,17 @@ function makeDeps() {
 describe('runAgentForGroup room memory', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
-      status: 'success',
-      result: 'ok',
-      newSessionId: 'session-123',
-    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'ok',
+          output: { visibility: 'public', text: 'ok' },
+          phase: 'final',
+        });
+        return { status: 'success', result: 'ok', newSessionId: 'session-123' };
+      },
+    );
     vi.mocked(buildRoomMemoryBriefing).mockResolvedValue(
       '## Shared Room Memory\n- remembered context',
     );
@@ -461,12 +467,15 @@ describe('runAgentForGroup room memory', () => {
         EJCLAW_PAIRED_ROLE: 'owner',
       }),
     );
+    // Owner produced no visible output (mock doesn't go through streamed
+    // evaluator) → treated as interrupted, status is 'failed' to prevent
+    // auto-triggering the reviewer.
     expect(
       pairedExecutionContext.completePairedExecutionContext,
     ).toHaveBeenCalledWith({
       taskId: 'paired-task-1',
       role: 'owner',
-      status: 'succeeded',
+      status: 'failed',
       summary: 'ok',
     });
   });

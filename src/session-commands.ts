@@ -166,6 +166,7 @@ export async function handleSessionCommand(opts: {
 
   if (command === '/stop') {
     const killed = deps.killProcess();
+    deps.resetPairedTask?.();
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       killed ? 'Agent stopped.' : 'No agent is currently running in this room.',

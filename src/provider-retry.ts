@@ -37,7 +37,7 @@ export interface RotationAttemptResult {
 }
 
 export type RotationOutcome =
-  | { type: 'success' }
+  | { type: 'success'; sawOutput: boolean }
   | { type: 'error'; trigger?: TriggerInfo };
 
 // ── Shared rotation loop ─────────────────────────────────────────
@@ -161,7 +161,7 @@ export async function runClaudeRotationLoop(
     // ── Success ──
     markTokenHealthy();
     clearGlobalFailover();
-    return { type: 'success' };
+    return { type: 'success', sawOutput: attempt.sawOutput };
   }
 
   // ── All tokens exhausted ──

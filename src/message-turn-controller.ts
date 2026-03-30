@@ -147,6 +147,7 @@ export class MessageTurnController {
             this.previousProgressText = this.latestProgressText;
             this.latestProgressText = text;
             this.latestProgressTextForFinal = text;
+            this.pendingProgressText = null; // discard stale buffer
             this.toolActivities = [];
             void this.syncTrackedProgressMessage();
           } else {

@@ -227,6 +227,7 @@ export async function runAgentForGroup(
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
   let pairedExecutionCompleted = false;
+  let pairedSawOutput = false;
 
   const shouldHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -708,6 +709,7 @@ export async function runAgentForGroup(
 
     switch (outcome.type) {
       case 'success':
+        pairedSawOutput = outcome.sawOutput;
         return 'success';
       case 'error':
         return 'error';
@@ -998,21 +1000,35 @@ export async function runAgentForGroup(
     }
 
     pairedExecutionStatus = 'succeeded';
+    pairedSawOutput = primaryAttempt.sawOutput;
     return 'success';
   } finally {
     if (pairedExecutionContext && !pairedExecutionCompleted) {
       const completedRole = roomRoleContext?.role ?? 'owner';
+      // Owner was interrupted without producing output (e.g. /stop) —
+      // treat as failed so reviewer is not auto-triggered.
+      const effectiveStatus =
+        completedRole === 'owner' &&
+        pairedExecutionStatus === 'succeeded' &&
+        !pairedSawOutput
+          ? 'failed'
+          : pairedExecutionStatus;
       completePairedExecutionContext({
         taskId: pairedExecutionContext.task.id,
         role: completedRole,
-        status: pairedExecutionStatus,
+        status: effectiveStatus,
         summary: pairedExecutionSummary,
       });
     }
 
     // After owner/reviewer completes, enqueue the next turn so
     // the message loop picks it up without waiting for a new message.
-    if (pairedExecutionContext && pairedExecutionStatus === 'succeeded') {
+    // Skip if owner produced no output — likely interrupted by /stop.
+    if (
+      pairedExecutionContext &&
+      pairedExecutionStatus === 'succeeded' &&
+      pairedSawOutput
+    ) {
       deps.queue.enqueueMessageCheck(chatJid);
     }
   }

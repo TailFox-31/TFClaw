@@ -41,7 +41,7 @@ describe('runClaudeRotationLoop', () => {
       { runId: 'rotate-org-access' },
     );
 
-    expect(outcome).toEqual({ type: 'success' });
+    expect(outcome).toEqual({ type: 'success', sawOutput: true });
     expect(rotateToken).toHaveBeenCalledTimes(1);
     expect(markTokenHealthy).toHaveBeenCalledTimes(1);
   });
