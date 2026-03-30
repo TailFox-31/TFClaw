@@ -668,9 +668,7 @@ function createSchema(database: Database): void {
 
   // Migration: add completion_reason column to paired_tasks if it doesn't exist
   try {
-    database.exec(
-      `ALTER TABLE paired_tasks ADD COLUMN completion_reason TEXT`,
-    );
+    database.exec(`ALTER TABLE paired_tasks ADD COLUMN completion_reason TEXT`);
   } catch {
     /* column already exists */
   }

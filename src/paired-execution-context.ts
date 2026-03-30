@@ -426,6 +426,32 @@ export function completePairedExecutionContext(args: {
         ownerVerdict === 'blocked' ||
         ownerVerdict === 'needs_context'
       ) {
+        // Check deadlock threshold before looping back — prevents
+        // merge_ready ↔ active infinite oscillation.
+        if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
+          if (isArbiterEnabled()) {
+            updatePairedTask(taskId, {
+              status: 'arbiter_requested',
+              arbiter_requested_at: now,
+              updated_at: now,
+            });
+            logger.info(
+              { taskId, ownerVerdict, roundTrips: task.round_trip_count },
+              'Owner finalize loop detected — requesting arbiter',
+            );
+          } else {
+            updatePairedTask(taskId, {
+              status: 'completed',
+              completion_reason: 'escalated',
+              updated_at: now,
+            });
+            logger.info(
+              { taskId, ownerVerdict, roundTrips: task.round_trip_count },
+              'Owner finalize loop detected — escalating to user',
+            );
+          }
+          return;
+        }
         updatePairedTask(taskId, { status: 'active', updated_at: now });
         logger.info(
           {
@@ -444,7 +470,11 @@ export function completePairedExecutionContext(args: {
 
         if (hasNewChanges === false) {
           // No code changes since reviewer approved → finalize complete
-          updatePairedTask(taskId, { status: 'completed', completion_reason: 'done', updated_at: now });
+          updatePairedTask(taskId, {
+            status: 'completed',
+            completion_reason: 'done',
+            updated_at: now,
+          });
           logger.info(
             { taskId, summary: args.summary?.slice(0, 100) },
             'Owner finalized after reviewer approval — task completed',
@@ -575,7 +605,11 @@ export function completePairedExecutionContext(args: {
             'Reviewer blocked/needs_context — requesting arbiter before escalating',
           );
         } else {
-          updatePairedTask(taskId, { status: 'completed', completion_reason: 'escalated', updated_at: now });
+          updatePairedTask(taskId, {
+            status: 'completed',
+            completion_reason: 'escalated',
+            updated_at: now,
+          });
           logger.info(
             { taskId, verdict, summary: args.summary?.slice(0, 100) },
             'Reviewer escalated to user — ping-pong stopped',
@@ -600,7 +634,11 @@ export function completePairedExecutionContext(args: {
               'Deadlock detected — requesting arbiter intervention',
             );
           } else {
-            updatePairedTask(taskId, { status: 'completed', completion_reason: 'escalated', updated_at: now });
+            updatePairedTask(taskId, {
+              status: 'completed',
+              completion_reason: 'escalated',
+              updated_at: now,
+            });
             logger.info(
               { taskId, verdict, roundTrips: task.round_trip_count },
               'Stopped ping-pong — escalating to user (arbiter not configured)',
@@ -632,10 +670,12 @@ export function completePairedExecutionContext(args: {
       case 'proceed':
       case 'revise':
       case 'reset':
-        // Non-escalate: reset counter, continue ping-pong
+        // Non-escalate: resume ping-pong with reduced headroom.
+        // Set to threshold-1 so agents get one more round before
+        // re-triggering the arbiter — prevents infinite arbiter loops.
         updatePairedTask(taskId, {
           status: 'active',
-          round_trip_count: 0,
+          round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),
           arbiter_verdict: arbiterVerdict,
           updated_at: now,
         });
