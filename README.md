@@ -2,13 +2,14 @@
 
 ![Claude Agent SDK](https://img.shields.io/badge/Claude_Agent_SDK-0.2.81-blueviolet)
 ![Codex SDK](https://img.shields.io/badge/Codex_SDK-0.115.0-green)
-![Node](https://img.shields.io/badge/Node-20+-339933?logo=nodedotjs&logoColor=white)
+![Bun](https://img.shields.io/badge/Bun-1.3+-f9f1e1?logo=bun&logoColor=black)
 ![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?logo=discord&logoColor=white)
 
-Dual-agent AI assistant (Claude Code + Codex) over Discord with autonomous paired review.
+MAGI-style multi-agent AI assistant (Claude Code + Codex + Arbiter) over Discord with autonomous paired review and Mixture of Agents.
 
 Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now maintained as EJClaw for personal production use.
 Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros), adapted for EJClaw's Discord and dual-service workflow.
+Arbiter system inspired by [Evangelion MAGI](https://evangelion.fandom.com/wiki/MAGI) consensus architecture.
 
 ## Overview
 
@@ -16,44 +17,55 @@ A single unified service (`ejclaw`) manages three Discord bots in one process:
 
 - **Codex-main** (`@codex`) — Owner agent. Handles user requests, writes code.
 - **Claude** (`@claude`) — Reviewer agent. Critically reviews owner's work, verifies design direction.
-- **Codex-review** (`@codex-review`) — Fallback reviewer. Takes over when Claude hits rate limits (429).
+- **Codex-review** (`@codex-review`) — Arbiter agent. Summoned on-demand to break deadlocks between owner and reviewer.
 
-Owner and reviewer agent types are configurable via `OWNER_AGENT_TYPE` and `REVIEWER_AGENT_TYPE` in `.env`.
+All agent types and models are independently configurable per role via `.env`.
 
-## Paired Review
-
-The core workflow is an autonomous owner-reviewer ping-pong:
+## MAGI 3-Agent System
 
 ```
 User message
   → Owner responds (implementation, answer, etc.)
     → Reviewer auto-triggered (critical review, design check)
       → Verdict:
-          DONE              → Owner gets final turn to finalize → Task completed
-          DONE_WITH_CONCERNS → Owner addresses feedback → Reviewer re-reviews
-          BLOCKED            → Escalate to user (needs decision)
-          NEEDS_CONTEXT      → Escalate to user (missing information)
+          DONE              → Owner finalizes → Task completed
+          DONE_WITH_CONCERNS → Owner addresses feedback → loop
+          BLOCKED/NEEDS_CONTEXT
+            ├─ Arbiter enabled → Arbiter judges → PROCEED/REVISE/RESET/ESCALATE
+            └─ Arbiter disabled → Escalate to user
+      → Deadlock (3+ round trips without progress)
+          → Arbiter summoned → binding verdict → loop resumes
 ```
 
-The system stops autonomously when the reviewer approves or escalates. No manual intervention needed for the happy path.
+### Mixture of Agents (MoA)
+
+When enabled, the arbiter collects opinions from external models (Kimi, GLM, etc.) before rendering its verdict:
+
+```
+Deadlock detected → MoA reference queries (Kimi + GLM, parallel)
+  → Opinions injected into arbiter's prompt
+    → SDK arbiter (subscription-based) aggregates all perspectives
+      → Final verdict: PROCEED / REVISE / RESET / ESCALATE
+```
+
+No extra SDK processes. External references use lightweight API calls (Anthropic-compatible).
 
 ## Features
 
-- **Paired review** — Autonomous owner/reviewer ping-pong with verdict-based control
-- **Container-isolated reviewer** — Reviewer runs in persistent Docker container with read-only source mount (kernel-level write protection)
-- **Post-approval change detection** — Re-triggers review if owner modifies code after reviewer DONE (git tree hash comparison)
-- **Configurable agent types** — Owner and reviewer roles independently set to `claude-code` or `codex`
-- **Reviewer fallback** — Claude 429/exhaustion → automatic handoff to codex-review
-- **Credential proxy** — API keys never exposed to containers, injected via HTTP proxy
-- **Voice transcription** — Groq Whisper (primary) / OpenAI Whisper (fallback), shared file cache with dedup
-- **Bidirectional images** — Receive Discord attachments as multimodal input, send screenshots back
-- **Token rotation** — Claude 429 / usage exhaustion → automatic multi-account rotation
-- **MCP integration** — Memento (persistent memory) + EJClaw host tools (send_message, schedule_task, watch_ci, etc.)
-- **Browser automation** — [gstack browse](https://github.com/garrytan/gstack) skill, headless Chromium daemon
-- **Priority queue** — Per-group serialization, global concurrency limit
-- **Session persistence** — Resume conversations across restarts (separate sessions per role)
+- **MAGI 3-agent system** — Owner/reviewer/arbiter with on-demand deadlock resolution
+- **Mixture of Agents** — External model opinions (Kimi, GLM) enrich arbiter verdicts
+- **Per-role model selection** — `OWNER_MODEL`, `REVIEWER_MODEL`, `ARBITER_MODEL` + effort + fallback toggle
+- **Container-isolated reviewer** — Persistent Docker container with read-only source mount
+- **Global failover** — Account-level Claude failure → all channels switch to codex, auto-recovers
+- **Post-approval change detection** — Re-triggers review if owner modifies code after approval
+- **Voice transcription** — Groq Whisper (primary) / OpenAI Whisper (fallback)
+- **Token rotation** — Multi-account Claude/Codex rotation on rate limits
+- **Kimi usage dashboard** — Coding plan 5h/7d usage displayed alongside Claude/Codex
+- **MCP integration** — Memento (persistent memory) + EJClaw host tools
+- **Session persistence** — Separate sessions per role (owner/reviewer/arbiter)
 - **Scheduled tasks** — Cron/interval/once via MCP tool
 - **Mid-turn steering** — Inject follow-up messages while agent is working
+- **Bun runtime** — Native SQLite (bun:sqlite), fast startup, no native addon builds
 
 ## Architecture
 
@@ -61,27 +73,26 @@ The system stops autonomously when the reviewer approves or escalates. No manual
 Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (host process)
                                           │       │
                                           │       ▼ (auto-trigger)
-                                          └──► Reviewer (Docker container, :ro mount)
+                                          ├──► Reviewer (Docker container, :ro mount)
                                           │       │
                                           │   Verdict routing
-                                          │       ├─ DONE → change detection → Owner finalizes or re-review
-                                          │       ├─ BLOCKED/NEEDS_CONTEXT → User
+                                          │       ├─ DONE → change detection → finalize or re-review
+                                          │       ├─ BLOCKED → Arbiter (if enabled) or User
                                           │       └─ Feedback → Owner (loop)
                                           │
-                                     IPC polling ◄── follow-up messages (mid-turn steering)
+                                          ├──► Arbiter (on-demand, fresh session each time)
+                                          │       │
+                                          │   ┌───┴─── MoA (if enabled) ───┐
+                                          │   │ Kimi API ──► opinion       │
+                                          │   │ GLM API  ──► opinion       │
+                                          │   │ → injected into prompt     │
+                                          │   └────────────────────────────┘
+                                          │       │
+                                          │   PROCEED/REVISE/RESET/ESCALATE
+                                          │
+                                     IPC polling ◄── follow-up messages
                                           │
                                      Router ──► Discord (text, images, files)
-
-Owner (host process):
-  ├── Stable per-channel worktree (session persists across tasks)
-  ├── MCP tools, Bash skills, per-group memory
-  └── Full read-write access
-
-Reviewer (persistent Docker container):
-  ├── Owner workspace mounted read-only (kernel-level protection)
-  ├── Credential proxy (API keys never in container)
-  ├── pnpm store mounted read-only (if applicable)
-  └── tmpfs for test caches (vitest, jest, npm)
 ```
 
 ## Setup
@@ -89,11 +100,11 @@ Reviewer (persistent Docker container):
 ### Prerequisites
 
 - Linux (Ubuntu 22.04+) or macOS
-- Node.js 20+ (24 recommended, fnm for version management)
+- [Bun](https://bun.sh/) 1.3+
 - Docker (required for reviewer container isolation)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
-- Discord bot tokens (3: Claude, Codex-main, Codex-review)
+- Discord bot tokens (3: Claude, Codex-main, Codex-review/Arbiter)
 
 ### Install
 
@@ -113,43 +124,37 @@ All configuration in a single `.env` file:
 # Discord bots (3 tokens for 3 bots)
 DISCORD_BOT_TOKEN=               # Claude bot
 DISCORD_CODEX_BOT_TOKEN=         # Codex-main bot (owner)
-DISCORD_REVIEW_BOT_TOKEN=        # Codex-review bot (fallback reviewer)
+DISCORD_REVIEW_BOT_TOKEN=        # Codex-review bot (arbiter)
 
-# Agent type configuration
+# Agent types
 OWNER_AGENT_TYPE=codex            # codex | claude-code
 REVIEWER_AGENT_TYPE=claude-code   # claude-code | codex
+ARBITER_AGENT_TYPE=codex          # codex | claude-code (optional, enables 3rd agent)
+
+# Per-role model overrides
+OWNER_MODEL=gpt-5.4
+REVIEWER_MODEL=claude-opus-4-6
+ARBITER_MODEL=gpt-5.4
 
 # API keys
 CLAUDE_CODE_OAUTH_TOKEN=          # Claude Code OAuth token
-CLAUDE_CODE_OAUTH_TOKENS=         # Comma-separated tokens for multi-account rotation
-OPENAI_API_KEY=                   # For Codex
+CLAUDE_CODE_OAUTH_TOKENS=         # Comma-separated for multi-account rotation
 GROQ_API_KEY=                     # Voice transcription (Groq Whisper)
 
-# Bot names
-ASSISTANT_NAME=claude             # Claude bot trigger name
-CODEX_ASSISTANT_NAME=codex        # Codex bot trigger name
-```
-
-### Authentication
-
-Multi-account OAuth token rotation is supported via `CLAUDE_CODE_OAUTH_TOKENS` (comma-separated). When one account hits a rate limit, the system automatically rotates to the next.
-
-Token auto-refresh runs on the Claude service only, refreshing access tokens 30 minutes before expiry using rotating refresh tokens from `~/.claude/.credentials.json` (account 0) and `~/.claude-accounts/{n}/.credentials.json` (account 1+). Generate tokens with `claude setup-token` (account 0) or `CLAUDE_CONFIG_DIR=~/.claude-accounts/{n} claude setup-token` (account 1+).
-
-### Systemd Service (Linux)
-
-Single unified service:
-
-```bash
-systemctl --user restart ejclaw    # Restart
-systemctl --user status ejclaw     # Check status
-systemctl --user enable ejclaw     # Enable on boot
-journalctl --user -u ejclaw -f     # Follow logs
+# Mixture of Agents (MoA)
+MOA_ENABLED=true
+MOA_REF_MODELS=kimi,glm
+MOA_KIMI_MODEL=kimi-k2.5
+MOA_KIMI_BASE_URL=https://api.kimi.com/coding
+MOA_KIMI_API_KEY=sk-kimi-xxx
+MOA_KIMI_API_FORMAT=anthropic
+MOA_GLM_MODEL=glm-5.1
+MOA_GLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
+MOA_GLM_API_KEY=xxx
+MOA_GLM_API_FORMAT=anthropic
 ```
 
 ### Deploy
-
-Build on server, not locally:
 
 ```bash
 ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && bun run build && bun run build:runners && systemctl --user restart ejclaw'

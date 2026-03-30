@@ -595,7 +595,9 @@ function buildModelConfigSection(): string {
   // MoA status
   const moaConfig = getMoaConfig();
   if (moaConfig.enabled) {
-    const refs = moaConfig.referenceModels.map((m) => m.name).join(', ');
+    const refs = moaConfig.referenceModels
+      .map((m) => `${m.name} \`${m.model}\``)
+      .join(', ');
     lines.push(`  **MoA** — ${refs}`);
   }
 

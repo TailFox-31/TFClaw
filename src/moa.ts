@@ -99,9 +99,8 @@ async function queryModel(
         .map((b: { text: string }) => b.text)
         .join('');
     } else {
-      content = (
-        data as { choices?: { message?: { content?: string } }[] }
-      ).choices?.[0]?.message?.content;
+      content = (data as { choices?: { message?: { content?: string } }[] })
+        .choices?.[0]?.message?.content;
     }
 
     if (!content) throw new Error('Empty response from model');
