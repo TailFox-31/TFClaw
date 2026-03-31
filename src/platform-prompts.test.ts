@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AGENT_LANGUAGE } from './config.js';
 import {
   getPairedRoomPromptPath,
   getPlatformPromptPath,
@@ -54,7 +55,10 @@ describe('platform-prompts', () => {
     expect(getPairedRoomPromptPath('claude-code')).toBe(
       path.join(promptsDir, 'claude-paired-room.md'),
     );
-    expect(readPairedRoomPrompt('claude-code')).toBe('Claude paired prompt');
+    const expected = AGENT_LANGUAGE
+      ? `Claude paired prompt\n\n## Language\n\nAlways respond in ${AGENT_LANGUAGE}.`
+      : 'Claude paired prompt';
+    expect(readPairedRoomPrompt('claude-code')).toBe(expected);
   });
 
   it('maps Codex paired-room prompts to the shared reviewer prompt while preserving failover identity wording', () => {
