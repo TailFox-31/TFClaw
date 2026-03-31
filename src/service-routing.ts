@@ -12,6 +12,7 @@ import {
 import {
   clearChannelOwnerLease,
   getAllChannelOwnerLeases,
+  getEffectiveRoomMode,
   getRegisteredAgentTypesForJid,
   setChannelOwnerLease,
   type ChannelOwnerLeaseRow,
@@ -58,11 +59,17 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
   const types = getRegisteredAgentTypesForJid(chatJid);
   const hasClaude = types.includes('claude-code');
   const hasCodex = types.includes('codex');
+  const roomMode = getEffectiveRoomMode(chatJid);
 
-  if (hasClaude && hasCodex) {
-    // Owner/reviewer service IDs derived from OWNER_AGENT_TYPE / REVIEWER_AGENT_TYPE env vars
+  if (roomMode === 'tribunal') {
     const ownerServiceId =
-      OWNER_AGENT_TYPE === 'codex' ? CODEX_MAIN_SERVICE_ID : CLAUDE_SERVICE_ID;
+      hasClaude && hasCodex
+        ? OWNER_AGENT_TYPE === 'codex'
+          ? CODEX_MAIN_SERVICE_ID
+          : CLAUDE_SERVICE_ID
+        : hasCodex
+          ? CODEX_MAIN_SERVICE_ID
+          : CLAUDE_SERVICE_ID;
     return {
       chat_jid: chatJid,
       owner_service_id: ownerServiceId,

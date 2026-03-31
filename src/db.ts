@@ -1979,8 +1979,7 @@ export function getEffectiveRoomMode(chatJid: string): RoomMode {
 }
 
 export function isPairedRoomJid(jid: string): boolean {
-  const types = getRegisteredAgentTypesForJid(jid);
-  return types.includes('claude-code') && types.includes('codex');
+  return getEffectiveRoomMode(jid) === 'tribunal';
 }
 
 // --- Paired task/project/workspace state ---

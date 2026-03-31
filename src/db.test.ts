@@ -806,7 +806,7 @@ describe('paired room registration', () => {
     expect(isPairedRoomJid('dc:solo')).toBe(false);
   });
 
-  it('falls back to legacy paired-room inference when no explicit room mode exists', () => {
+  it('falls back to inferred room mode when no explicit room mode exists', () => {
     setRegisteredGroup('dc:legacy-paired', {
       name: 'Legacy Paired Claude',
       folder: 'legacy-paired-claude',
@@ -823,12 +823,11 @@ describe('paired room registration', () => {
     });
 
     expect(getExplicitRoomMode('dc:legacy-paired')).toBeUndefined();
-    expect(getEffectiveRoomMode('dc:legacy-paired')).toBe(
-      isPairedRoomJid('dc:legacy-paired') ? 'tribunal' : 'single',
-    );
+    expect(getEffectiveRoomMode('dc:legacy-paired')).toBe('tribunal');
+    expect(isPairedRoomJid('dc:legacy-paired')).toBe(true);
   });
 
-  it('lets explicit single override dual registration without changing legacy paired inference yet', () => {
+  it('lets explicit single override dual registration for paired-room checks', () => {
     setRegisteredGroup('dc:explicit-single', {
       name: 'Explicit Single Claude',
       folder: 'explicit-single-claude',
@@ -848,7 +847,7 @@ describe('paired room registration', () => {
 
     expect(getExplicitRoomMode('dc:explicit-single')).toBe('single');
     expect(getEffectiveRoomMode('dc:explicit-single')).toBe('single');
-    expect(isPairedRoomJid('dc:explicit-single')).toBe(true);
+    expect(isPairedRoomJid('dc:explicit-single')).toBe(false);
   });
 
   it('lets explicit tribunal override solo fallback and clears back to inferred mode', () => {
@@ -866,11 +865,13 @@ describe('paired room registration', () => {
 
     expect(getExplicitRoomMode('dc:explicit-tribunal')).toBe('tribunal');
     expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('tribunal');
+    expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(true);
 
     clearExplicitRoomMode('dc:explicit-tribunal');
 
     expect(getExplicitRoomMode('dc:explicit-tribunal')).toBeUndefined();
     expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('single');
+    expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(false);
   });
 });
 
