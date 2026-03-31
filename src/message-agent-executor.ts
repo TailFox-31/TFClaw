@@ -295,7 +295,8 @@ export async function runAgentForGroup(
       reason === '429' ||
       reason === 'usage-exhausted' ||
       reason === 'auth-expired' ||
-      reason === 'org-access-denied'
+      reason === 'org-access-denied' ||
+      reason === 'session-failure'
     );
   };
 
@@ -781,7 +782,7 @@ export async function runAgentForGroup(
         log.error(
           'Retryable Claude session failure persisted after fresh retry',
         );
-        return 'error';
+        return maybeHandoffAfterError('session-failure', primaryAttempt);
       }
     }
 
