@@ -316,6 +316,16 @@ async function checkAndRefreshAll(): Promise<void> {
   }
 
   if (anyRefreshed) {
+    // Sync refreshed tokens to process.env so docker exec picks them up
+    const refreshedTokens = getAllTokens();
+    if (refreshedTokens.length > 0) {
+      process.env.CLAUDE_CODE_OAUTH_TOKEN = refreshedTokens[0].token;
+      if (refreshedTokens.length > 1) {
+        process.env.CLAUDE_CODE_OAUTH_TOKENS = refreshedTokens
+          .map((t) => t.token)
+          .join(',');
+      }
+    }
     updateEnvTokens();
     if (onTokenRefreshedCallback) {
       try {
