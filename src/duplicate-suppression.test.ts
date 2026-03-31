@@ -7,11 +7,11 @@ import {
   createProducedWorkItem,
   getOpenWorkItem,
   setRegisteredGroup,
-  isPairedRoomJid,
   getLastBotFinalMessage,
   markWorkItemDelivered,
 } from './db.js';
 import { normalizeMessageForDedupe } from './router.js';
+import { hasReviewerLease } from './service-routing.js';
 import { isDuplicateOfLastBotFinal } from './message-runtime.js';
 
 beforeEach(() => {
@@ -52,7 +52,7 @@ const setupChat = (jid: string) => {
   );
 };
 
-describe('isPairedRoomJid', () => {
+describe('hasReviewerLease', () => {
   it('returns true when both claude-code and codex are registered', () => {
     const jid = 'dc:paired-room';
 
@@ -72,7 +72,7 @@ describe('isPairedRoomJid', () => {
       agentType: 'codex',
     });
 
-    expect(isPairedRoomJid(jid)).toBe(true);
+    expect(hasReviewerLease(jid)).toBe(true);
   });
 
   it('returns false when only claude-code is registered', () => {
@@ -86,7 +86,7 @@ describe('isPairedRoomJid', () => {
       agentType: 'claude-code',
     });
 
-    expect(isPairedRoomJid(jid)).toBe(false);
+    expect(hasReviewerLease(jid)).toBe(false);
   });
 
   it('returns false when only codex is registered', () => {
@@ -100,7 +100,7 @@ describe('isPairedRoomJid', () => {
       agentType: 'codex',
     });
 
-    expect(isPairedRoomJid(jid)).toBe(false);
+    expect(hasReviewerLease(jid)).toBe(false);
   });
 });
 
@@ -209,7 +209,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     );
 
     // Verify it's a paired room
-    expect(isPairedRoomJid(jid)).toBe(true);
+    expect(hasReviewerLease(jid)).toBe(true);
 
     // Verify duplicate detection works via the actual runtime function
     expect(
@@ -246,7 +246,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     );
 
     // Verify it's NOT a paired room
-    expect(isPairedRoomJid(jid)).toBe(false);
+    expect(hasReviewerLease(jid)).toBe(false);
 
     // Duplicate check should be bypassed (return false)
     expect(isDuplicateOfLastBotFinal(jid, 'DONE — Task completed')).toBe(false);

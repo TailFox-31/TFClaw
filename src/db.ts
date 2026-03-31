@@ -1974,7 +1974,12 @@ export function inferRoomModeFromRegisteredAgentTypes(
   return types.has('claude-code') && types.has('codex') ? 'tribunal' : 'single';
 }
 
-export function inferRoomModeForJid(jid: string): RoomMode {
+/**
+ * Internal registration/backfill helper.
+ * This infers the stored room mode from current registrations and must not be
+ * treated as runtime source-of-truth by callers.
+ */
+function inferStoredRoomModeForJid(jid: string): RoomMode {
   return inferRoomModeFromRegisteredAgentTypes(
     getRegisteredAgentTypesForJid(jid),
   );
@@ -2022,7 +2027,7 @@ function upsertStoredRoomMode(
 }
 
 function syncInferredRoomModeForJid(chatJid: string): void {
-  upsertStoredRoomMode(chatJid, inferRoomModeForJid(chatJid), 'inferred');
+  upsertStoredRoomMode(chatJid, inferStoredRoomModeForJid(chatJid), 'inferred');
 }
 
 export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {
@@ -2068,10 +2073,6 @@ export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
     )
     ? 'tribunal'
     : 'single';
-}
-
-export function isPairedRoomJid(jid: string): boolean {
-  return getEffectiveRuntimeRoomMode(jid) === 'tribunal';
 }
 
 function backfillStoredRoomModes(database: Database): void {

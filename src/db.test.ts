@@ -35,7 +35,6 @@ import {
   getPairedTaskById,
   getPairedWorkspace,
   getRouterStateForService,
-  isPairedRoomJid,
   getSession,
   getTaskById,
   listPairedWorkspacesForTask,
@@ -796,7 +795,7 @@ describe('paired room registration', () => {
     ]);
     expect(getExplicitRoomMode('dc:123')).toBeUndefined();
     expect(getEffectiveRoomMode('dc:123')).toBe('tribunal');
-    expect(isPairedRoomJid('dc:123')).toBe(true);
+    expect(getEffectiveRuntimeRoomMode('dc:123')).toBe('tribunal');
   });
 
   it('does not mark solo rooms as paired', () => {
@@ -809,7 +808,7 @@ describe('paired room registration', () => {
     });
 
     expect(getRegisteredAgentTypesForJid('dc:solo')).toEqual(['claude-code']);
-    expect(isPairedRoomJid('dc:solo')).toBe(false);
+    expect(getEffectiveRuntimeRoomMode('dc:solo')).toBe('single');
   });
 
   it('keeps inferred room mode available when no explicit override exists', () => {
@@ -831,7 +830,6 @@ describe('paired room registration', () => {
     expect(getExplicitRoomMode('dc:legacy-paired')).toBeUndefined();
     expect(getEffectiveRoomMode('dc:legacy-paired')).toBe('tribunal');
     expect(getEffectiveRuntimeRoomMode('dc:legacy-paired')).toBe('tribunal');
-    expect(isPairedRoomJid('dc:legacy-paired')).toBe(true);
   });
 
   it('backfills inferred room modes for legacy SQL rows missing room_settings', () => {
@@ -899,7 +897,6 @@ describe('paired room registration', () => {
     expect(getExplicitRoomMode('dc:legacy-sql')).toBeUndefined();
     expect(getEffectiveRoomMode('dc:legacy-sql')).toBe('tribunal');
     expect(getEffectiveRuntimeRoomMode('dc:legacy-sql')).toBe('tribunal');
-    expect(isPairedRoomJid('dc:legacy-sql')).toBe(true);
   });
 
   it('lets explicit single override dual registration for paired-room checks', () => {
@@ -923,7 +920,6 @@ describe('paired room registration', () => {
     expect(getExplicitRoomMode('dc:explicit-single')).toBe('single');
     expect(getEffectiveRoomMode('dc:explicit-single')).toBe('single');
     expect(getEffectiveRuntimeRoomMode('dc:explicit-single')).toBe('single');
-    expect(isPairedRoomJid('dc:explicit-single')).toBe(false);
   });
 
   it('lets explicit tribunal become runnable when the configured reviewer can run on the solo registration', () => {
@@ -944,14 +940,12 @@ describe('paired room registration', () => {
     expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe(
       'tribunal',
     );
-    expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(true);
 
     clearExplicitRoomMode('dc:explicit-tribunal');
 
     expect(getExplicitRoomMode('dc:explicit-tribunal')).toBeUndefined();
     expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('single');
     expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe('single');
-    expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(false);
   });
 
   it('keeps explicit tribunal non-runnable when the configured reviewer service is unavailable', () => {
@@ -969,7 +963,6 @@ describe('paired room registration', () => {
     expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal-codex')).toBe(
       'single',
     );
-    expect(isPairedRoomJid('dc:explicit-tribunal-codex')).toBe(false);
   });
 });
 
