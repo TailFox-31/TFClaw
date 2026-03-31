@@ -868,7 +868,9 @@ describe('paired room registration', () => {
 
     expect(getExplicitRoomMode('dc:explicit-tribunal')).toBe('tribunal');
     expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('tribunal');
-    expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe('tribunal');
+    expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe(
+      'tribunal',
+    );
     expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(true);
 
     clearExplicitRoomMode('dc:explicit-tribunal');

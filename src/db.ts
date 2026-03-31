@@ -1991,7 +1991,9 @@ function canRunTribunalFromRegisteredAgentTypes(
 
 export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
   return getEffectiveRoomMode(chatJid) === 'tribunal' &&
-    canRunTribunalFromRegisteredAgentTypes(getRegisteredAgentTypesForJid(chatJid))
+    canRunTribunalFromRegisteredAgentTypes(
+      getRegisteredAgentTypesForJid(chatJid),
+    )
     ? 'tribunal'
     : 'single';
 }

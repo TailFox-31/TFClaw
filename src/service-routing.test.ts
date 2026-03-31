@@ -136,7 +136,9 @@ describe('service-routing global failover', () => {
     });
     setExplicitRoomMode('dc:explicit-tribunal-codex', 'tribunal');
 
-    expect(getEffectiveChannelLease('dc:explicit-tribunal-codex')).toMatchObject({
+    expect(
+      getEffectiveChannelLease('dc:explicit-tribunal-codex'),
+    ).toMatchObject({
       chat_jid: 'dc:explicit-tribunal-codex',
       owner_service_id: 'codex-main',
       reviewer_service_id: null,

@@ -35,12 +35,12 @@ export function buildRoomRoleContext(
     preferredRole && matches[preferredRole]
       ? preferredRole
       : matches.arbiter
-      ? 'arbiter'
-      : matches.owner
-        ? 'owner'
-        : matches.reviewer
-          ? 'reviewer'
-          : null;
+        ? 'arbiter'
+        : matches.owner
+          ? 'owner'
+          : matches.reviewer
+            ? 'reviewer'
+            : null;
 
   if (!role) {
     return undefined;
