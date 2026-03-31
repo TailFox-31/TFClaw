@@ -22,15 +22,15 @@ beforeEach(() => {
 describe('service-routing global failover', () => {
   it('uses codex-review as owner during global failover', () => {
     setRegisteredGroup('dc:paired', {
-      name: 'Paired Room Claude',
-      folder: 'paired-claude',
+      name: 'Paired Room',
+      folder: 'paired-room',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
     setRegisteredGroup('dc:paired', {
-      name: 'Paired Room Codex',
-      folder: 'paired-codex',
+      name: 'Paired Room',
+      folder: 'paired-room',
       trigger: '@Codex',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'codex',
@@ -57,15 +57,15 @@ describe('service-routing global failover', () => {
 
   it('restores default lease after global failover is cleared', () => {
     setRegisteredGroup('dc:paired', {
-      name: 'Paired Room Claude',
-      folder: 'paired-claude',
+      name: 'Paired Room',
+      folder: 'paired-room',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
     setRegisteredGroup('dc:paired', {
-      name: 'Paired Room Codex',
-      folder: 'paired-codex',
+      name: 'Paired Room',
+      folder: 'paired-room',
       trigger: '@Codex',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'codex',
@@ -85,15 +85,15 @@ describe('service-routing global failover', () => {
 
   it('uses explicit single room mode to suppress reviewer lease on dual registration', () => {
     setRegisteredGroup('dc:explicit-single', {
-      name: 'Explicit Single Claude',
-      folder: 'explicit-single-claude',
+      name: 'Explicit Single',
+      folder: 'explicit-single',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
     setRegisteredGroup('dc:explicit-single', {
-      name: 'Explicit Single Codex',
-      folder: 'explicit-single-codex',
+      name: 'Explicit Single',
+      folder: 'explicit-single',
       trigger: '@Codex',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'codex',
