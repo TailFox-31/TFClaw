@@ -64,6 +64,11 @@ cp .env.example .env     # Configure tokens and settings
 bun run deploy           # Or: bun run dev
 ```
 
+## Documentation
+
+- [Architecture](docs/architecture.md) — Data flow, room model, container isolation, key files
+- [Configuration](docs/configuration.md) — Full `.env` reference, debugging paths
+
 ## Development
 
 ```bash
