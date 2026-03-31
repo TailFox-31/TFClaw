@@ -378,12 +378,20 @@ function buildCreateArgs(
     args.push('-e', `SENTRY_AUTH_TOKEN=${process.env.SENTRY_AUTH_TOKEN}`);
   }
 
-  // Extra env overrides from paired-execution-context
+  // Extra env overrides from paired-execution-context.
+  // Model/effort keys are excluded here — they are injected per-exec so the
+  // correct agent-type-specific values are used (claude vs codex).
+  const perExecKeys = new Set([
+    'CLAUDE_MODEL',
+    'CLAUDE_EFFORT',
+    'CODEX_MODEL',
+    'CODEX_EFFORT',
+  ]);
   if (envOverrides) {
     for (const [key, value] of Object.entries(envOverrides)) {
-      // Already set above — skip duplicates
       if (key === 'ANTHROPIC_API_KEY' || key === 'CLAUDE_CODE_OAUTH_TOKEN')
         continue;
+      if (perExecKeys.has(key)) continue;
       if (key === 'EJCLAW_WORK_DIR') {
         args.push('-e', 'EJCLAW_WORK_DIR=/workspace/project');
         continue;
@@ -481,18 +489,16 @@ export async function runReviewerContainer(args: {
     execArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
   }
   const isCodexAgent = (group.agentType || 'claude-code') === 'codex';
+  // Inject only agent-type-appropriate model/effort overrides per exec.
   if (envOverrides) {
-    const modelEnvKeys = ['CLAUDE_MODEL', 'CLAUDE_EFFORT', 'CODEX_MODEL', 'CODEX_EFFORT'];
+    const modelEnvKeys = isCodexAgent
+      ? ['CODEX_MODEL', 'CODEX_EFFORT']
+      : ['CLAUDE_MODEL', 'CLAUDE_EFFORT'];
     for (const key of modelEnvKeys) {
       if (envOverrides[key]) {
         execArgs.push('-e', `${key}=${envOverrides[key]}`);
       }
     }
-  }
-  // Clear Claude model/effort for codex runs — container-level env may
-  // have CLAUDE_MODEL baked in from creation, which codex SDK rejects.
-  if (isCodexAgent) {
-    execArgs.push('-e', 'CLAUDE_MODEL=', '-e', 'CLAUDE_EFFORT=');
   }
   if (isCodexAgent) {
     execArgs.push('-e', 'CODEX_HOME=/home/node/.codex');
