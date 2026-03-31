@@ -14,13 +14,15 @@ Tribunal arbiter system inspired by multi-agent consensus architectures.
 
 ## Overview
 
-A single unified service (`ejclaw`) manages three Discord bots in one process:
+A single unified service (`ejclaw`) runs a **Tribunal** of three roles:
 
-- **Codex-main** (`@codex`) — Owner agent. Handles user requests, writes code.
-- **Claude** (`@claude`) — Reviewer agent. Critically reviews owner's work, verifies design direction.
-- **Codex-review** (`@codex-review`) — Arbiter agent. Summoned on-demand to break deadlocks between owner and reviewer.
+| Role | Purpose | Default |
+|------|---------|---------|
+| **Owner** | Handles user requests, writes code | Codex (`@codex`) |
+| **Reviewer** | Critically reviews owner's work, verifies design direction | Claude Code (`@claude`) |
+| **Arbiter** | On-demand deadlock breaker between owner and reviewer | Codex (`@codex-review`) |
 
-All agent types and models are independently configurable per role via `.env`.
+Each role's agent type and model are independently configurable via `.env` (`OWNER_AGENT_TYPE`, `REVIEWER_AGENT_TYPE`, `ARBITER_AGENT_TYPE`, `*_MODEL`). Three Discord bots provide the identity layer — which bot speaks is determined by the active role, not hardcoded.
 
 ## Room Assignment Model
 
@@ -60,22 +62,22 @@ User message
 
 ### Mixture of Agents (MoA)
 
-When enabled, the arbiter collects opinions from external models (Kimi, GLM, etc.) before rendering its verdict:
+When enabled, the arbiter collects opinions from configurable external reference models before rendering its verdict:
 
 ```
-Deadlock detected → MoA reference queries (Kimi + GLM, parallel)
+Deadlock detected → MoA reference queries (parallel, configurable via MOA_REF_MODELS)
   → Opinions injected into arbiter's prompt
-    → SDK arbiter (subscription-based) aggregates all perspectives
+    → Arbiter aggregates all perspectives
       → Final verdict: PROCEED / REVISE / RESET / ESCALATE
 ```
 
-No extra SDK processes. External references use lightweight API calls (Anthropic-compatible).
+No extra SDK processes. External references use lightweight OpenAI/Anthropic-compatible API calls.
 
 ## Features
 
 - **Tribunal 3-agent system** — Owner/reviewer/arbiter with on-demand deadlock resolution
 - **Discord-independent communication** — Agent-to-agent data flows directly via DB, Discord is display-only
-- **Mixture of Agents** — External model opinions (Kimi, GLM) enrich arbiter verdicts
+- **Mixture of Agents** — Configurable external reference models enrich arbiter verdicts
 - **Per-role model selection** — `OWNER_MODEL`, `REVIEWER_MODEL`, `ARBITER_MODEL` + effort + fallback toggle
 - **Container-isolated reviewer** — Persistent Docker container with read-only source mount
 - **Global failover** — Account-level Claude failure → all channels switch to codex, auto-recovers
@@ -107,8 +109,8 @@ Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (ho
                                           ├──► Arbiter (on-demand, fresh session each time)
                                           │       │
                                           │   ┌───┴─── MoA (if enabled) ───┐
-                                          │   │ Kimi API ──► opinion       │
-                                          │   │ GLM API  ──► opinion       │
+                                          │   │ Ref model A ──► opinion    │
+                                          │   │ Ref model B ──► opinion    │
                                           │   │ → injected into prompt     │
                                           │   └────────────────────────────┘
                                           │       │

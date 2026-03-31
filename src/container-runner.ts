@@ -484,7 +484,11 @@ export async function runReviewerContainer(args: {
       }
     }
   }
-  execArgs.push(containerName, 'bun', '/app/dist/index.js');
+  const isCodexAgent = (group.agentType || 'claude-code') === 'codex';
+  const runnerPath = isCodexAgent
+    ? '/app/codex/dist/index.js'
+    : '/app/agent/dist/index.js';
+  execArgs.push(containerName, 'bun', runnerPath);
 
   return new Promise<AgentOutput>((resolve) => {
     const proc = spawn(CONTAINER_RUNTIME_BIN, execArgs, {
