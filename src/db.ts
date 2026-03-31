@@ -9,6 +9,7 @@ import {
   CODEX_REVIEW_SERVICE_ID,
   DATA_DIR,
   normalizeServiceId,
+  REVIEWER_AGENT_TYPE,
   SERVICE_ID,
   SERVICE_SESSION_SCOPE,
   STORE_DIR,
@@ -1978,9 +1979,27 @@ export function getEffectiveRoomMode(chatJid: string): RoomMode {
   return getExplicitRoomMode(chatJid) ?? inferRoomModeForJid(chatJid);
 }
 
+function canRunTribunalFromRegisteredAgentTypes(
+  agentTypes: readonly AgentType[],
+): boolean {
+  const types = new Set(agentTypes);
+  if (types.size === 0) return false;
+  return REVIEWER_AGENT_TYPE === 'claude-code'
+    ? types.has('claude-code')
+    : types.has('codex');
+}
+
+export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
+  return getEffectiveRoomMode(chatJid) === 'tribunal' &&
+    canRunTribunalFromRegisteredAgentTypes(
+      getRegisteredAgentTypesForJid(chatJid),
+    )
+    ? 'tribunal'
+    : 'single';
+}
+
 export function isPairedRoomJid(jid: string): boolean {
-  const types = getRegisteredAgentTypesForJid(jid);
-  return types.includes('claude-code') && types.includes('codex');
+  return getEffectiveRuntimeRoomMode(jid) === 'tribunal';
 }
 
 // --- Paired task/project/workspace state ---

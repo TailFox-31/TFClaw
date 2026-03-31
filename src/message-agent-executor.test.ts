@@ -338,6 +338,60 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
+  it('preserves reviewer role metadata for same-service review turns', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'paired-task-review',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-29T00:00:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-29T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-same-service-reviewer',
+    });
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        roomRoleContext: {
+          serviceId: 'claude',
+          role: 'reviewer',
+          ownerServiceId: 'claude',
+          reviewerServiceId: 'claude',
+          failoverOwner: false,
+        },
+      }),
+      expect.any(Function),
+      undefined,
+      undefined,
+    );
+  });
+
   it('allows silent reviewer outputs', async () => {
     const group = { ...makeGroup(), folder: 'test-group', workDir: '/repo' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({

@@ -172,6 +172,7 @@ export async function runAgentForGroup(
   const roomRoleContext = buildRoomRoleContext(
     currentLease,
     effectiveServiceId,
+    activeRole,
   );
   const pairedExecutionContext = preparePairedExecutionContext({
     group,

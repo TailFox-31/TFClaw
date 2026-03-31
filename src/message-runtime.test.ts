@@ -180,6 +180,7 @@ import * as db from './db.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import { createMessageRuntime } from './message-runtime.js';
 import * as config from './config.js';
+import * as serviceRouting from './service-routing.js';
 import type { Channel, RegisteredGroup } from './types.js';
 
 function makeGroup(agentType: 'claude-code' | 'codex'): RegisteredGroup {
@@ -867,6 +868,228 @@ describe('createMessageRuntime', () => {
       chatJid,
       'arbiter 확인 완료',
     );
+  });
+
+  it('does not fabricate owner labels from same-service raw bot history in paired turn prompts', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+    const channel: Channel = {
+      ...makeChannel(chatJid),
+      isOwnMessage: vi.fn((msg) => msg.sender === 'shared-bot@test'),
+    };
+
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: chatJid,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-same-service',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'in_review',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([]);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '계속 진행해줘',
+        timestamp: '2026-03-30T00:00:01.000Z',
+        is_bot_message: false,
+      },
+      {
+        id: 'bot-1',
+        chat_jid: chatJid,
+        sender: 'shared-bot@test',
+        sender_name: 'Shared Bot',
+        content: 'reviewer-like reply',
+        timestamp: '2026-03-30T00:00:02.000Z',
+        is_bot_message: true,
+      },
+    ] as any);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain(
+          '<message sender="Shared Bot" time="30 Mar 09:00">reviewer-like reply</message>',
+        );
+        expect(input.prompt).not.toContain(
+          '<message sender="owner" time="30 Mar 09:00">reviewer-like reply</message>',
+        );
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '같은 서비스 턴 확인',
+          newSessionId: 'session-same-service-fallback',
+        });
+        return {
+          status: 'success',
+          result: '같은 서비스 턴 확인',
+          newSessionId: 'session-same-service-fallback',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'Asia/Seoul',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-same-service-raw-history',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fabricate owner labels from same-service raw bot history in arbiter prompts', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const channel: Channel = {
+      ...makeChannel(chatJid),
+      isOwnMessage: vi.fn((msg) => msg.sender === 'shared-bot@test'),
+    };
+
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: chatJid,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-same-service-arbiter',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 2,
+      status: 'arbiter_requested',
+      arbiter_verdict: null,
+      arbiter_requested_at: '2026-03-30T00:00:10.000Z',
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:10.000Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([]);
+    vi.mocked(db.getRecentChatMessages).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '둘 중 누가 맞는지 판단해줘',
+        timestamp: '2026-03-30T00:00:01.000Z',
+        is_bot_message: false,
+      },
+      {
+        id: 'bot-1',
+        chat_jid: chatJid,
+        sender: 'shared-bot@test',
+        sender_name: 'Shared Bot',
+        content: 'reviewer-like reply',
+        timestamp: '2026-03-30T00:00:02.000Z',
+        is_bot_message: true,
+      },
+    ] as any);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain(
+          '<message sender="Shared Bot" time="30 Mar 09:00">reviewer-like reply</message>',
+        );
+        expect(input.prompt).not.toContain(
+          '<message sender="owner" time="30 Mar 09:00">reviewer-like reply</message>',
+        );
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '중재 문맥 확인',
+          newSessionId: 'session-same-service-arbiter',
+        });
+        return {
+          status: 'success',
+          result: '중재 문맥 확인',
+          newSessionId: 'session-same-service-arbiter',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'Asia/Seoul',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-same-service-arbiter-fallback',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
   });
 
   it('allows follow-up messages without a trigger after a visible reply in non-main groups', async () => {
