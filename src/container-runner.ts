@@ -322,7 +322,8 @@ export function buildReviewerMounts(
   });
 
   // Codex OAuth: mount host's ~/.codex (read-only) so codex-runner can authenticate
-  const hostCodexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const hostCodexHome =
+    process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
   if (fs.existsSync(hostCodexHome)) {
     mounts.push({
       hostPath: hostCodexHome,
@@ -479,14 +480,11 @@ export async function runReviewerContainer(args: {
       '';
     execArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
   }
-  // Inject model/effort overrides at exec-time so per-role config
-  // takes effect even with persistent containers.
-  const modelEnvKeys = [
-    'CLAUDE_MODEL',
-    'CLAUDE_EFFORT',
-    'CODEX_MODEL',
-    'CODEX_EFFORT',
-  ];
+  const isCodexAgent = (group.agentType || 'claude-code') === 'codex';
+  // Inject model/effort overrides matching the active agent type.
+  const modelEnvKeys = isCodexAgent
+    ? ['CODEX_MODEL', 'CODEX_EFFORT']
+    : ['CLAUDE_MODEL', 'CLAUDE_EFFORT', 'CODEX_MODEL', 'CODEX_EFFORT'];
   if (envOverrides) {
     for (const key of modelEnvKeys) {
       if (envOverrides[key]) {
@@ -494,7 +492,6 @@ export async function runReviewerContainer(args: {
       }
     }
   }
-  const isCodexAgent = (group.agentType || 'claude-code') === 'codex';
   if (isCodexAgent) {
     execArgs.push('-e', 'CODEX_HOME=/home/node/.codex');
   }
