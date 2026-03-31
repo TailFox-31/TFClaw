@@ -512,7 +512,9 @@ export async function runReviewerContainer(args: {
     }
   }
   if (isCodexAgent) {
-    execArgs.push('-e', 'CODEX_HOME=/home/node/.codex');
+    // Use session-local .codex dir (contains AGENTS.md with role prompts)
+    // instead of the host-mounted ~/.codex (which has owner-only config).
+    execArgs.push('-e', 'CODEX_HOME=/home/node/.claude/.codex');
   }
   const runnerPath = isCodexAgent
     ? '/app/codex/dist/index.js'
