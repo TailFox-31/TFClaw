@@ -321,6 +321,16 @@ export function buildReviewerMounts(
     readonly: false,
   });
 
+  // Codex OAuth: mount host's ~/.codex (read-only) so codex-runner can authenticate
+  const hostCodexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  if (fs.existsSync(hostCodexHome)) {
+    mounts.push({
+      hostPath: hostCodexHome,
+      containerPath: '/home/node/.codex',
+      readonly: true,
+    });
+  }
+
   return mounts;
 }
 
@@ -485,6 +495,9 @@ export async function runReviewerContainer(args: {
     }
   }
   const isCodexAgent = (group.agentType || 'claude-code') === 'codex';
+  if (isCodexAgent) {
+    execArgs.push('-e', 'CODEX_HOME=/home/node/.codex');
+  }
   const runnerPath = isCodexAgent
     ? '/app/codex/dist/index.js'
     : '/app/agent/dist/index.js';
