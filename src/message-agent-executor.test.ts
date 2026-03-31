@@ -70,14 +70,19 @@ vi.mock('./service-routing.js', () => ({
   })),
 }));
 
-vi.mock('./logger.js', () => ({
-  logger: {
+vi.mock('./logger.js', () => {
+  const mockLogger = {
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
-  },
-}));
+    child: (_bindings?: Record<string, unknown>) => mockLogger,
+  };
+  return {
+    logger: mockLogger,
+    createScopedLogger: (_bindings?: Record<string, unknown>) => mockLogger,
+  };
+});
 
 vi.mock('./agent-error-detection.js', async (importOriginal) => {
   const actual =

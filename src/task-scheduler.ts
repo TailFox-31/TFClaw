@@ -25,7 +25,7 @@ import {
   resolveGroupIpcPath,
   resolveTaskRuntimeIpcPath,
 } from './group-folder.js';
-import { logger } from './logger.js';
+import { createScopedLogger, logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import { runClaudeRotationLoop } from './provider-retry.js';
 import {
@@ -274,11 +274,15 @@ async function runTask(
     });
     return;
   }
+  const log = createScopedLogger({
+    taskId: task.id,
+    chatJid: task.chat_jid,
+    groupName: context.group.name,
+    groupFolder: task.group_folder,
+    runtimeTaskId: context.runtimeTaskId,
+  });
 
-  logger.info(
-    { taskId: task.id, group: task.group_folder },
-    'Running scheduled task',
-  );
+  log.info('Running scheduled task');
 
   // Update tasks snapshot for agent to read (filtered by group)
   writeTaskSnapshotForGroup(
@@ -360,12 +364,8 @@ async function runTask(
             typeof streamedOutput.result === 'string' &&
             streamedOutput.status === 'success'
           ) {
-            logger.warn(
+            log.warn(
               {
-                taskId: task.id,
-                taskChatJid: task.chat_jid,
-                group: context.group.name,
-                groupFolder: task.group_folder,
                 reason: evaluation.newTrigger.reason,
                 resultPreview: streamedOutput.result.slice(0, 120),
               },
@@ -375,12 +375,8 @@ async function runTask(
             evaluation.newTrigger &&
             typeof streamedOutput.error === 'string'
           ) {
-            logger.warn(
+            log.warn(
               {
-                taskId: task.id,
-                taskChatJid: task.chat_jid,
-                group: context.group.name,
-                groupFolder: task.group_folder,
                 reason: evaluation.newTrigger.reason,
                 errorPreview: streamedOutput.error.slice(0, 120),
               },
@@ -486,11 +482,8 @@ async function runTask(
         getCodexAccountCount() > 1 &&
         rotateCodexToken(lastRotationMessage)
       ) {
-        logger.info(
+        log.info(
           {
-            taskId: task.id,
-            group: context.group.name,
-            groupFolder: task.group_folder,
             reason: trigger.reason,
           },
           'Codex account unhealthy, retrying scheduled task with rotated account',
@@ -603,9 +596,8 @@ async function runTask(
       }
     } // end else (non-exhausted path)
 
-    logger.info(
+    log.info(
       {
-        taskId: task.id,
         agentType: context.taskAgentType,
         durationMs: Date.now() - startTime,
       },
@@ -613,7 +605,7 @@ async function runTask(
     );
   } catch (err) {
     error = getErrorMessage(err);
-    logger.error({ taskId: task.id, error }, 'Task failed');
+    log.error({ error }, 'Task failed');
   }
 
   const durationMs = Date.now() - startTime;
@@ -622,10 +614,7 @@ async function runTask(
 
   if (!currentTask) {
     await statusTracker.update('completed');
-    logger.debug(
-      { taskId: task.id },
-      'Task deleted during execution, skipping persistence',
-    );
+    log.debug('Task deleted during execution, skipping persistence');
     return;
   }
 
@@ -643,9 +632,8 @@ async function runTask(
       if (trigger.shouldRotate) {
         const rotated = getCodexAccountCount() > 1 && rotateCodexToken(error);
         if (rotated) {
-          logger.info(
+          log.info(
             {
-              taskId: task.id,
               agent: effectiveAgentType,
               reason: trigger.reason,
             },
@@ -661,9 +649,8 @@ async function runTask(
       if (trigger.shouldRetry) {
         const rotated = getTokenCount() > 1 && rotateToken(error);
         if (rotated) {
-          logger.info(
+          log.info(
             {
-              taskId: task.id,
               agent: effectiveAgentType,
               reason: trigger.reason,
             },

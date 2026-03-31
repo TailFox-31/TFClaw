@@ -1,6 +1,6 @@
 import { type AgentOutput } from './agent-runner.js';
 import { getAgentOutputText } from './agent-output.js';
-import { logger } from './logger.js';
+import { createScopedLogger, logger } from './logger.js';
 import { formatOutbound } from './router.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
@@ -35,6 +35,7 @@ interface MessageTurnControllerOptions {
 }
 
 export class MessageTurnController {
+  private readonly log: typeof logger;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private visiblePhase: VisiblePhase = 'silent';
   private hadError = false;
@@ -56,21 +57,24 @@ export class MessageTurnController {
   private closeRequested = false;
   private typingActive = false;
 
-  constructor(private readonly options: MessageTurnControllerOptions) {}
+  constructor(private readonly options: MessageTurnControllerOptions) {
+    this.log = createScopedLogger({
+      chatJid: options.chatJid,
+      groupName: options.group.name,
+      groupFolder: options.group.folder,
+      runId: options.runId,
+    });
+  }
 
   private async setTyping(
     isTyping: boolean,
     source: string,
     extra?: Record<string, unknown>,
   ): Promise<void> {
-    logger.debug(
+    this.log.debug(
       {
         transition: isTyping ? 'typing:on' : 'typing:off',
         source,
-        chatJid: this.options.chatJid,
-        group: this.options.group.name,
-        groupFolder: this.options.group.folder,
-        runId: this.options.runId,
         ...extra,
       },
       'Typing indicator transition',
@@ -85,12 +89,8 @@ export class MessageTurnController {
 
   async handleOutput(result: AgentOutput): Promise<void> {
     if (this.terminalObserved()) {
-      logger.info(
+      this.log.info(
         {
-          chatJid: this.options.chatJid,
-          group: this.options.group.name,
-          groupFolder: this.options.group.folder,
-          runId: this.options.runId,
           resultStatus: result.status,
           resultPhase: result.phase,
         },
@@ -108,13 +108,7 @@ export class MessageTurnController {
       this.hadError = true;
       this.options.clearSession();
       this.requestAgentClose('poisoned-session-detected');
-      logger.warn(
-        {
-          chatJid: this.options.chatJid,
-          group: this.options.group.name,
-          groupFolder: this.options.group.folder,
-          runId: this.options.runId,
-        },
+      this.log.warn(
         'Detected poisoned Claude session from streamed output, forcing close',
       );
     }
@@ -123,12 +117,8 @@ export class MessageTurnController {
     const text = raw ? formatOutbound(raw) : null;
 
     if (raw) {
-      logger.info(
+      this.log.info(
         {
-          chatJid: this.options.chatJid,
-          group: this.options.group.name,
-          groupFolder: this.options.group.folder,
-          runId: this.options.runId,
           resultStatus: result.status,
           resultPhase: result.phase,
           progressMessageId: this.progressMessageId,
@@ -265,12 +255,8 @@ export class MessageTurnController {
       await this.finalizeProgressMessage();
       await this.deliverFinalText(text);
     } else if (raw) {
-      logger.info(
+      this.log.info(
         {
-          chatJid: this.options.chatJid,
-          group: this.options.group.name,
-          groupFolder: this.options.group.folder,
-          runId: this.options.runId,
           resultStatus: result.status,
           resultPhase: result.phase,
           progressMessageId: this.progressMessageId,
@@ -312,13 +298,7 @@ export class MessageTurnController {
       !this.hadError &&
       this.latestProgressTextForFinal
     ) {
-      logger.info(
-        {
-          chatJid: this.options.chatJid,
-          group: this.options.group.name,
-          groupFolder: this.options.group.folder,
-          runId: this.options.runId,
-        },
+      this.log.info(
         'Sending a separate final message from the last progress output after agent completion',
       );
       await this.finalizeProgressMessage();
@@ -503,12 +483,8 @@ export class MessageTurnController {
       this.progressEditFailCount = 0;
     } catch (err) {
       this.progressEditFailCount++;
-      logger.warn(
+      this.log.warn(
         {
-          chatJid: this.options.chatJid,
-          group: this.options.group.name,
-          groupFolder: this.options.group.folder,
-          runId: this.options.runId,
           progressMessageId: this.progressMessageId,
           progressEditFailCount: this.progressEditFailCount,
           err,
@@ -539,12 +515,8 @@ export class MessageTurnController {
   }
 
   private async finalizeProgressMessage(): Promise<void> {
-    logger.info(
+    this.log.info(
       {
-        chatJid: this.options.chatJid,
-        group: this.options.group.name,
-        groupFolder: this.options.group.folder,
-        runId: this.options.runId,
         progressMessageId: this.progressMessageId,
         latestProgressText: this.latestProgressText,
       },
@@ -594,12 +566,8 @@ export class MessageTurnController {
     const rendered = this.renderProgressMessage(text);
 
     if (this.progressMessageId && this.options.channel.editMessage) {
-      logger.info(
+      this.log.info(
         {
-          chatJid: this.options.chatJid,
-          group: this.options.group.name,
-          groupFolder: this.options.group.folder,
-          runId: this.options.runId,
           progressMessageId: this.progressMessageId,
           text,
         },
@@ -623,16 +591,7 @@ export class MessageTurnController {
         rendered,
       );
     } catch (err) {
-      logger.warn(
-        {
-          chatJid: this.options.chatJid,
-          group: this.options.group.name,
-          groupFolder: this.options.group.folder,
-          runId: this.options.runId,
-          err,
-        },
-        'Failed to send tracked progress message',
-      );
+      this.log.warn({ err }, 'Failed to send tracked progress message');
       this.latestProgressRendered = rendered;
       await this.options.channel.sendMessage(this.options.chatJid, rendered);
       this.visiblePhase = toVisiblePhase('progress');
@@ -640,12 +599,8 @@ export class MessageTurnController {
     }
 
     if (this.progressMessageId) {
-      logger.info(
+      this.log.info(
         {
-          chatJid: this.options.chatJid,
-          group: this.options.group.name,
-          groupFolder: this.options.group.folder,
-          runId: this.options.runId,
           progressMessageId: this.progressMessageId,
           text,
         },
@@ -692,11 +647,9 @@ export class MessageTurnController {
     }
 
     this.idleTimer = setTimeout(() => {
-      logger.debug(
+      this.log.debug(
         {
-          group: this.options.group.name,
-          chatJid: this.options.chatJid,
-          runId: this.options.runId,
+          idleTimeoutMs: this.options.idleTimeout,
         },
         'Idle timeout, closing agent stdin',
       );

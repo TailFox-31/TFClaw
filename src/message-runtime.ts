@@ -62,9 +62,12 @@ import {
   type PairedTask,
   type PairedTurnOutput,
 } from './types.js';
-import { logger } from './logger.js';
+import { createScopedLogger, logger } from './logger.js';
 import { resolveGroupIpcPath } from './group-folder.js';
-import { getEffectiveChannelLease, hasReviewerLease } from './service-routing.js';
+import {
+  getEffectiveChannelLease,
+  hasReviewerLease,
+} from './service-routing.js';
 
 /**
  * Check if a message is a duplicate of the last bot final message in a paired room.
@@ -637,10 +640,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const { runId } = context;
     const group = deps.getRegisteredGroups()[chatJid];
     if (!group) return true;
+    const log = createScopedLogger({
+      chatJid,
+      groupName: group.name,
+      groupFolder: group.folder,
+      runId,
+    });
 
     const channel = findChannel(deps.channels, chatJid);
     if (!channel) {
-      logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
+      log.warn('No channel owns JID, skipping messages');
       return true;
     }
 
@@ -747,9 +756,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     };
 
     if (hasReviewerLease(chatJid)) {
-      logger.info(
+      log.info(
         {
-          chatJid,
           reviewerChannelName,
           foundChannel: foundReviewerChannel?.name ?? null,
           usingChannel: reviewerChannel.name,
@@ -833,8 +841,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             lastMessage.seq,
           );
         }
-        logger.info(
-          { chatJid, group: group.name, groupFolder: group.folder, runId },
+        log.info(
           'Skipping bot-only collaboration because no recent human message exists',
         );
         return true;
@@ -906,10 +913,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           hasImplicitContinuationWindow: continuationTracker.has,
         })
       ) {
-        logger.info(
-          { chatJid, group: group.name, groupFolder: group.folder, runId },
-          'Skipping queued run because no allowed trigger was found',
-        );
+        log.info('Skipping queued run because no allowed trigger was found');
         return true;
       }
 
@@ -957,13 +961,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         );
       }
 
-      logger.info(
+      log.info(
         {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
           messageCount: missedMessages.length,
+          messageSeqStart: startSeq,
+          messageSeqEnd: endSeq,
         },
         'Dispatching queued messages to agent',
       );
@@ -981,20 +983,21 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       });
 
       if (!deliverySucceeded) {
-        logger.warn(
-          { chatJid, group: group.name, groupFolder: group.folder, runId },
+        log.warn(
+          {
+            messageSeqStart: startSeq,
+            messageSeqEnd: endSeq,
+          },
           'Persisted produced output for delivery retry without rerunning agent',
         );
         return false;
       }
 
-      logger.info(
+      log.info(
         {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
           visiblePhase,
+          messageSeqStart: startSeq,
+          messageSeqEnd: endSeq,
         },
         'Queued run completed successfully',
       );

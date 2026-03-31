@@ -21,7 +21,7 @@ import {
   insertPairedTurnOutput,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
-import { logger } from './logger.js';
+import { createScopedLogger } from './logger.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
 import {
   completePairedExecutionContext,
@@ -193,6 +193,16 @@ export async function runAgentForGroup(
       pairedExecutionContext.envOverrides[effortKey] = roleConfig.effort;
     }
   }
+  const log = createScopedLogger({
+    chatJid,
+    groupName: group.name,
+    groupFolder: group.folder,
+    runId,
+    messageSeqStart: startSeq ?? undefined,
+    messageSeqEnd: endSeq ?? undefined,
+    role: activeRole,
+    serviceId: effectiveServiceId,
+  });
 
   // ── MoA prompt enrichment ─────────────────────────────────────
   // When MoA is enabled and we're in arbiter mode, query external API
@@ -202,11 +212,8 @@ export async function runAgentForGroup(
   let moaEnrichedPrompt = prompt;
   const moaConfig = getMoaConfig();
   if (arbiterMode && moaConfig.enabled && pairedExecutionContext) {
-    logger.info(
+    log.info(
       {
-        chatJid,
-        group: group.name,
-        runId,
         models: moaConfig.referenceModels.map((m) => m.name),
       },
       'MoA: collecting reference opinions before arbiter',
@@ -224,9 +231,8 @@ export async function runAgentForGroup(
     const moaSection = formatMoaReferencesForPrompt(references);
     if (moaSection) {
       moaEnrichedPrompt = prompt + '\n' + moaSection;
-      logger.info(
+      log.info(
         {
-          chatJid,
           successCount: references.filter((r) => !r.error).length,
           totalCount: references.length,
         },
@@ -271,10 +277,7 @@ export async function runAgentForGroup(
     // Per-role fallback toggle
     const roleConfig = getRoleModelConfig(activeRole);
     if (!roleConfig.fallbackEnabled) {
-      logger.info(
-        { chatJid, group: group.name, role: activeRole, reason },
-        'Fallback disabled for role, skipping handoff',
-      );
+      log.info({ reason }, 'Fallback disabled for role, skipping handoff');
       return false;
     }
 
@@ -291,8 +294,8 @@ export async function runAgentForGroup(
         end_seq: endSeq ?? null,
         reason: `arbiter-claude-${reason}`,
       });
-      logger.warn(
-        { chatJid, group: group.name, runId, reason },
+      log.warn(
+        { reason },
         'Claude arbiter unavailable, handed off arbiter turn to codex',
       );
       return true;
@@ -312,8 +315,8 @@ export async function runAgentForGroup(
         end_seq: endSeq ?? null,
         reason: `reviewer-claude-${reason}`,
       });
-      logger.warn(
-        { chatJid, group: group.name, runId, reason },
+      log.warn(
+        { reason },
         'Claude reviewer unavailable, handed off review turn to codex-review',
       );
       return true;
@@ -331,8 +334,8 @@ export async function runAgentForGroup(
       end_seq: endSeq ?? null,
       reason: `claude-${reason}`,
     });
-    logger.warn(
-      { chatJid, group: group.name, runId, reason },
+    log.warn(
+      { reason },
       'Claude unavailable, handed off current turn to codex-review',
     );
     return true;
@@ -352,14 +355,10 @@ export async function runAgentForGroup(
 
   if (pairedExecutionContext?.blockMessage) {
     pairedExecutionSummary = pairedExecutionContext.blockMessage.slice(0, 500);
-    logger.warn(
+    log.warn(
       {
-        chatJid,
-        group: group.name,
-        groupFolder: group.folder,
-        runId,
-        serviceId: roomRoleContext?.serviceId,
-        role: roomRoleContext?.role,
+        roomRoleServiceId: roomRoleContext?.serviceId,
+        roomRole: roomRoleContext?.role,
       },
       'Blocked reviewer execution before review-ready snapshot was available',
     );
@@ -445,11 +444,8 @@ export async function runAgentForGroup(
             typeof outputText === 'string' &&
             output.status === 'success'
           ) {
-            logger.warn(
+            log.warn(
               {
-                chatJid,
-                group: group.name,
-                runId,
                 reason: evaluation.newTrigger.reason,
                 resultPreview: outputText.slice(0, 120),
               },
@@ -459,11 +455,8 @@ export async function runAgentForGroup(
             evaluation.newTrigger &&
             typeof output.error === 'string'
           ) {
-            logger.warn(
+            log.warn(
               {
-                chatJid,
-                group: group.name,
-                runId,
                 reason: evaluation.newTrigger.reason,
                 errorPreview: output.error.slice(0, 120),
               },
@@ -474,11 +467,8 @@ export async function runAgentForGroup(
           }
 
           if (evaluation.suppressedAuthError) {
-            logger.warn(
+            log.warn(
               {
-                chatJid,
-                group: group.name,
-                runId,
                 resultPreview:
                   typeof outputText === 'string'
                     ? outputText.slice(0, 120)
@@ -490,11 +480,8 @@ export async function runAgentForGroup(
           }
 
           if (evaluation.suppressedRetryableSessionFailure) {
-            logger.warn(
+            log.warn(
               {
-                chatJid,
-                group: group.name,
-                runId,
                 resultPreview:
                   typeof outputText === 'string'
                     ? outputText.slice(0, 160)
@@ -518,17 +505,11 @@ export async function runAgentForGroup(
         }
       : undefined;
 
-    logger.info(
-      {
-        chatJid,
-        group: group.name,
-        groupFolder: group.folder,
-        runId,
-        provider: effectiveAgentType,
-        role: activeRole,
-      },
-      `Using provider: ${effectiveAgentType}`,
-    );
+    const providerLog = log.child({
+      provider,
+      agentType: effectiveAgentType,
+    });
+    providerLog.info('Using provider');
 
     try {
       const output = await runAgentProcess(
@@ -547,13 +528,8 @@ export async function runAgentForGroup(
         deps.persistSession(sessionFolder, output.newSessionId);
       }
 
-      logger.info(
+      providerLog.info(
         {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
-          provider,
           status: output.status,
           sawOutput: streamedState.sawOutput,
         },
@@ -595,8 +571,8 @@ export async function runAgentForGroup(
       getCodexAccountCount() > 1 &&
       rotateCodexToken(lastRotationMessage)
     ) {
-      logger.info(
-        { chatJid, group: group.name, runId, reason: trigger.reason },
+      log.info(
+        { reason: trigger.reason },
         'Codex account unhealthy, retrying with rotated account',
       );
 
@@ -611,15 +587,8 @@ export async function runAgentForGroup(
           continue;
         }
 
-        logger.error(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            provider: 'codex',
-            err: retryAttempt.error,
-          },
+        log.error(
+          { provider: 'codex', err: retryAttempt.error },
           'Rotated Codex account also threw',
         );
         return 'error';
@@ -627,14 +596,8 @@ export async function runAgentForGroup(
 
       const retryOutput = retryAttempt.output;
       if (!retryOutput) {
-        logger.error(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            provider: 'codex',
-          },
+        log.error(
+          { provider: 'codex' },
           'Rotated Codex account produced no output object',
         );
         return 'error';
@@ -671,11 +634,8 @@ export async function runAgentForGroup(
           continue;
         }
 
-        logger.error(
+        log.error(
           {
-            group: group.name,
-            chatJid,
-            runId,
             provider: 'codex',
             error: retryOutput.error,
           },
@@ -760,8 +720,7 @@ export async function runAgentForGroup(
 
     if (isRetryableClaudeSessionFailure(primaryAttempt)) {
       deps.clearSession(sessionFolder);
-      logger.warn(
-        { group: group.name, chatJid, runId },
+      log.warn(
         'Cleared poisoned Claude session before visible output, retrying fresh session',
       );
 
@@ -769,13 +728,9 @@ export async function runAgentForGroup(
 
       if (isRetryableClaudeSessionFailure(primaryAttempt)) {
         deps.clearSession(sessionFolder);
-        logger.warn(
-          { group: group.name, chatJid, runId },
-          'Fresh Claude retry also hit a retryable session failure',
-        );
+        log.warn('Fresh Claude retry also hit a retryable session failure');
 
-        logger.error(
-          { group: group.name, chatJid, runId },
+        log.error(
           'Retryable Claude session failure persisted after fresh retry',
         );
         return 'error';
@@ -829,12 +784,8 @@ export async function runAgentForGroup(
         }
       }
 
-      logger.error(
+      log.error(
         {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
           provider,
           err: primaryAttempt.error,
         },
@@ -845,16 +796,7 @@ export async function runAgentForGroup(
 
     const output = primaryAttempt.output;
     if (!output) {
-      logger.error(
-        {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
-          provider,
-        },
-        'Agent produced no output object',
-      );
+      log.error({ provider }, 'Agent produced no output object');
       return 'error';
     }
 
@@ -894,8 +836,8 @@ export async function runAgentForGroup(
       (resetSessionRequested || shouldResetSessionOnAgentFailure(output))
     ) {
       deps.clearSession(sessionFolder);
-      logger.warn(
-        { group: group.name, chatJid, runId, sessionFolder },
+      log.warn(
+        { sessionFolder },
         'Cleared poisoned agent session after unrecoverable error',
       );
     }
@@ -945,11 +887,8 @@ export async function runAgentForGroup(
         }
       }
 
-      logger.error(
+      log.error(
         {
-          group: group.name,
-          chatJid,
-          runId,
           provider,
           error: output.error,
         },
@@ -988,11 +927,8 @@ export async function runAgentForGroup(
       ) {
         return 'success';
       }
-      logger.error(
+      log.error(
         {
-          group: group.name,
-          chatJid,
-          runId,
           reason: primaryAttempt.streamedTriggerReason.reason,
         },
         'Agent trigger detected but could not be resolved',
@@ -1006,8 +942,7 @@ export async function runAgentForGroup(
       primaryAttempt.sawSuccessNullResultWithoutOutput &&
       !primaryAttempt.sawOutput
     ) {
-      logger.error(
-        { group: group.name, chatJid, runId },
+      log.error(
         'Agent returned success with null result and no visible output',
       );
       return 'error';
@@ -1046,8 +981,8 @@ export async function runAgentForGroup(
             pairedFullOutput,
           );
         } catch (err) {
-          logger.warn(
-            { taskId: pairedExecutionContext.task.id, err },
+          log.warn(
+            { pairedTaskId: pairedExecutionContext.task.id, err },
             'Failed to store paired turn output',
           );
         }
