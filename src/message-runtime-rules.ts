@@ -3,10 +3,7 @@ import { filterProcessableMessages } from './bot-message-filter.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isTaskStatusControlMessage } from './task-watch-status.js';
-import {
-  ARBITER_AGENT_TYPE,
-  REVIEWER_AGENT_TYPE,
-} from './config.js';
+import { ARBITER_AGENT_TYPE, REVIEWER_AGENT_TYPE } from './config.js';
 import {
   resolveAgentTypeForRole,
   resolveRoleAgentPlan,
