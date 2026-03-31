@@ -489,6 +489,15 @@ export async function runReviewerContainer(args: {
     execArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
   }
   const isCodexAgent = (group.agentType || 'claude-code') === 'codex';
+  logger.info(
+    {
+      containerName,
+      groupAgentType: group.agentType,
+      isCodexAgent,
+      runnerPath: isCodexAgent ? '/app/codex/dist/index.js' : '/app/agent/dist/index.js',
+    },
+    'Container exec runner selection',
+  );
   // Inject only agent-type-appropriate model/effort overrides per exec.
   if (envOverrides) {
     const modelEnvKeys = isCodexAgent
