@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   _initTestDatabaseFromFile,
+  assignRoom,
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
   createPairedTask,
@@ -771,6 +772,57 @@ describe('registered group isMain', () => {
     expect(claudeGroups['dc:shared']?.name).toBe('Shared Room');
     expect(codexGroups['dc:shared']?.agentType).toBe('codex');
     expect(codexGroups['dc:shared']?.name).toBe('Shared Room');
+  });
+});
+
+describe('room assignment writes', () => {
+  it('assigns a single room with an auto-generated folder', () => {
+    const group = assignRoom('tg:-1001', {
+      name: 'Telegram Dev Team',
+      roomMode: 'single',
+      ownerAgentType: 'claude-code',
+    });
+
+    expect(group).toBeDefined();
+    expect(group!.folder).toMatch(/^grp_telegram_/);
+    expect(group!.agentType).toBe('claude-code');
+    expect(getStoredRoomSettings('tg:-1001')).toMatchObject({
+      chatJid: 'tg:-1001',
+      roomMode: 'single',
+      modeSource: 'explicit',
+      name: 'Telegram Dev Team',
+      ownerAgentType: 'claude-code',
+    });
+    expect(getRegisteredAgentTypesForJid('tg:-1001')).toEqual(['claude-code']);
+  });
+
+  it('materializes tribunal capability rows while serving metadata from room_settings', () => {
+    assignRoom('dc:assigned-room', {
+      name: 'Assigned Room',
+      roomMode: 'tribunal',
+      ownerAgentType: 'codex',
+      folder: 'assigned-room',
+    });
+
+    const allGroups = getAllRegisteredGroups();
+    const claudeGroups = getAllRegisteredGroups('claude-code');
+    const codexGroups = getAllRegisteredGroups('codex');
+
+    expect(allGroups['dc:assigned-room']).toMatchObject({
+      name: 'Assigned Room',
+      folder: 'assigned-room',
+      agentType: 'codex',
+    });
+    expect(claudeGroups['dc:assigned-room']).toMatchObject({
+      name: 'Assigned Room',
+      folder: 'assigned-room',
+      agentType: 'claude-code',
+    });
+    expect(codexGroups['dc:assigned-room']).toMatchObject({
+      name: 'Assigned Room',
+      folder: 'assigned-room',
+      agentType: 'codex',
+    });
   });
 });
 

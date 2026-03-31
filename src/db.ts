@@ -59,6 +59,19 @@ export interface StoredRoomSettings {
   workDir?: string;
 }
 
+export interface AssignRoomInput {
+  name: string;
+  roomMode?: RoomMode;
+  ownerAgentType?: AgentType;
+  folder?: string;
+  trigger?: string;
+  requiresTrigger?: boolean;
+  isMain?: boolean;
+  workDir?: string;
+  addedAt?: string;
+  ownerAgentConfig?: RegisteredGroup['agentConfig'];
+}
+
 interface RoomRegistrationSnapshot {
   name: string;
   folder: string;
@@ -67,6 +80,19 @@ interface RoomRegistrationSnapshot {
   isMain: boolean;
   ownerAgentType: AgentType;
   workDir: string | null;
+}
+
+interface RegisteredGroupDatabaseRow {
+  jid: string;
+  name: string;
+  folder: string;
+  trigger_pattern: string;
+  added_at: string;
+  agent_config: string | null;
+  requires_trigger: number | null;
+  is_main: number | null;
+  agent_type: string | null;
+  work_dir: string | null;
 }
 
 export interface WorkItem {
@@ -1899,53 +1925,66 @@ export function getLastRespondingAgentType(
 
 // --- Registered group accessors ---
 
+function buildRegisteredGroupFromStoredSettings(
+  database: Database,
+  stored: StoredRoomSettings,
+  requestedAgentType?: AgentType,
+): (RegisteredGroup & { jid: string }) | undefined {
+  const capabilityTypes = collectRegisteredAgentTypes(database, stored.chatJid);
+  const resolvedAgentType = requestedAgentType
+    ? capabilityTypes.includes(requestedAgentType)
+      ? requestedAgentType
+      : undefined
+    : stored.ownerAgentType ||
+      (capabilityTypes.length > 0
+        ? inferOwnerAgentTypeFromRegisteredAgentTypes(capabilityTypes)
+        : undefined);
+
+  if (!resolvedAgentType) return undefined;
+  if (!stored.folder || !isValidGroupFolder(stored.folder)) {
+    logger.warn(
+      { jid: stored.chatJid, folder: stored.folder ?? null },
+      'Skipping stored room with invalid folder',
+    );
+    return undefined;
+  }
+
+  const capabilityMetadata = getRegisteredGroupCapabilityMetadata(
+    database,
+    stored.chatJid,
+    resolvedAgentType,
+  );
+
+  return {
+    jid: stored.chatJid,
+    name: stored.name || stored.chatJid,
+    folder: stored.folder,
+    trigger: stored.trigger || `@${ASSISTANT_NAME}`,
+    added_at:
+      capabilityMetadata?.added_at || new Date(0).toISOString(),
+    agentConfig: capabilityMetadata?.agentConfig,
+    requiresTrigger: stored.requiresTrigger,
+    isMain: stored.isMain ? true : undefined,
+    agentType: resolvedAgentType,
+    workDir: stored.workDir,
+  };
+}
+
 export function getRegisteredGroup(
   jid: string,
   agentType?: string,
 ): (RegisteredGroup & { jid: string }) | undefined {
-  const row = (
-    agentType
-      ? db
-          .prepare(
-            'SELECT * FROM registered_groups WHERE jid = ? AND agent_type = ?',
-          )
-          .get(jid, agentType)
-      : db.prepare('SELECT * FROM registered_groups WHERE jid = ?').get(jid)
-  ) as
-    | {
-        jid: string;
-        name: string;
-        folder: string;
-        trigger_pattern: string;
-        added_at: string;
-        agent_config: string | null;
-        requires_trigger: number | null;
-        is_main: number | null;
-        agent_type: string | null;
-        work_dir: string | null;
-      }
-    | undefined;
-  if (!row) return undefined;
-  if (!isValidGroupFolder(row.folder)) {
-    logger.warn(
-      { jid: row.jid, folder: row.folder },
-      'Skipping registered group with invalid folder',
+  const requestedAgentType = normalizeStoredAgentType(agentType);
+  const stored = getStoredRoomSettingsRowFromDatabase(db, jid);
+  if (stored) {
+    const group = buildRegisteredGroupFromStoredSettings(
+      db,
+      stored,
+      requestedAgentType,
     );
-    return undefined;
+    if (group) return group;
   }
-  return {
-    jid: row.jid,
-    name: row.name,
-    folder: row.folder,
-    trigger: row.trigger_pattern,
-    added_at: row.added_at,
-    agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
-    requiresTrigger:
-      row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-    isMain: row.is_main === 1 ? true : undefined,
-    agentType: (row.agent_type as RegisteredGroup['agentType']) || undefined,
-    workDir: row.work_dir || undefined,
-  };
+  return getLegacyRegisteredGroup(db, jid, agentType);
 }
 
 export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
@@ -1978,68 +2017,115 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   tx();
 }
 
+export function assignRoom(
+  chatJid: string,
+  input: AssignRoomInput,
+): (RegisteredGroup & { jid: string }) | undefined {
+  const existing = getStoredRoomSettingsRowFromDatabase(db, chatJid);
+  const roomMode = input.roomMode || existing?.roomMode || 'single';
+  const ownerAgentType =
+    input.ownerAgentType || existing?.ownerAgentType || OWNER_AGENT_TYPE;
+  const folder = resolveAssignedRoomFolder(db, chatJid, input.name, input.folder);
+  const snapshot: RoomRegistrationSnapshot = {
+    name: input.name,
+    folder,
+    triggerPattern:
+      input.trigger || existing?.trigger || `@${ASSISTANT_NAME}`,
+    requiresTrigger: input.requiresTrigger ?? existing?.requiresTrigger ?? true,
+    isMain: input.isMain ?? existing?.isMain ?? false,
+    ownerAgentType,
+    workDir: input.workDir ?? existing?.workDir ?? null,
+  };
+  const now = new Date().toISOString();
+
+  db.transaction(() => {
+    if (existing) {
+      db.prepare(
+        `UPDATE room_settings
+         SET room_mode = ?,
+             mode_source = 'explicit',
+             name = ?,
+             folder = ?,
+             trigger_pattern = ?,
+             requires_trigger = ?,
+             is_main = ?,
+             owner_agent_type = ?,
+             work_dir = ?,
+             updated_at = ?
+         WHERE chat_jid = ?`,
+      ).run(
+        roomMode,
+        snapshot.name,
+        snapshot.folder,
+        snapshot.triggerPattern,
+        snapshot.requiresTrigger ? 1 : 0,
+        snapshot.isMain ? 1 : 0,
+        snapshot.ownerAgentType,
+        snapshot.workDir,
+        now,
+        chatJid,
+      );
+    } else {
+      insertStoredRoomSettings(db, chatJid, roomMode, 'explicit', snapshot);
+    }
+
+    materializeRegisteredGroupsForRoom(
+      db,
+      chatJid,
+      snapshot,
+      roomMode,
+      ownerAgentType,
+      input.ownerAgentConfig,
+      input.addedAt ?? now,
+    );
+  })();
+
+  return getRegisteredGroup(chatJid);
+}
+
 export function updateRegisteredGroupName(jid: string, name: string): void {
+  db.prepare(
+    `UPDATE room_settings
+     SET name = ?, updated_at = ?
+     WHERE chat_jid = ?`,
+  ).run(name, new Date().toISOString(), jid);
   db.prepare('UPDATE registered_groups SET name = ? WHERE jid = ?').run(
     name,
     jid,
   );
-  syncStoredRoomRegistrationSnapshotForJid(jid);
+  if (!getStoredRoomSettingsRowFromDatabase(db, jid)) {
+    syncStoredRoomRegistrationSnapshotForJid(jid);
+  }
 }
 
 export function getAllRegisteredGroups(
   agentTypeFilter?: string,
 ): Record<string, RegisteredGroup> {
-  const rows = (
-    agentTypeFilter
-      ? db
-          .prepare('SELECT * FROM registered_groups WHERE agent_type = ?')
-          .all(agentTypeFilter)
-      : db.prepare('SELECT * FROM registered_groups').all()
-  ) as Array<{
-    jid: string;
-    name: string;
-    folder: string;
-    trigger_pattern: string;
-    added_at: string;
-    agent_config: string | null;
-    requires_trigger: number | null;
-    is_main: number | null;
-    agent_type: string | null;
-    work_dir: string | null;
-  }>;
   const result: Record<string, RegisteredGroup> = {};
-  for (const row of rows) {
-    if (!isValidGroupFolder(row.folder)) {
-      logger.warn(
-        { jid: row.jid, folder: row.folder },
-        'Skipping registered group with invalid folder',
-      );
-      continue;
-    }
-    const group: RegisteredGroup = {
-      name: row.name,
-      folder: row.folder,
-      trigger: row.trigger_pattern,
-      added_at: row.added_at,
-      agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
-      requiresTrigger:
-        row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-      isMain: row.is_main === 1 ? true : undefined,
-      agentType: (row.agent_type as RegisteredGroup['agentType']) || undefined,
-      workDir: row.work_dir || undefined,
-    };
-    // In unified mode (no agentTypeFilter), when the same JID has both
-    // claude-code and codex rows, prefer the codex entry (owner).
-    const existing = result[row.jid];
-    if (existing && !agentTypeFilter) {
-      if (group.agentType === 'codex') {
-        result[row.jid] = group;
-      }
-      // else keep existing (already codex or first-seen)
-    } else {
-      result[row.jid] = group;
+  const requestedAgentType = normalizeStoredAgentType(agentTypeFilter);
+  const storedRows = getStoredRoomRowsFromDatabase(db);
+
+  for (const stored of storedRows) {
+    const group = buildRegisteredGroupFromStoredSettings(
+      db,
+      stored,
+      requestedAgentType,
+    );
+    if (group) {
+      const { jid, ...rest } = group;
+      result[jid] = rest;
     }
   }
+
+  for (const legacyRow of getLegacyRegisteredGroupRows(db, agentTypeFilter)) {
+    if (result[legacyRow.jid]) continue;
+    const group = parseRegisteredGroupRow(legacyRow);
+    if (group) {
+      const { jid, ...rest } = group;
+      result[jid] = rest;
+    }
+  }
+
   return result;
 }
 
@@ -2105,6 +2191,293 @@ function normalizeStoredAgentType(
   return agentType === 'claude-code' || agentType === 'codex'
     ? agentType
     : undefined;
+}
+
+function parseRegisteredGroupRow(
+  row: RegisteredGroupDatabaseRow | undefined,
+): (RegisteredGroup & { jid: string }) | undefined {
+  if (!row) return undefined;
+  if (!isValidGroupFolder(row.folder)) {
+    logger.warn(
+      { jid: row.jid, folder: row.folder },
+      'Skipping registered group with invalid folder',
+    );
+    return undefined;
+  }
+  return {
+    jid: row.jid,
+    name: row.name,
+    folder: row.folder,
+    trigger: row.trigger_pattern,
+    added_at: row.added_at,
+    agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
+    requiresTrigger:
+      row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    isMain: row.is_main === 1 ? true : undefined,
+    agentType: normalizeStoredAgentType(row.agent_type),
+    workDir: row.work_dir || undefined,
+  };
+}
+
+function getLegacyRegisteredGroupRows(
+  database: Database,
+  agentTypeFilter?: string,
+): RegisteredGroupDatabaseRow[] {
+  return (
+    agentTypeFilter
+      ? database
+          .prepare('SELECT * FROM registered_groups WHERE agent_type = ?')
+          .all(agentTypeFilter)
+      : database.prepare('SELECT * FROM registered_groups').all()
+  ) as RegisteredGroupDatabaseRow[];
+}
+
+function getLegacyRegisteredGroup(
+  database: Database,
+  jid: string,
+  agentType?: string,
+): (RegisteredGroup & { jid: string }) | undefined {
+  const row = (
+    agentType
+      ? database
+          .prepare(
+            'SELECT * FROM registered_groups WHERE jid = ? AND agent_type = ?',
+          )
+          .get(jid, agentType)
+      : database.prepare('SELECT * FROM registered_groups WHERE jid = ?').get(jid)
+  ) as RegisteredGroupDatabaseRow | undefined;
+  return parseRegisteredGroupRow(row);
+}
+
+function getRegisteredGroupCapabilityMetadata(
+  database: Database,
+  jid: string,
+  preferredAgentType?: AgentType,
+): Pick<RegisteredGroup, 'added_at' | 'agentConfig'> | undefined {
+  const row = (
+    preferredAgentType
+      ? database
+          .prepare(
+            `SELECT added_at, agent_config
+             FROM registered_groups
+             WHERE jid = ? AND agent_type = ?
+             LIMIT 1`,
+          )
+          .get(jid, preferredAgentType)
+      : database
+          .prepare(
+            `SELECT added_at, agent_config
+             FROM registered_groups
+             WHERE jid = ?
+             ORDER BY CASE WHEN agent_type = ? THEN 0 ELSE 1 END, added_at
+             LIMIT 1`,
+          )
+          .get(jid, OWNER_AGENT_TYPE)
+  ) as { added_at: string; agent_config: string | null } | undefined;
+
+  if (!row) return undefined;
+  return {
+    added_at: row.added_at,
+    agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
+  };
+}
+
+function getStoredRoomRowsFromDatabase(database: Database): StoredRoomSettings[] {
+  return database
+    .prepare(
+      `SELECT chat_jid
+       FROM room_settings
+       ORDER BY chat_jid`,
+    )
+    .all()
+    .map((row) =>
+      getStoredRoomSettingsRowFromDatabase(database, (row as { chat_jid: string }).chat_jid),
+    )
+    .filter((row): row is StoredRoomSettings => Boolean(row));
+}
+
+function detectChannelPrefixForFolder(chatJid: string): string {
+  if (chatJid.startsWith('dc:')) return 'discord';
+  if (chatJid.startsWith('tg:')) return 'telegram';
+  return 'whatsapp';
+}
+
+function slugifyGroupFolderSegment(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+  return slug || 'room';
+}
+
+function collectReservedFolders(
+  database: Database,
+  exceptChatJid?: string,
+): Set<string> {
+  const folders = new Set<string>();
+  const rows = database
+    .prepare(
+      `SELECT folder
+       FROM room_settings
+       WHERE folder IS NOT NULL
+         AND (? IS NULL OR chat_jid != ?)
+       UNION
+       SELECT folder
+       FROM registered_groups
+       WHERE ? IS NULL OR jid != ?`,
+    )
+    .all(exceptChatJid ?? null, exceptChatJid ?? null, exceptChatJid ?? null, exceptChatJid ?? null) as Array<{
+    folder: string | null;
+  }>;
+
+  for (const row of rows) {
+    if (row.folder) folders.add(row.folder);
+  }
+  return folders;
+}
+
+function buildGeneratedRoomFolder(
+  database: Database,
+  chatJid: string,
+  name: string,
+): string {
+  const prefix = detectChannelPrefixForFolder(chatJid);
+  const slug = slugifyGroupFolderSegment(name);
+  const fallback = slugifyGroupFolderSegment(chatJid.replace(/[:@.]/g, '-'));
+  const baseCore = slug || fallback;
+  const maxBaseLength = 64 - (`grp_${prefix}_`.length + 4);
+  const truncatedCore = baseCore.slice(0, Math.max(8, maxBaseLength));
+  const candidateBase = `grp_${prefix}_${truncatedCore}`;
+  const reserved = collectReservedFolders(database, chatJid);
+
+  if (!reserved.has(candidateBase) && isValidGroupFolder(candidateBase)) {
+    return candidateBase;
+  }
+
+  for (let suffix = 2; suffix < 1000; suffix += 1) {
+    const candidate = `${candidateBase.slice(0, Math.max(1, 64 - `${suffix}`.length - 1))}-${suffix}`;
+    if (!reserved.has(candidate) && isValidGroupFolder(candidate)) {
+      return candidate;
+    }
+  }
+
+  throw new Error(`Unable to generate unique group folder for ${chatJid}`);
+}
+
+function resolveAssignedRoomFolder(
+  database: Database,
+  chatJid: string,
+  name: string,
+  explicitFolder?: string,
+): string {
+  const reserved = collectReservedFolders(database, chatJid);
+  if (explicitFolder) {
+    if (!isValidGroupFolder(explicitFolder)) {
+      throw new Error(`Invalid group folder "${explicitFolder}" for JID ${chatJid}`);
+    }
+    if (reserved.has(explicitFolder)) {
+      throw new Error(`Group folder "${explicitFolder}" is already assigned`);
+    }
+    return explicitFolder;
+  }
+
+  const existingFolder = getStoredRoomSettingsRowFromDatabase(database, chatJid)?.folder;
+  if (existingFolder) return existingFolder;
+
+  return buildGeneratedRoomFolder(database, chatJid, name);
+}
+
+function getDesiredRegisteredAgentTypes(
+  roomMode: RoomMode,
+  ownerAgentType: AgentType,
+): AgentType[] {
+  const types = new Set<AgentType>([ownerAgentType]);
+  if (roomMode === 'tribunal') {
+    types.add(REVIEWER_AGENT_TYPE);
+  }
+  return [...types];
+}
+
+function materializeRegisteredGroupsForRoom(
+  database: Database,
+  chatJid: string,
+  snapshot: RoomRegistrationSnapshot,
+  roomMode: RoomMode,
+  ownerAgentType: AgentType,
+  ownerAgentConfig?: RegisteredGroup['agentConfig'],
+  addedAt?: string,
+): void {
+  const now = new Date().toISOString();
+  const desiredTypes = getDesiredRegisteredAgentTypes(roomMode, ownerAgentType);
+  const existingRows = database
+    .prepare(
+      `SELECT agent_type, added_at, agent_config
+       FROM registered_groups
+       WHERE jid = ?`,
+    )
+    .all(chatJid) as Array<{
+    agent_type: string | null;
+    added_at: string;
+    agent_config: string | null;
+  }>;
+  const existingByType = new Map<AgentType, { added_at: string; agent_config: string | null }>();
+  for (const row of existingRows) {
+    const agentType = normalizeStoredAgentType(row.agent_type);
+    if (agentType) {
+      existingByType.set(agentType, row);
+    }
+  }
+
+  for (const agentType of desiredTypes) {
+    const existing = existingByType.get(agentType);
+    const agentConfig =
+      agentType === ownerAgentType
+        ? ownerAgentConfig ??
+          (existing?.agent_config ? JSON.parse(existing.agent_config) : undefined)
+        : existing?.agent_config
+          ? JSON.parse(existing.agent_config)
+          : undefined;
+    const rowAddedAt = existing?.added_at ?? addedAt ?? now;
+
+    database
+      .prepare(
+        `INSERT OR REPLACE INTO registered_groups (
+          jid,
+          name,
+          folder,
+          trigger_pattern,
+          added_at,
+          agent_config,
+          requires_trigger,
+          is_main,
+          agent_type,
+          work_dir
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        chatJid,
+        snapshot.name,
+        snapshot.folder,
+        snapshot.triggerPattern,
+        rowAddedAt,
+        agentConfig ? JSON.stringify(agentConfig) : null,
+        snapshot.requiresTrigger ? 1 : 0,
+        snapshot.isMain ? 1 : 0,
+        agentType,
+        snapshot.workDir,
+      );
+  }
+
+  const placeholders = desiredTypes.map(() => '?').join(',');
+  database
+    .prepare(
+      `DELETE FROM registered_groups
+       WHERE jid = ?
+         AND agent_type NOT IN (${placeholders})`,
+    )
+    .run(chatJid, ...desiredTypes);
 }
 
 function getStoredRoomSettingsRowFromDatabase(

@@ -492,6 +492,62 @@ if (allowGenericScheduling) {
 }
 
 server.tool(
+  'assign_room',
+  `Assign or update a room using room-level settings. Main group only.
+
+This is the room-level replacement for legacy register_group. If folder is omitted, the host generates one automatically.`,
+  {
+    jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
+    name: z.string().describe('Display name for the room'),
+    room_mode: z.enum(['single', 'tribunal']).default('single').describe('single=owner only, tribunal=owner/reviewer roles enabled'),
+    owner_agent_type: z.enum(['claude-code', 'codex']).optional().describe('Preferred owner agent type for the room'),
+    folder: z.string().optional().describe('Optional folder override. If omitted, the host generates one automatically.'),
+    trigger: z.string().optional().describe('Optional canonical trigger label to store for the room'),
+    requires_trigger: z.boolean().optional().describe('Whether direct trigger mention is required'),
+    is_main: z.boolean().optional().describe('Whether this room is the privileged main control room'),
+    work_dir: z.string().optional().describe('Optional working directory override'),
+  },
+  async (args: {
+    jid: string;
+    name: string;
+    room_mode?: 'single' | 'tribunal';
+    owner_agent_type?: 'claude-code' | 'codex';
+    folder?: string;
+    trigger?: string;
+    requires_trigger?: boolean;
+    is_main?: boolean;
+    work_dir?: string;
+  }) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can assign rooms.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'assign_room',
+      jid: args.jid,
+      name: args.name,
+      room_mode: args.room_mode || 'single',
+      owner_agent_type: args.owner_agent_type,
+      folder: args.folder,
+      trigger: args.trigger,
+      requiresTrigger: args.requires_trigger,
+      isMain: args.is_main,
+      workDir: args.work_dir,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Room "${args.name}" assignment requested.` }],
+    };
+  },
+);
+
+server.tool(
   'register_group',
   `Register a new chat/group so the agent can respond to messages there. Main group only.
 
@@ -522,7 +578,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
     writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
+      content: [{ type: 'text' as const, text: `Group "${args.name}" registration requested.` }],
     };
   },
 );
