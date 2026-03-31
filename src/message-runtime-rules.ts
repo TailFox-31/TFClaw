@@ -5,9 +5,13 @@ import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isTaskStatusControlMessage } from './task-watch-status.js';
 import {
   ARBITER_AGENT_TYPE,
-  OWNER_AGENT_TYPE,
   REVIEWER_AGENT_TYPE,
 } from './config.js';
+import {
+  resolveAgentTypeForRole,
+  resolveRoleAgentPlan,
+  type RoleAgentPlan,
+} from './role-agent-plan.js';
 import {
   type AgentType,
   type Channel,
@@ -64,23 +68,25 @@ export function resolveCursorKey(
 }
 
 /** Resolve the effective agent type for a role, considering per-role overrides. */
+export function resolveConfiguredRoleAgentPlan(
+  paired: boolean,
+  groupAgentType: AgentType | undefined,
+): RoleAgentPlan {
+  return resolveRoleAgentPlan({
+    paired,
+    groupAgentType,
+    configuredReviewer: REVIEWER_AGENT_TYPE,
+    configuredArbiter: ARBITER_AGENT_TYPE,
+  });
+}
+
+/** Resolve the effective agent type for a role, considering per-role overrides. */
 export function resolveEffectiveAgentType(
   role: 'owner' | 'reviewer' | 'arbiter',
   groupAgentType: AgentType | undefined,
 ): AgentType {
-  const groupDefault: AgentType = groupAgentType || 'claude-code';
-  switch (role) {
-    case 'reviewer':
-      return REVIEWER_AGENT_TYPE !== groupDefault
-        ? REVIEWER_AGENT_TYPE
-        : groupDefault;
-    case 'arbiter':
-      return ARBITER_AGENT_TYPE != null && ARBITER_AGENT_TYPE !== groupDefault
-        ? ARBITER_AGENT_TYPE
-        : groupDefault;
-    default:
-      return groupDefault;
-  }
+  const plan = resolveConfiguredRoleAgentPlan(role !== 'owner', groupAgentType);
+  return resolveAgentTypeForRole(plan, role);
 }
 
 /** Session folder key for a role. Owner uses groupFolder, others use groupFolder:role. */
@@ -91,8 +97,9 @@ export function resolveSessionFolder(
 ): string {
   // Arbiter always gets a separate session — must never share with owner/reviewer
   if (role === 'arbiter') return `${groupFolder}:arbiter`;
-  const effectiveType = resolveEffectiveAgentType(role, groupAgentType);
-  const groupDefault: AgentType = groupAgentType || 'claude-code';
+  const plan = resolveConfiguredRoleAgentPlan(role !== 'owner', groupAgentType);
+  const effectiveType = resolveAgentTypeForRole(plan, role);
+  const groupDefault = plan.ownerAgentType;
   if (effectiveType === groupDefault) return groupFolder;
   return `${groupFolder}:${role}`;
 }

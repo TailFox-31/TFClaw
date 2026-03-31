@@ -15,6 +15,7 @@ vi.mock('./config.js', () => ({
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   DATA_DIR: '/tmp/ejclaw-test-data',
   REVIEWER_AGENT_TYPE: 'claude-code',
+  ARBITER_AGENT_TYPE: undefined,
   SERVICE_SESSION_SCOPE: 'claude',
   isClaudeService: vi.fn(() => true),
   normalizeServiceId: vi.fn((serviceId: string) =>
@@ -567,6 +568,67 @@ describe('runAgentForGroup room memory', () => {
       summary:
         'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.',
     });
+  });
+
+  it('uses the role plan for reviewer execution while keeping task snapshots on the owner agent', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      agentType: 'codex' as const,
+    };
+    const deps = {
+      ...makeDeps(),
+      getSessions: () => ({ 'test-group:reviewer': 'reviewer-session' }),
+    };
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'paired-task-review',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+
+    await runAgentForGroup(deps, {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-review-plan',
+    });
+
+    expect(db.getAllTasks).toHaveBeenCalledWith('codex');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        folder: 'test-group',
+        agentType: 'claude-code',
+      }),
+      expect.objectContaining({
+        sessionId: 'reviewer-session',
+      }),
+      expect.any(Function),
+      undefined,
+      undefined,
+    );
   });
 });
 

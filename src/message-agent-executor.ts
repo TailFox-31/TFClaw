@@ -29,6 +29,7 @@ import {
 } from './paired-execution-context.js';
 import {
   resolveActiveRole,
+  resolveConfiguredRoleAgentPlan,
   resolveEffectiveAgentType,
   resolveSessionFolder,
 } from './message-runtime-rules.js';
@@ -115,13 +116,17 @@ export async function runAgentForGroup(
         : currentLease.owner_service_id;
   const reviewerMode = activeRole === 'reviewer';
   const arbiterMode = activeRole === 'arbiter';
+  const roleAgentPlan = resolveConfiguredRoleAgentPlan(
+    currentLease.reviewer_service_id != null,
+    group.agentType,
+  );
 
   const effectiveAgentType = resolveEffectiveAgentType(
     activeRole,
     group.agentType,
   );
   const effectiveGroup =
-    effectiveAgentType !== (group.agentType || 'claude-code')
+    effectiveAgentType !== roleAgentPlan.ownerAgentType
       ? { ...group, agentType: effectiveAgentType }
       : group;
   const isClaudeCodeAgent = effectiveAgentType === 'claude-code';
@@ -140,7 +145,7 @@ export async function runAgentForGroup(
         groupName: group.name,
       }).catch(() => undefined);
 
-  const tasks = getAllTasks(group.agentType || 'claude-code');
+  const tasks = getAllTasks(roleAgentPlan.ownerAgentType);
   writeTasksSnapshot(
     group.folder,
     isMain,

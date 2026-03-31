@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveRoleAgentPlan } from './role-agent-plan.js';
+import {
+  resolveAgentTypeForRole,
+  resolveRoleAgentPlan,
+} from './role-agent-plan.js';
 
 describe('resolveRoleAgentPlan', () => {
   it('uses the group agent type as owner in single rooms', () => {
@@ -59,5 +62,29 @@ describe('resolveRoleAgentPlan', () => {
       reviewerAgentType: 'claude-code',
       arbiterAgentType: null,
     });
+  });
+
+  it('falls back to owner when reviewer or arbiter are absent in the plan', () => {
+    const plan = resolveRoleAgentPlan({
+      paired: false,
+      groupAgentType: 'codex',
+      configuredReviewer: 'claude-code',
+    });
+
+    expect(resolveAgentTypeForRole(plan, 'owner')).toBe('codex');
+    expect(resolveAgentTypeForRole(plan, 'reviewer')).toBe('codex');
+    expect(resolveAgentTypeForRole(plan, 'arbiter')).toBe('codex');
+  });
+
+  it('returns explicit reviewer and arbiter agent types when present', () => {
+    const plan = resolveRoleAgentPlan({
+      paired: true,
+      groupAgentType: 'codex',
+      configuredReviewer: 'claude-code',
+      configuredArbiter: 'claude-code',
+    });
+
+    expect(resolveAgentTypeForRole(plan, 'reviewer')).toBe('claude-code');
+    expect(resolveAgentTypeForRole(plan, 'arbiter')).toBe('claude-code');
   });
 });

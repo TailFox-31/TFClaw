@@ -1,4 +1,4 @@
-import type { AgentType } from './types.js';
+import type { AgentType, PairedRoomRole } from './types.js';
 
 export interface RoleAgentPlan {
   ownerAgentType: AgentType;
@@ -38,4 +38,18 @@ export function resolveRoleAgentPlan(
         : ownerAgentType,
     arbiterAgentType: args.configuredArbiter ?? null,
   };
+}
+
+export function resolveAgentTypeForRole(
+  plan: RoleAgentPlan,
+  role: PairedRoomRole,
+): AgentType {
+  switch (role) {
+    case 'reviewer':
+      return plan.reviewerAgentType ?? plan.ownerAgentType;
+    case 'arbiter':
+      return plan.arbiterAgentType ?? plan.ownerAgentType;
+    default:
+      return plan.ownerAgentType;
+  }
 }
