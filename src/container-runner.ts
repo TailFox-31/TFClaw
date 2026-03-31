@@ -481,16 +481,18 @@ export async function runReviewerContainer(args: {
     execArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
   }
   const isCodexAgent = (group.agentType || 'claude-code') === 'codex';
-  // Inject model/effort overrides matching the active agent type.
-  const modelEnvKeys = isCodexAgent
-    ? ['CODEX_MODEL', 'CODEX_EFFORT']
-    : ['CLAUDE_MODEL', 'CLAUDE_EFFORT', 'CODEX_MODEL', 'CODEX_EFFORT'];
   if (envOverrides) {
+    const modelEnvKeys = ['CLAUDE_MODEL', 'CLAUDE_EFFORT', 'CODEX_MODEL', 'CODEX_EFFORT'];
     for (const key of modelEnvKeys) {
       if (envOverrides[key]) {
         execArgs.push('-e', `${key}=${envOverrides[key]}`);
       }
     }
+  }
+  // Clear Claude model/effort for codex runs — container-level env may
+  // have CLAUDE_MODEL baked in from creation, which codex SDK rejects.
+  if (isCodexAgent) {
+    execArgs.push('-e', 'CLAUDE_MODEL=', '-e', 'CLAUDE_EFFORT=');
   }
   if (isCodexAgent) {
     execArgs.push('-e', 'CODEX_HOME=/home/node/.codex');
