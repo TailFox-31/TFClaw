@@ -7,6 +7,7 @@ import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { readJsonFile } from './utils.js';
 import { AvailableGroup } from './agent-runner.js';
 import {
+  type AssignRoomInput,
   createTask,
   deleteTask,
   findDuplicateCiWatcher,
@@ -19,13 +20,14 @@ import {
   DEFAULT_WATCH_CI_MAX_DURATION_MS,
   isWatchCiTask,
 } from './task-watch-status.js';
-import { RegisteredGroup } from './types.js';
+import { AgentType, RegisteredGroup, RoomMode } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   nudgeScheduler?: () => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
+  assignRoom: (jid: string, room: AssignRoomInput) => void;
   syncGroups: (force: boolean) => Promise<void>;
   getAvailableGroups: () => AvailableGroup[];
   writeGroupsSnapshot: (
@@ -292,12 +294,16 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
-    // For register_group
+    // For assign_room / register_group
     jid?: string;
     name?: string;
     folder?: string;
     trigger?: string;
     requiresTrigger?: boolean;
+    room_mode?: RoomMode;
+    owner_agent_type?: AgentType;
+    isMain?: boolean;
+    workDir?: string;
     agentConfig?: RegisteredGroup['agentConfig'];
   },
   sourceGroup: string, // Verified identity from IPC directory
@@ -595,36 +601,74 @@ export async function processTaskIpc(
       }
       break;
 
+    case 'assign_room':
     case 'register_group':
-      // Only main group can register new groups
+      // Only main group can assign/register rooms
       if (!isMain) {
         logger.warn(
-          { sourceGroup },
-          'Unauthorized register_group attempt blocked',
+          { sourceGroup, type: data.type },
+          `Unauthorized ${data.type} attempt blocked`,
         );
         break;
       }
-      if (data.jid && data.name && data.folder && data.trigger) {
-        if (!isValidGroupFolder(data.folder)) {
+      if (data.jid && data.name) {
+        if (data.folder && !isValidGroupFolder(data.folder)) {
           logger.warn(
             { sourceGroup, folder: data.folder },
-            'Invalid register_group request - unsafe folder name',
+            `Invalid ${data.type} request - unsafe folder name`,
           );
           break;
         }
-        // Defense in depth: agent cannot set isMain via IPC
-        deps.registerGroup(data.jid, {
+        if (
+          data.room_mode !== undefined &&
+          data.room_mode !== 'single' &&
+          data.room_mode !== 'tribunal'
+        ) {
+          logger.warn(
+            { sourceGroup, roomMode: data.room_mode },
+            'Invalid assign_room request - unknown room_mode',
+          );
+          break;
+        }
+        if (
+          data.owner_agent_type !== undefined &&
+          data.owner_agent_type !== 'claude-code' &&
+          data.owner_agent_type !== 'codex'
+        ) {
+          logger.warn(
+            { sourceGroup, ownerAgentType: data.owner_agent_type },
+            'Invalid assign_room request - unknown owner_agent_type',
+          );
+          break;
+        }
+
+        if (data.type === 'assign_room') {
+          deps.assignRoom(data.jid, {
+            name: data.name,
+            roomMode: data.room_mode,
+            ownerAgentType: data.owner_agent_type,
+            folder: data.folder,
+            trigger: data.trigger,
+            requiresTrigger: data.requiresTrigger,
+            isMain: data.isMain,
+            workDir: data.workDir,
+          });
+          break;
+        }
+
+        deps.assignRoom(data.jid, {
           name: data.name,
+          ownerAgentType: data.owner_agent_type,
           folder: data.folder,
           trigger: data.trigger,
-          added_at: new Date().toISOString(),
-          agentConfig: data.agentConfig,
           requiresTrigger: data.requiresTrigger,
+          ownerAgentConfig: data.agentConfig,
+          addedAt: new Date().toISOString(),
         });
       } else {
         logger.warn(
           { data },
-          'Invalid register_group request - missing required fields',
+          `Invalid ${data.type} request - missing required fields`,
         );
       }
       break;

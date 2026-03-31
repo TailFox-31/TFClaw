@@ -1,10 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+import { ASSISTANT_NAME } from './config.js';
 import {
   _initTestDatabase,
+  assignRoom,
   createTask,
   getAllTasks,
+  getRegisteredAgentTypesForJid,
   getRegisteredGroup,
+  getStoredRoomSettings,
   getTaskById,
   setRegisteredGroup,
 } from './db.js';
@@ -60,6 +64,12 @@ beforeEach(() => {
       groups[jid] = group;
       setRegisteredGroup(jid, group);
       // Mock the fs.mkdirSync that registerGroup does
+    },
+    assignRoom: (jid, room) => {
+      const assigned = assignRoom(jid, room);
+      if (!assigned) return;
+      const { jid: _ignoredJid, ...group } = assigned;
+      groups[jid] = group;
     },
     syncGroups: async () => {},
     getAvailableGroups: () => [],
@@ -794,19 +804,99 @@ describe('register_group success', () => {
     expect(group!.trigger).toBe('@Andy');
   });
 
-  it('register_group rejects request with missing fields', async () => {
+  it('register_group auto-fills missing folder and trigger for single rooms', async () => {
     await processTaskIpc(
       {
         type: 'register_group',
         jid: 'partial@g.us',
         name: 'Partial',
-        // missing folder and trigger
       },
       'whatsapp_main',
       true,
       deps,
     );
 
-    expect(getRegisteredGroup('partial@g.us')).toBeUndefined();
+    const group = getRegisteredGroup('partial@g.us');
+    expect(group).toBeDefined();
+    expect(group!.folder).toMatch(/^grp_whatsapp_/);
+    expect(group!.trigger).toBe(`@${ASSISTANT_NAME}`);
+    expect(getStoredRoomSettings('partial@g.us')?.roomMode).toBe('single');
+  });
+
+  it('register_group preserves an existing tribunal room mode', async () => {
+    assignRoom('legacy-tribunal@g.us', {
+      name: 'Legacy Tribunal',
+      roomMode: 'tribunal',
+      ownerAgentType: 'codex',
+      folder: 'legacy-tribunal',
+    });
+
+    await processTaskIpc(
+      {
+        type: 'register_group',
+        jid: 'legacy-tribunal@g.us',
+        name: 'Legacy Tribunal Renamed',
+        folder: 'legacy-tribunal',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getStoredRoomSettings('legacy-tribunal@g.us')).toMatchObject({
+      chatJid: 'legacy-tribunal@g.us',
+      roomMode: 'tribunal',
+      modeSource: 'explicit',
+      name: 'Legacy Tribunal Renamed',
+    });
+    expect(getRegisteredAgentTypesForJid('legacy-tribunal@g.us').sort()).toEqual([
+      'claude-code',
+      'codex',
+    ]);
+  });
+});
+
+describe('assign_room success', () => {
+  it('main group can assign a tribunal room and materialize capability rows', async () => {
+    await processTaskIpc(
+      {
+        type: 'assign_room',
+        jid: 'tribunal@g.us',
+        name: 'Tribunal Room',
+        room_mode: 'tribunal',
+        owner_agent_type: 'codex',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const stored = getStoredRoomSettings('tribunal@g.us');
+    expect(stored).toMatchObject({
+      chatJid: 'tribunal@g.us',
+      roomMode: 'tribunal',
+      modeSource: 'explicit',
+      name: 'Tribunal Room',
+      ownerAgentType: 'codex',
+    });
+    expect(stored?.folder).toMatch(/^grp_whatsapp_/);
+    expect(getRegisteredAgentTypesForJid('tribunal@g.us').sort()).toEqual([
+      'claude-code',
+      'codex',
+    ]);
+  });
+
+  it('assign_room rejects request with missing fields', async () => {
+    await processTaskIpc(
+      {
+        type: 'assign_room',
+        jid: 'broken@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getRegisteredGroup('broken@g.us')).toBeUndefined();
   });
 });
