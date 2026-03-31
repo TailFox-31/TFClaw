@@ -75,6 +75,31 @@ describe('buildRoomRoleContext', () => {
     });
   });
 
+  it('uses the preferred reviewer role when owner and reviewer share the same service', () => {
+    expect(
+      buildRoomRoleContext(
+        {
+          chat_jid: 'group@test',
+          owner_service_id: 'claude',
+          reviewer_service_id: 'claude',
+          arbiter_service_id: null,
+          activated_at: null,
+          reason: null,
+          explicit: false,
+        },
+        'claude',
+        'reviewer',
+      ),
+    ).toEqual({
+      serviceId: 'claude',
+      role: 'reviewer',
+      ownerServiceId: 'claude',
+      reviewerServiceId: 'claude',
+      failoverOwner: false,
+      arbiterServiceId: undefined,
+    });
+  });
+
   it('returns undefined for a non-paired room', () => {
     expect(
       buildRoomRoleContext(

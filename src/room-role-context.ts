@@ -3,12 +3,13 @@ import {
   CODEX_REVIEW_SERVICE_ID,
   normalizeServiceId,
 } from './config.js';
-import type { RoomRoleContext } from './types.js';
+import type { PairedRoomRole, RoomRoleContext } from './types.js';
 import type { EffectiveChannelLease } from './service-routing.js';
 
 export function buildRoomRoleContext(
   lease: EffectiveChannelLease,
   serviceId: string,
+  preferredRole?: PairedRoomRole,
 ): RoomRoleContext | undefined {
   const normalizedServiceId = normalizeServiceId(serviceId);
   const reviewerServiceId = lease.reviewer_service_id
@@ -24,14 +25,20 @@ export function buildRoomRoleContext(
     ? normalizeServiceId(lease.arbiter_service_id)
     : undefined;
 
-  // Check arbiter role first: if this service matches the arbiter_service_id,
-  // it takes the arbiter role (even if it also matches owner or reviewer)
+  const matches = {
+    owner: ownerServiceId === normalizedServiceId,
+    reviewer: reviewerServiceId === normalizedServiceId,
+    arbiter: arbiterServiceId === normalizedServiceId,
+  };
+
   const role =
-    arbiterServiceId && arbiterServiceId === normalizedServiceId
+    preferredRole && matches[preferredRole]
+      ? preferredRole
+      : matches.arbiter
       ? 'arbiter'
-      : ownerServiceId === normalizedServiceId
+      : matches.owner
         ? 'owner'
-        : reviewerServiceId === normalizedServiceId
+        : matches.reviewer
           ? 'reviewer'
           : null;
 

@@ -853,7 +853,7 @@ describe('paired room registration', () => {
     expect(isPairedRoomJid('dc:explicit-single')).toBe(false);
   });
 
-  it('keeps explicit tribunal configured but not runnable without dual registration', () => {
+  it('lets explicit tribunal become runnable when the configured reviewer can run on the solo registration', () => {
     setRegisteredGroup('dc:explicit-tribunal', {
       name: 'Explicit Tribunal Claude',
       folder: 'explicit-tribunal-claude',
@@ -868,8 +868,8 @@ describe('paired room registration', () => {
 
     expect(getExplicitRoomMode('dc:explicit-tribunal')).toBe('tribunal');
     expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('tribunal');
-    expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe('single');
-    expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(false);
+    expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe('tribunal');
+    expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(true);
 
     clearExplicitRoomMode('dc:explicit-tribunal');
 
@@ -877,6 +877,24 @@ describe('paired room registration', () => {
     expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('single');
     expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe('single');
     expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(false);
+  });
+
+  it('keeps explicit tribunal non-runnable when the configured reviewer service is unavailable', () => {
+    setRegisteredGroup('dc:explicit-tribunal-codex', {
+      name: 'Explicit Tribunal Codex',
+      folder: 'explicit-tribunal-codex',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+
+    setExplicitRoomMode('dc:explicit-tribunal-codex', 'tribunal');
+
+    expect(getEffectiveRoomMode('dc:explicit-tribunal-codex')).toBe('tribunal');
+    expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal-codex')).toBe(
+      'single',
+    );
+    expect(isPairedRoomJid('dc:explicit-tribunal-codex')).toBe(false);
   });
 });
 

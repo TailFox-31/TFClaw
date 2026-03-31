@@ -132,6 +132,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   ): NewMessage[] => {
     if (!isPairedRoomJid(chatJid)) return messages;
     const lease = getEffectiveChannelLease(chatJid);
+    const sharedOwnerReviewerService =
+      lease.reviewer_service_id !== null &&
+      lease.owner_service_id === lease.reviewer_service_id;
     // Build bot-user-id → channel-name mapping from connected channels
     const botIdToChannelName = new Map<string, string>();
     for (const ch of deps.channels) {
@@ -155,6 +158,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       if (!channelName) return msg;
       const serviceId = channelToService[channelName];
       if (!serviceId) return msg;
+      // Raw channel history cannot tell owner/reviewer apart when both roles
+      // are delivered by the same service, so avoid fabricating a role label.
+      if (
+        sharedOwnerReviewerService &&
+        serviceId === lease.owner_service_id &&
+        serviceId === lease.reviewer_service_id
+      ) {
+        return msg;
+      }
       const role =
         serviceId === lease.owner_service_id
           ? 'owner'

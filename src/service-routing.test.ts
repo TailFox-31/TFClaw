@@ -108,7 +108,7 @@ describe('service-routing global failover', () => {
     });
   });
 
-  it('does not create reviewer lease for explicit tribunal without dual registration capability', () => {
+  it('creates a same-service reviewer lease when explicit tribunal is runnable on a solo registration', () => {
     setRegisteredGroup('dc:explicit-tribunal', {
       name: 'Explicit Tribunal Claude',
       folder: 'explicit-tribunal-claude',
@@ -121,6 +121,24 @@ describe('service-routing global failover', () => {
     expect(getEffectiveChannelLease('dc:explicit-tribunal')).toMatchObject({
       chat_jid: 'dc:explicit-tribunal',
       owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      explicit: false,
+    });
+  });
+
+  it('keeps reviewer lease disabled when explicit tribunal cannot deliver the configured reviewer', () => {
+    setRegisteredGroup('dc:explicit-tribunal-codex', {
+      name: 'Explicit Tribunal Codex',
+      folder: 'explicit-tribunal-codex',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+    setExplicitRoomMode('dc:explicit-tribunal-codex', 'tribunal');
+
+    expect(getEffectiveChannelLease('dc:explicit-tribunal-codex')).toMatchObject({
+      chat_jid: 'dc:explicit-tribunal-codex',
+      owner_service_id: 'codex-main',
       reviewer_service_id: null,
       explicit: false,
     });
