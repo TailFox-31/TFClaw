@@ -321,6 +321,17 @@ export function buildReviewerMounts(
     readonly: false,
   });
 
+  // Owner session directory: read-only so reviewer can verify runtime state
+  // files (cron state, configs, etc.) that the owner references by absolute path.
+  const ownerSessionDir = path.join(DATA_DIR, 'sessions', group.folder);
+  if (fs.existsSync(ownerSessionDir)) {
+    mounts.push({
+      hostPath: ownerSessionDir,
+      containerPath: ownerSessionDir,
+      readonly: true,
+    });
+  }
+
   // Codex OAuth: mount host's ~/.codex (read-only) so codex-runner can authenticate
   const hostCodexHome =
     process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
