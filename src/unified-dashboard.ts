@@ -42,6 +42,11 @@ import {
 import { getAllChats, getAllTasks, updateRegisteredGroupName } from './db.js';
 import type { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
+import {
+  buildRoomUsageEstimateLines,
+  collectClaudeRoomUsageSummary,
+  collectCodexRoomUsageSummary,
+} from './room-usage-estimator.js';
 import { isWatchCiTask } from './task-watch-status.js';
 import {
   readStatusSnapshots,
@@ -517,6 +522,16 @@ async function buildUsageContent(): Promise<string> {
   claudeBotRows.push(...kimiRows);
 
   lines.push(...renderUsageTable(claudeBotRows, codexBotRows));
+  const claudeRoomUsage = collectClaudeRoomUsageSummary();
+  const codexRoomUsage = collectCodexRoomUsageSummary();
+  const roomEstimateLines = buildRoomUsageEstimateLines({
+    claude: claudeRoomUsage,
+    codex: codexRoomUsage,
+  });
+  if (roomEstimateLines.length > 0) {
+    lines.push('');
+    lines.push(...roomEstimateLines);
+  }
 
   lines.push('');
   lines.push('🖥️ *서버*');
