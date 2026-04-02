@@ -13,8 +13,10 @@ import {
   markWorkItemDeliveryRetry,
   getLastBotFinalMessage,
   getLastHumanMessageContent,
+  getLatestCompletedEscalatedPairedTaskForChat,
   getRecentChatMessages,
   getLatestOpenPairedTaskForChat,
+  getPairedTaskById,
   getPairedTurnOutputs,
   updatePairedTask,
   type ServiceHandoff,
@@ -125,6 +127,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const continuationTracker = createImplicitContinuationTracker(
     deps.idleTimeout,
   );
+  const MAX_ESCALATED_CARRYOVER_AGE_MS = 2 * 60 * 60 * 1000;
   // In paired rooms, replace bot sender_name with role label so agents
   // know who is the owner and who is the reviewer regardless of bot nickname.
   const labelPairedSenders = (
@@ -205,6 +208,36 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       (a, b) => a.timestamp.localeCompare(b.timestamp),
     );
 
+  const getCarryoverTurnOutputsForFreshOwnerTask = (
+    taskId: string,
+    chatJid: string,
+  ): PairedTurnOutput[] => {
+    const task = getPairedTaskById(taskId);
+    if (!task || task.status !== 'active' || task.round_trip_count !== 0) {
+      return [];
+    }
+
+    const priorEscalatedTask = getLatestCompletedEscalatedPairedTaskForChat(
+      chatJid,
+      task.created_at,
+    );
+    if (!priorEscalatedTask) return [];
+
+    const taskCreatedAtMs = Date.parse(task.created_at);
+    const priorTaskUpdatedAtMs = Date.parse(
+      priorEscalatedTask.updated_at || priorEscalatedTask.created_at,
+    );
+    if (
+      Number.isFinite(taskCreatedAtMs) &&
+      Number.isFinite(priorTaskUpdatedAtMs) &&
+      taskCreatedAtMs - priorTaskUpdatedAtMs > MAX_ESCALATED_CARRYOVER_AGE_MS
+    ) {
+      return [];
+    }
+
+    return getPairedTurnOutputs(priorEscalatedTask.id);
+  };
+
   /**
    * Build a prompt from paired_turn_outputs (Discord-independent) + human messages.
    * Falls back to the legacy labelPairedSenders path when no turn outputs exist.
@@ -216,16 +249,29 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     missedMessages: NewMessage[],
   ): string => {
     const turnOutputs = getPairedTurnOutputs(taskId);
+    const humanMessages = missedMessages.filter((m) => !m.is_bot_message);
     if (turnOutputs.length === 0) {
+      const carryoverTurnOutputs = getCarryoverTurnOutputsForFreshOwnerTask(
+        taskId,
+        chatJid,
+      );
+      if (carryoverTurnOutputs.length > 0) {
+        return formatMessages(
+          mergeHumanAndTurnOutputMessages(
+            chatJid,
+            humanMessages,
+            carryoverTurnOutputs,
+          ),
+          timezone,
+        );
+      }
+
       // No stored outputs yet — fall back to Discord messages
       return formatMessages(
         labelPairedSenders(chatJid, missedMessages),
         timezone,
       );
     }
-
-    // Human messages from the missed messages (exclude bot messages)
-    const humanMessages = missedMessages.filter((m) => !m.is_bot_message);
 
     return formatMessages(
       mergeHumanAndTurnOutputMessages(chatJid, humanMessages, turnOutputs),

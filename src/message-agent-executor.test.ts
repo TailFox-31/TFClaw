@@ -313,7 +313,7 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
-  it('keeps the reviewer prompt unchanged when the current service is the reviewer for the chat', async () => {
+  it('adds a Korean language instruction when the current service is the reviewer for the chat', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
@@ -323,6 +323,24 @@ describe('runAgentForGroup room memory', () => {
       activated_at: null,
       reason: null,
       explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'paired-task-review-korean',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-29T00:00:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-29T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
     });
 
     await runAgentForGroup(makeDeps(), {
@@ -335,11 +353,17 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        prompt: 'hello',
+        prompt: expect.stringContaining('hello'),
       }),
       expect.any(Function),
       undefined,
       undefined,
+    );
+    const prompt = vi.mocked(agentRunner.runAgentProcess).mock.calls[0]?.[1]
+      ?.prompt;
+    expect(prompt).toContain('Write the visible response in Korean.');
+    expect(prompt).toContain(
+      'Keep required status tokens such as DONE, DONE_WITH_CONCERNS, BLOCKED, and NEEDS_CONTEXT in English exactly as written.',
     );
   });
 

@@ -2927,6 +2927,42 @@ export function getLatestOpenPairedTaskForChat(
     .get(chatJid) as PairedTask | undefined;
 }
 
+export function getLatestCompletedEscalatedPairedTaskForChat(
+  chatJid: string,
+  beforeCreatedAt?: string,
+): PairedTask | undefined {
+  if (beforeCreatedAt) {
+    return db
+      .prepare(
+        `
+          SELECT *
+            FROM paired_tasks
+           WHERE chat_jid = ?
+             AND status = 'completed'
+             AND completion_reason IN ('escalated', 'arbiter_escalated')
+             AND updated_at < ?
+           ORDER BY updated_at DESC, created_at DESC
+           LIMIT 1
+        `,
+      )
+      .get(chatJid, beforeCreatedAt) as PairedTask | undefined;
+  }
+
+  return db
+    .prepare(
+      `
+        SELECT *
+          FROM paired_tasks
+         WHERE chat_jid = ?
+           AND status = 'completed'
+           AND completion_reason IN ('escalated', 'arbiter_escalated')
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 1
+      `,
+    )
+    .get(chatJid) as PairedTask | undefined;
+}
+
 export function updatePairedTask(
   id: string,
   updates: Partial<

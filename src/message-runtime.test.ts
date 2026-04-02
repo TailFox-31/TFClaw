@@ -116,6 +116,8 @@ vi.mock('./db.js', () => {
     getOpenWorkItem: vi.fn(() => undefined),
     getPendingServiceHandoffs: vi.fn(() => []),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
+    getLatestCompletedEscalatedPairedTaskForChat: vi.fn(() => undefined),
+    getPairedTaskById: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
     getRecentChatMessages: vi.fn(() => []),
     createProducedWorkItem: vi.fn((input) => ({
@@ -2872,6 +2874,434 @@ describe('createMessageRuntime', () => {
       chatJid,
       'phase 없는 최종 응답입니다.',
     );
+  });
+
+  it('injects the latest escalated reviewer context into a fresh owner follow-up task', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-followup',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-02T00:00:47.528Z',
+      updated_at: '2026-04-02T00:00:47.528Z',
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-followup',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-02T00:00:47.528Z',
+      updated_at: '2026-04-02T00:00:47.528Z',
+    });
+    vi.mocked(db.getLatestCompletedEscalatedPairedTaskForChat).mockReturnValue({
+      id: 'task-escalated',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD~1',
+      plan_notes: null,
+      review_requested_at: '2026-04-01T23:57:21.693Z',
+      round_trip_count: 1,
+      status: 'completed',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: 'escalated',
+      created_at: '2026-04-01T23:49:55.666Z',
+      updated_at: '2026-04-01T23:58:09.474Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockImplementation((taskId: string) => {
+      if (taskId === 'task-followup') return [];
+      if (taskId === 'task-escalated') {
+        return [
+          {
+            id: 1,
+            task_id: 'task-escalated',
+            turn_number: 1,
+            role: 'owner',
+            output_text: 'DONE 이전 구현 요약',
+            created_at: '2026-04-01T23:57:21.703Z',
+          },
+          {
+            id: 2,
+            task_id: 'task-escalated',
+            turn_number: 2,
+            role: 'reviewer',
+            output_text: '**BLOCKED** 검증 증거를 다시 제시해 주세요.',
+            created_at: '2026-04-01T23:58:09.476Z',
+          },
+        ];
+      }
+      return [];
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'reviewer 답변에 응답해줘',
+        timestamp: '2026-04-02T00:00:46.102Z',
+        is_bot_message: false,
+      },
+    ] as any);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('reviewer 답변에 응답해줘');
+        expect(input.prompt).toContain('DONE 이전 구현 요약');
+        expect(input.prompt).toContain(
+          '**BLOCKED** 검증 증거를 다시 제시해 주세요.',
+        );
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '승계된 reviewer 문맥 확인',
+          newSessionId: 'session-owner-followup-carryover',
+        });
+        return {
+          status: 'success',
+          result: '승계된 reviewer 문맥 확인',
+          newSessionId: 'session-owner-followup-carryover',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-followup-carryover',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it('inherits arbiter-escalated context into a fresh owner follow-up task', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-followup-arbiter',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-02T01:00:00.000Z',
+      updated_at: '2026-04-02T01:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-followup-arbiter',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-02T01:00:00.000Z',
+      updated_at: '2026-04-02T01:00:00.000Z',
+    });
+    vi.mocked(db.getLatestCompletedEscalatedPairedTaskForChat).mockReturnValue({
+      id: 'task-arbiter-escalated',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD~2',
+      plan_notes: null,
+      review_requested_at: '2026-04-02T00:50:00.000Z',
+      round_trip_count: 2,
+      status: 'completed',
+      arbiter_verdict: 'escalate',
+      arbiter_requested_at: '2026-04-02T00:55:00.000Z',
+      completion_reason: 'arbiter_escalated',
+      created_at: '2026-04-02T00:49:00.000Z',
+      updated_at: '2026-04-02T00:58:00.000Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockImplementation((taskId: string) => {
+      if (taskId === 'task-followup-arbiter') return [];
+      if (taskId === 'task-arbiter-escalated') {
+        return [
+          {
+            id: 1,
+            task_id: 'task-arbiter-escalated',
+            turn_number: 1,
+            role: 'owner',
+            output_text: 'DONE owner 재현 내용',
+            created_at: '2026-04-02T00:50:00.000Z',
+          },
+          {
+            id: 2,
+            task_id: 'task-arbiter-escalated',
+            turn_number: 2,
+            role: 'arbiter',
+            output_text: 'BLOCKED 사람 개입이 필요합니다.',
+            created_at: '2026-04-02T00:58:00.000Z',
+          } as any,
+        ];
+      }
+      return [];
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-arbiter-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '중재자 답변에 이어서 진행해줘',
+        timestamp: '2026-04-02T00:59:59.000Z',
+        is_bot_message: false,
+      },
+    ] as any);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('중재자 답변에 이어서 진행해줘');
+        expect(input.prompt).toContain('DONE owner 재현 내용');
+        expect(input.prompt).toContain('BLOCKED 사람 개입이 필요합니다.');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'arbiter escalated 문맥 승계 확인',
+          newSessionId: 'session-owner-followup-arbiter',
+        });
+        return {
+          status: 'success',
+          result: 'arbiter escalated 문맥 승계 확인',
+          newSessionId: 'session-owner-followup-arbiter',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-followup-arbiter-carryover',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not inject stale escalated context into a fresh owner follow-up task', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-followup-stale',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-02T10:00:00.000Z',
+      updated_at: '2026-04-02T10:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-followup-stale',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-02T10:00:00.000Z',
+      updated_at: '2026-04-02T10:00:00.000Z',
+    });
+    vi.mocked(db.getLatestCompletedEscalatedPairedTaskForChat).mockReturnValue({
+      id: 'task-stale-escalated',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD~9',
+      plan_notes: null,
+      review_requested_at: '2026-04-02T06:00:00.000Z',
+      round_trip_count: 1,
+      status: 'completed',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: 'escalated',
+      created_at: '2026-04-02T05:59:00.000Z',
+      updated_at: '2026-04-02T07:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockImplementation((taskId: string) => {
+      if (taskId === 'task-followup-stale') return [];
+      if (taskId === 'task-stale-escalated') {
+        return [
+          {
+            id: 1,
+            task_id: 'task-stale-escalated',
+            turn_number: 1,
+            role: 'reviewer',
+            output_text: 'BLOCKED 오래된 reviewer 문맥',
+            created_at: '2026-04-02T07:00:00.000Z',
+          },
+        ];
+      }
+      return [];
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-stale-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '새로운 unrelated 요청',
+        timestamp: '2026-04-02T09:59:59.000Z',
+        is_bot_message: false,
+      },
+    ] as any);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('새로운 unrelated 요청');
+        expect(input.prompt).not.toContain('BLOCKED 오래된 reviewer 문맥');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'stale escalated 문맥 미주입 확인',
+          newSessionId: 'session-owner-followup-stale',
+        });
+        return {
+          status: 'success',
+          result: 'stale escalated 문맥 미주입 확인',
+          newSessionId: 'session-owner-followup-stale',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-followup-stale-carryover',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
   });
 
   it('recovery queues a group when an open work item is waiting for delivery', () => {

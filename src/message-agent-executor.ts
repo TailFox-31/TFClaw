@@ -82,6 +82,22 @@ export interface MessageAgentExecutorDeps {
   clearSession: (groupFolder: string) => void;
 }
 
+const REVIEWER_KOREAN_INSTRUCTION = `
+## Reviewer Language
+
+Write the visible response in Korean.
+Keep required status tokens such as DONE, DONE_WITH_CONCERNS, BLOCKED, and NEEDS_CONTEXT in English exactly as written.
+`.trim();
+
+function applyReviewerLanguageInstruction(
+  prompt: string,
+  role: 'owner' | 'reviewer' | 'arbiter',
+): string {
+  if (role !== 'reviewer') return prompt;
+  if (prompt.includes(REVIEWER_KOREAN_INSTRUCTION)) return prompt;
+  return `${prompt}\n\n${REVIEWER_KOREAN_INSTRUCTION}`;
+}
+
 export async function runAgentForGroup(
   deps: MessageAgentExecutorDeps,
   args: {
@@ -241,7 +257,10 @@ export async function runAgentForGroup(
     }
   }
 
-  const effectivePrompt = moaEnrichedPrompt;
+  const effectivePrompt = applyReviewerLanguageInstruction(
+    moaEnrichedPrompt,
+    activeRole,
+  );
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
   let pairedFullOutput: string | null = null;
