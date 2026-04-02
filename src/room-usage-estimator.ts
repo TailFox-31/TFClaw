@@ -1,7 +1,6 @@
+import { Database } from 'bun:sqlite';
 import fs from 'fs';
 import path from 'path';
-
-import Database from 'better-sqlite3';
 
 import { DATA_DIR } from './config.js';
 import { getAllRegisteredGroups } from './db.js';
