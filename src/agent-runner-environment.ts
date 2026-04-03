@@ -26,7 +26,10 @@ import {
   readPairedRoomPrompt,
   readPlatformPrompt,
 } from './platform-prompts.js';
-import { getEffectiveChannelLease, hasReviewerLease } from './service-routing.js';
+import {
+  getEffectiveChannelLease,
+  hasReviewerLease,
+} from './service-routing.js';
 import type { AgentType, RegisteredGroup } from './types.js';
 
 // writeCodexApiKeyAuth removed — Codex uses OAuth only.
@@ -316,10 +319,6 @@ function prepareCodexSessionEnvironment(args: {
       ? fs.readFileSync(sessionConfigPath, 'utf-8')
       : '';
     toml = toml.replace(/\n?\[mcp_servers\.ejclaw\][\s\S]*?(?=\n\[|$)/, '');
-    toml = toml.replace(
-      /\n?\[mcp_servers\.memento-mcp\][\s\S]*?(?=\n\[|$)/,
-      '',
-    );
     const mcpSection = `
 [mcp_servers.ejclaw]
 command = "node"
@@ -333,25 +332,7 @@ EJCLAW_GROUP_FOLDER = ${JSON.stringify(args.group.folder)}
 EJCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
 EJCLAW_AGENT_TYPE = ${JSON.stringify(args.env.EJCLAW_AGENT_TYPE)}
 `;
-    const mementoSseUrl =
-      args.envVars.MEMENTO_MCP_SSE_URL || process.env.MEMENTO_MCP_SSE_URL;
-    const mementoAccessKey =
-      args.envVars.MEMENTO_ACCESS_KEY || process.env.MEMENTO_ACCESS_KEY || '';
-    const mementoRemotePath =
-      args.envVars.MEMENTO_MCP_REMOTE_PATH ||
-      process.env.MEMENTO_MCP_REMOTE_PATH ||
-      'mcp-remote';
-    const mementoSection = mementoSseUrl
-      ? `
-[mcp_servers.memento-mcp]
-command = ${JSON.stringify(mementoRemotePath)}
-args = [${JSON.stringify(mementoSseUrl)}, "--header", ${JSON.stringify(`Authorization:Bearer ${mementoAccessKey}`)}]
-`
-      : '';
-    fs.writeFileSync(
-      sessionConfigPath,
-      toml.trimEnd() + '\n' + mcpSection + mementoSection,
-    );
+    fs.writeFileSync(sessionConfigPath, toml.trimEnd() + '\n' + mcpSection);
   }
 
   delete args.env.ANTHROPIC_API_KEY;
@@ -474,9 +455,6 @@ export function prepareGroupEnvironment(
     'CLAUDE_EFFORT',
     'CODEX_MODEL',
     'CODEX_EFFORT',
-    'MEMENTO_MCP_SSE_URL',
-    'MEMENTO_ACCESS_KEY',
-    'MEMENTO_MCP_REMOTE_PATH',
   ]);
 
   const env = buildBaseRunnerEnv({
@@ -575,6 +553,27 @@ export function prepareContainerSessionEnvironment(args: {
   const sessionClaudeMdPath = path.join(sessionDir, 'CLAUDE.md');
   if (sessionClaudeMd) {
     fs.writeFileSync(sessionClaudeMdPath, sessionClaudeMd + '\n');
+
+    // Write identical content as AGENTS.md for codex-runner compatibility.
+    // Codex SDK reads AGENTS.md from CODEX_HOME, not CLAUDE.md.
+    // Copy auth.json and config.toml from host .codex so the session-local
+    // CODEX_HOME has both prompts and authentication.
+    const codexHomeDir = path.join(sessionDir, '.codex');
+    fs.mkdirSync(codexHomeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(codexHomeDir, 'AGENTS.md'),
+      sessionClaudeMd + '\n',
+    );
+    const hostCodexHome =
+      process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+    for (const file of ['auth.json', 'config.toml']) {
+      const src = path.join(hostCodexHome, file);
+      const dst = path.join(codexHomeDir, file);
+      if (fs.existsSync(src)) {
+        fs.copyFileSync(src, dst);
+      }
+    }
+
     logger.info(
       {
         sessionDir,
