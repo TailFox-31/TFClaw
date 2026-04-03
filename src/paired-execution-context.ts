@@ -376,6 +376,7 @@ export function completePairedExecutionContext(args: {
   role: PairedRoomRole;
   status: 'succeeded' | 'failed';
   summary?: string | null;
+  preserveTaskStateOnFailure?: boolean;
 }): void {
   const { taskId, role, status } = args;
   logger.info(
@@ -426,6 +427,13 @@ export function completePairedExecutionContext(args: {
         );
         return;
       }
+    }
+    if (args.preserveTaskStateOnFailure) {
+      logger.info(
+        { taskId, role, previousStatus: task.status },
+        'Preserved paired task state after failed execution because fallback handoff already exists',
+      );
+      return;
     }
     if (task.status !== 'active') {
       const now = new Date().toISOString();

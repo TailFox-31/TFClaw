@@ -551,4 +551,25 @@ describe('paired execution context', () => {
       }),
     );
   });
+
+  it('preserves reviewer task state when a fallback handoff already handled the failure', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'in_review',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'reviewer',
+      status: 'failed',
+      summary: "You're out of extra usage · resets 4am (Asia/Seoul)",
+      preserveTaskStateOnFailure: true,
+    });
+
+    expect(db.updatePairedTask).not.toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({ status: 'active' }),
+    );
+  });
 });

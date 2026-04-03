@@ -305,6 +305,7 @@ export async function runAgentForGroup(
   let pairedFullOutput: string | null = null;
   let pairedExecutionCompleted = false;
   let pairedSawOutput = false;
+  let pairedFailureHandledByHandoff = false;
 
   const shouldHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -358,6 +359,7 @@ export async function runAgentForGroup(
         { reason },
         'Claude arbiter unavailable, handed off arbiter turn to codex',
       );
+      pairedFailureHandledByHandoff = true;
       return true;
     }
 
@@ -380,6 +382,7 @@ export async function runAgentForGroup(
         { reason },
         'Claude reviewer unavailable, handed off review turn to codex-review',
       );
+      pairedFailureHandledByHandoff = true;
       return true;
     }
 
@@ -1038,6 +1041,9 @@ export async function runAgentForGroup(
         role: completedRole,
         status: effectiveStatus,
         summary: pairedExecutionSummary,
+        ...(pairedFailureHandledByHandoff
+          ? { preserveTaskStateOnFailure: true }
+          : {}),
       });
 
       // Store full output for direct inter-agent data passing (Discord-independent).
