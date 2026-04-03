@@ -340,6 +340,58 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     return `The reviewer approved your work (DONE). Finalize and report the result.${reviewerSummary}`;
   };
 
+  const getLatestTurnOutput = (taskId: string): PairedTurnOutput | null => {
+    const turnOutputs = getPairedTurnOutputs(taskId);
+    return turnOutputs.length > 0 ? turnOutputs[turnOutputs.length - 1] : null;
+  };
+
+  const hasPendingPairedTurn = (task: PairedTask): boolean => {
+    const taskStatus = task.status;
+    const pendingRole = resolveActiveRole(taskStatus);
+
+    if (pendingRole === 'reviewer' || pendingRole === 'arbiter') {
+      return true;
+    }
+
+    if (taskStatus === 'merge_ready') {
+      return true;
+    }
+
+    if (pendingRole !== 'owner') {
+      return false;
+    }
+
+    const latestTurnOutput = getLatestTurnOutput(task.id);
+    return (
+      latestTurnOutput?.role === 'reviewer' ||
+      latestTurnOutput?.role === 'arbiter'
+    );
+  };
+
+  const buildOwnerPendingPrompt = (
+    task: PairedTask,
+    chatJid: string,
+    timezone: string,
+  ): string => {
+    const turnOutputs = getPairedTurnOutputs(task.id);
+    if (turnOutputs.length > 0) {
+      const humanMessages = getRecentChatMessages(chatJid, 20).filter(
+        (message) => !message.is_bot_message,
+      );
+      return formatMessages(
+        mergeHumanAndTurnOutputMessages(chatJid, humanMessages, turnOutputs),
+        timezone,
+      );
+    }
+
+    const userMessage = getLastHumanMessageContent(chatJid);
+    if (!userMessage) {
+      return 'Continue the task and address the latest reviewer feedback.';
+    }
+
+    return `User request:\n---\n${userMessage}\n---\n\nContinue the task and address the latest reviewer feedback.`;
+  };
+
   const isBotOnlyPairedRoomTurn = (
     chatJid: string,
     messages: NewMessage[],
@@ -769,6 +821,22 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         };
       }
 
+      if (pendingRole === 'owner') {
+        const latestTurnOutput = getLatestTurnOutput(task.id);
+        if (
+          latestTurnOutput &&
+          (latestTurnOutput.role === 'reviewer' ||
+            latestTurnOutput.role === 'arbiter')
+        ) {
+          return {
+            prompt: buildOwnerPendingPrompt(task, chatJid, deps.timezone),
+            channel: resolveChannel(taskStatus),
+            cursor,
+            cursorKey: resolveCursorKey(chatJid, taskStatus),
+          };
+        }
+      }
+
       return null;
     };
 
@@ -853,25 +921,43 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         FAILURE_FINAL_TEXT,
       );
 
-      if (missedMessages.length === 0) {
-        // Check if a paired review is pending — run reviewer even without new messages
-        const pendingReviewTask = hasReviewerLease(chatJid)
-          ? getLatestOpenPairedTaskForChat(chatJid)
-          : null;
-        const pendingTurn = pendingReviewTask
-          ? buildPendingPairedTurn(pendingReviewTask, rawMissedMessages)
+      const pendingPairedTask = hasReviewerLease(chatJid)
+        ? getLatestOpenPairedTaskForChat(chatJid)
+        : null;
+      const isBotOnlyPairedBacklog = isBotOnlyPairedRoomTurn(
+        chatJid,
+        missedMessages,
+      );
+
+      if (missedMessages.length === 0 || isBotOnlyPairedBacklog) {
+        const pendingTurn = pendingPairedTask
+          ? buildPendingPairedTurn(pendingPairedTask, rawMissedMessages)
           : null;
         if (pendingTurn) {
           return executePendingPairedTurn(pendingTurn);
         }
 
-        const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
+        const lastIgnored =
+          rawMissedMessages[rawMissedMessages.length - 1] ||
+          missedMessages[missedMessages.length - 1];
         if (lastIgnored) {
+          const cursorKey = resolveCursorKey(
+            chatJid,
+            pendingPairedTask?.status,
+          );
+          const cursor =
+            lastIgnored.seq != null ? lastIgnored.seq : lastIgnored.timestamp;
           advanceLastAgentCursor(
             deps.getLastAgentTimestamps(),
             deps.saveState,
             chatJid,
-            lastIgnored.timestamp,
+            cursor,
+            cursorKey,
+          );
+        }
+        if (isBotOnlyPairedBacklog) {
+          log.info(
+            'Skipping paired bot-only backlog because no pending internal turn was found',
           );
         }
         return true;
@@ -1214,6 +1300,39 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               chatJid,
               messagesToSend,
             );
+
+            if (isBotOnlyPairedFollowUp) {
+              const hasPendingBotOnlyTurn = loopPendingTask
+                ? hasPendingPairedTurn(loopPendingTask)
+                : false;
+              const endSeq = messagesToSend[messagesToSend.length - 1]?.seq;
+              if (endSeq != null) {
+                advanceLastAgentCursor(
+                  deps.getLastAgentTimestamps(),
+                  deps.saveState,
+                  chatJid,
+                  endSeq,
+                  loopCursorKey,
+                );
+              }
+              logger.info(
+                {
+                  chatJid,
+                  group: group.name,
+                  groupFolder: group.folder,
+                  endSeq: endSeq ?? null,
+                  hasPendingTurn: hasPendingBotOnlyTurn,
+                },
+                'Suppressed paired bot-only follow-up from raw chat backlog',
+              );
+              if (hasPendingBotOnlyTurn) {
+                deps.queue.enqueueMessageCheck(
+                  chatJid,
+                  resolveGroupIpcPath(group.folder),
+                );
+              }
+              continue;
+            }
 
             if (deps.queue.sendMessage(chatJid, formatted)) {
               const endSeq = messagesToSend[messagesToSend.length - 1]?.seq;

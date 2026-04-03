@@ -274,11 +274,11 @@ describe('createMessageRuntime', () => {
 
     expect(result).toBe(true);
     expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
-    expect(lastAgentTimestamps[chatJid]).toBe('0');
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
     expect(saveState).toHaveBeenCalled();
   });
 
-  it('keeps mentionless substantive bot messages in paired rooms', async () => {
+  it('skips mentionless substantive bot messages in paired rooms when no internal turn is pending', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
@@ -299,21 +299,6 @@ describe('createMessageRuntime', () => {
         is_bot_message: true,
       },
     ]);
-    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
-      async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          result: '그 방향이 맞습니다.',
-          newSessionId: 'session-paired-bot',
-        });
-        return {
-          status: 'success',
-          result: '그 방향이 맞습니다.',
-          newSessionId: 'session-paired-bot',
-        };
-      },
-    );
-
     const runtime = createMessageRuntime({
       assistantName: 'Andy',
       idleTimeout: 1_000,
@@ -342,13 +327,9 @@ describe('createMessageRuntime', () => {
     });
 
     expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
-    expect(channel.sendMessage).toHaveBeenCalledWith(
-      chatJid,
-      '그 방향이 맞습니다.',
-    );
-    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
-    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(channel.setTyping).not.toHaveBeenCalled();
     expect(lastAgentTimestamps[chatJid]).toBe('1');
     expect(saveState).toHaveBeenCalled();
   });
@@ -363,17 +344,27 @@ describe('createMessageRuntime', () => {
     vi.mocked(config.isClaudeService).mockReturnValue(false);
     vi.mocked(config.isReviewService).mockReturnValue(true);
     vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'other-bot@test',
-        sender_name: 'Other Bot',
-        content: '이어서 확인해줘.',
-        timestamp: '2026-03-18T09:00:00.000Z',
-        is_bot_message: true,
-      },
-    ]);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-review-ready',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-18T09:00:00.000Z',
+      round_trip_count: 0,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-18T09:00:00.000Z',
+      updated_at: '2026-03-18T09:00:00.000Z',
+    });
+    vi.mocked(db.getLastHumanMessageContent).mockReturnValue(
+      '이어서 확인해줘.',
+    );
     vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
       async (_group, _input, _onProcess, onOutput) => {
         expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
@@ -421,6 +412,131 @@ describe('createMessageRuntime', () => {
     expect(result).toBe(true);
     expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
     expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
+  });
+
+  it('runs owner follow-up from paired turn outputs instead of reprocessing bot-only backlog', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-owner-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-18T09:00:00.000Z',
+      round_trip_count: 1,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-18T09:00:00.000Z',
+      updated_at: '2026-03-18T09:00:00.000Z',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'reviewer-bot@test',
+        sender_name: 'Reviewer Bot',
+        content: '**DONE_WITH_CONCERNS** raw 공개 리뷰 메시지',
+        timestamp: '2026-03-18T09:00:05.000Z',
+        is_bot_message: true,
+      },
+    ]);
+    vi.mocked(db.getRecentChatMessages).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '중복 응답 원인 분석해줘',
+        timestamp: '2026-03-18T09:00:00.000Z',
+        is_bot_message: false,
+      } as any,
+    ]);
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-owner-follow-up',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'DONE 초기 분석입니다.',
+        created_at: '2026-03-18T09:00:01.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-owner-follow-up',
+        turn_number: 2,
+        role: 'reviewer',
+        output_text:
+          '**DONE_WITH_CONCERNS** raw 채팅이 아니라 내부 상태 기반 follow-up으로 바꿔야 합니다.',
+        created_at: '2026-03-18T09:00:02.000Z',
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('중복 응답 원인 분석해줘');
+        expect(input.prompt).toContain(
+          'raw 채팅이 아니라 내부 상태 기반 follow-up으로 바꿔야 합니다.',
+        );
+        expect(input.prompt).not.toContain('raw 공개 리뷰 메시지');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE owner follow-up 처리 완료',
+          newSessionId: 'session-owner-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'DONE owner follow-up 처리 완료',
+          newSessionId: 'session-owner-follow-up',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-follow-up-from-turn-outputs',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'DONE owner follow-up 처리 완료',
+    );
   });
 
   it('ignores watcher status control messages in paired rooms', async () => {
@@ -472,7 +588,7 @@ describe('createMessageRuntime', () => {
     expect(result).toBe(true);
     expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
     expect(channel.setTyping).not.toHaveBeenCalled();
-    expect(lastAgentTimestamps[chatJid]).toBe('0');
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
     expect(saveState).toHaveBeenCalled();
   });
 
