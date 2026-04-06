@@ -4,6 +4,10 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  REMOTE_WORKER_CONTROL_PLANE_ENABLED,
+  REMOTE_WORKER_CONTROL_PLANE_HOST,
+  REMOTE_WORKER_CONTROL_PLANE_PORT,
+  REMOTE_WORKER_CONTROL_PLANE_TOKEN,
   DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
@@ -90,6 +94,7 @@ import { FAILOVER_MIN_DURATION_MS } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { recreateAllReviewerContainers } from './container-runner.js';
 import { cleanupOrphans, PROXY_BIND_HOST } from './container-runtime.js';
+import { startRemoteWorkerControlPlane } from './remote-worker-server.js';
 
 // Token rotation is initialized lazily on first use or at startup below
 
@@ -332,6 +337,24 @@ async function main(): Promise<void> {
       'Failed to start credential proxy (may already be running)',
     ),
   );
+  if (REMOTE_WORKER_CONTROL_PLANE_ENABLED) {
+    if (!REMOTE_WORKER_CONTROL_PLANE_TOKEN) {
+      logger.warn(
+        'Remote worker control plane enabled but REMOTE_WORKER_CONTROL_PLANE_TOKEN is missing; skipping startup',
+      );
+    } else {
+      startRemoteWorkerControlPlane(
+        REMOTE_WORKER_CONTROL_PLANE_PORT,
+        REMOTE_WORKER_CONTROL_PLANE_HOST,
+        REMOTE_WORKER_CONTROL_PLANE_TOKEN,
+      ).catch((err) =>
+        logger.warn(
+          { err },
+          'Failed to start remote worker control plane (may already be running)',
+        ),
+      );
+    }
+  }
   cleanupOrphans();
 
   // Recreate reviewer containers when OAuth tokens are rotated or refreshed.

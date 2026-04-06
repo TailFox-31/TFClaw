@@ -37,6 +37,7 @@ import {
   TaskRunLog,
 } from './types.js';
 import { readJsonFile } from './utils.js';
+import { ensureRemoteWorkerSchema } from './remote-worker-schema.js';
 
 let db: Database;
 type RoomModeSource = 'explicit' | 'inferred';
@@ -983,6 +984,7 @@ function createSchema(database: Database): void {
   }
 
   backfillStoredRoomSettings(database);
+  ensureRemoteWorkerSchema(database);
 }
 
 export function initDatabase(): void {
@@ -1008,6 +1010,13 @@ export function _initTestDatabase(): void {
 export function _initTestDatabaseFromFile(dbPath: string): void {
   db = new Database(dbPath);
   createSchema(db);
+}
+
+export function getDatabaseHandle(): Database {
+  if (!db) {
+    throw new Error('Database not initialized');
+  }
+  return db;
 }
 
 /** @internal - for tests only. */

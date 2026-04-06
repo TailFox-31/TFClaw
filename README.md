@@ -79,6 +79,11 @@ bun run dev                  # Dev mode with hot reload
 bun test                     # Run tests
 ```
 
+## Design Docs
+
+- [Remote Worker MVP Design](docs/remote-worker-mvp.md)
+- [Remote Worker OpenAPI](docs/remote-worker-openapi.yaml)
+
 ## License
 
 MIT — Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw)

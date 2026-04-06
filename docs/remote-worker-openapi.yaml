@@ -1,0 +1,1092 @@
+openapi: 3.1.0
+info:
+  title: EJClaw Remote Worker MVP API
+  version: 0.1.0
+  summary: Pull-based control plane API for platform-neutral remote workers.
+  description: |
+    OpenAPI description for the Remote Worker MVP described in
+    `docs/remote-worker-mvp.md`.
+
+    The API is built around a worker-pull model:
+    - EJClaw enqueues jobs.
+    - Workers register, heartbeat, and claim matching jobs.
+    - Attempt lifecycle callbacks are lease-protected with `X-Lease-Token`.
+    - Cancellation is delivered through attempt heartbeat responses.
+servers:
+  - url: https://ejclaw.example.com/v1
+    description: Example production endpoint
+tags:
+  - name: workers
+  - name: jobs
+  - name: attempts
+  - name: artifacts
+security:
+  - BearerAuth: []
+paths:
+  /workers/register:
+    post:
+      tags: [workers]
+      summary: Register or re-register a worker
+      operationId: registerWorker
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerRegisterRequest'
+      responses:
+        '200':
+          description: Worker registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerRegisterResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /workers/{worker_id}/heartbeat:
+    post:
+      tags: [workers]
+      summary: Refresh worker liveness
+      operationId: heartbeatWorker
+      parameters:
+        - $ref: '#/components/parameters/WorkerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerHeartbeatRequest'
+      responses:
+        '200':
+          description: Heartbeat accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerHeartbeatResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /workers/{worker_id}/drain:
+    post:
+      tags: [workers]
+      summary: Enable or disable drain mode for a worker
+      operationId: setWorkerDrain
+      parameters:
+        - $ref: '#/components/parameters/WorkerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerDrainRequest'
+      responses:
+        '200':
+          description: Drain state updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerDrainResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /jobs:
+    post:
+      tags: [jobs]
+      summary: Enqueue a new job
+      operationId: createJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+      responses:
+        '201':
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCreateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /jobs/claim:
+    post:
+      tags: [jobs]
+      summary: Claim the next matching job for a worker
+      operationId: claimJob
+      description: |
+        The server must evaluate worker capacity and workspace lock availability
+        inside a `BEGIN IMMEDIATE` transaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobClaimRequest'
+      responses:
+        '200':
+          description: Matching job claimed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobClaimResponse'
+        '204':
+          description: No matching job available
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '423':
+          $ref: '#/components/responses/WorkspaceLocked'
+  /jobs/{job_id}:
+    get:
+      tags: [jobs]
+      summary: Fetch current job state
+      operationId: getJob
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /jobs/{job_id}/cancel:
+    post:
+      tags: [jobs]
+      summary: Request cancellation for a queued or running job
+      operationId: cancelJob
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCancelRequest'
+      responses:
+        '200':
+          description: Cancellation accepted or completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobCancelResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+  /attempts/{attempt_id}/start:
+    post:
+      tags: [attempts]
+      summary: Mark a claimed attempt as running
+      operationId: startAttempt
+      parameters:
+        - $ref: '#/components/parameters/AttemptId'
+        - $ref: '#/components/parameters/LeaseToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttemptStartRequest'
+      responses:
+        '200':
+          description: Attempt started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptStartResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '410':
+          $ref: '#/components/responses/LeaseExpired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /attempts/{attempt_id}/heartbeat:
+    post:
+      tags: [attempts]
+      summary: Refresh attempt lease and receive cancel signals
+      operationId: heartbeatAttempt
+      parameters:
+        - $ref: '#/components/parameters/AttemptId'
+        - $ref: '#/components/parameters/LeaseToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttemptHeartbeatRequest'
+      responses:
+        '200':
+          description: Heartbeat accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptHeartbeatResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '410':
+          $ref: '#/components/responses/LeaseExpired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /attempts/{attempt_id}/complete:
+    post:
+      tags: [attempts]
+      summary: Complete an attempt successfully
+      operationId: completeAttempt
+      parameters:
+        - $ref: '#/components/parameters/AttemptId'
+        - $ref: '#/components/parameters/LeaseToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttemptCompleteRequest'
+      responses:
+        '200':
+          description: Attempt completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptCompleteResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '410':
+          $ref: '#/components/responses/LeaseExpired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /attempts/{attempt_id}/fail:
+    post:
+      tags: [attempts]
+      summary: Mark an attempt as failed
+      operationId: failAttempt
+      parameters:
+        - $ref: '#/components/parameters/AttemptId'
+        - $ref: '#/components/parameters/LeaseToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttemptFailRequest'
+      responses:
+        '200':
+          description: Failure accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptFailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '410':
+          $ref: '#/components/responses/LeaseExpired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /attempts/{attempt_id}/cancelled:
+    post:
+      tags: [attempts]
+      summary: Confirm worker-side cancellation completion
+      operationId: cancelAttempt
+      parameters:
+        - $ref: '#/components/parameters/AttemptId'
+        - $ref: '#/components/parameters/LeaseToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttemptCancelledRequest'
+      responses:
+        '200':
+          description: Attempt cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptCancelledResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/StateConflict'
+        '410':
+          $ref: '#/components/responses/LeaseExpired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /attempts/{attempt_id}/artifacts:
+    post:
+      tags: [artifacts]
+      summary: Upload an artifact for an active attempt
+      operationId: uploadArtifact
+      parameters:
+        - $ref: '#/components/parameters/AttemptId'
+        - $ref: '#/components/parameters/LeaseToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArtifactUploadRequest'
+      responses:
+        '201':
+          description: Artifact stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactUploadResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '410':
+          $ref: '#/components/responses/LeaseExpired'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+  parameters:
+    WorkerId:
+      name: worker_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/IdString'
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/IdString'
+    AttemptId:
+      name: attempt_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/IdString'
+    LeaseToken:
+      name: X-Lease-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Request body or business rule validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    StateConflict:
+      description: The requested state transition is not allowed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    LeaseExpired:
+      description: Attempt lease is stale or already revoked
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    WorkspaceLocked:
+      description: The requested workspace is already locked by another attempt
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Requested resource does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    IdString:
+      type: string
+      pattern: '^[A-Za-z0-9:_-]{1,128}$'
+    Timestamp:
+      type: string
+      format: date-time
+    CapabilityToken:
+      type: string
+      pattern: '^[a-z0-9]+:[a-z0-9._-]+$'
+    WorkerStatus:
+      type: string
+      enum: [idle, busy, offline, draining]
+    JobStatus:
+      type: string
+      enum: [queued, claimed, running, completed, failed, cancelled]
+    AttemptStatus:
+      type: string
+      enum: [claimed, running, completed, failed, lost, cancelled]
+    SessionPolicy:
+      type: string
+      enum: [fresh, prefer_reuse, require_reuse]
+    Provider:
+      type: string
+      enum: [codex, claude-code]
+    JobMode:
+      type: string
+      enum: [edit, review, build, test, unity_batch]
+    ArtifactKind:
+      type: string
+      enum:
+        - stdout
+        - stderr
+        - patch
+        - diff
+        - screenshot
+        - build_output
+        - report
+        - archive
+    MetadataObject:
+      type: object
+      additionalProperties: true
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+              additionalProperties: true
+          additionalProperties: false
+      additionalProperties: false
+    WorkerRegisterRequest:
+      type: object
+      required:
+        - worker_id
+        - display_name
+        - capability_tokens
+        - max_concurrency
+      properties:
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        capability_tokens:
+          type: array
+          items:
+            $ref: '#/components/schemas/CapabilityToken'
+          uniqueItems: true
+        max_concurrency:
+          type: integer
+          minimum: 1
+          maximum: 32
+        version:
+          type: string
+        metadata:
+          $ref: '#/components/schemas/MetadataObject'
+      additionalProperties: false
+    WorkerRegisterResponse:
+      type: object
+      required:
+        - worker_id
+        - status
+        - heartbeat_interval_sec
+        - lease_ttl_sec
+      properties:
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+        status:
+          $ref: '#/components/schemas/WorkerStatus'
+        heartbeat_interval_sec:
+          type: integer
+          minimum: 1
+        lease_ttl_sec:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    WorkerHeartbeatRequest:
+      type: object
+      required: [status, running_attempt_ids]
+      properties:
+        status:
+          $ref: '#/components/schemas/WorkerStatus'
+        running_attempt_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/IdString'
+          uniqueItems: true
+        metadata:
+          $ref: '#/components/schemas/MetadataObject'
+      additionalProperties: false
+    WorkerHeartbeatResponse:
+      type: object
+      required:
+        - accepted
+        - server_time
+        - next_heartbeat_sec
+        - drain_requested
+      properties:
+        accepted:
+          type: boolean
+        server_time:
+          $ref: '#/components/schemas/Timestamp'
+        next_heartbeat_sec:
+          type: integer
+          minimum: 1
+        drain_requested:
+          type: boolean
+      additionalProperties: false
+    WorkerDrainRequest:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+      additionalProperties: false
+    WorkerDrainResponse:
+      type: object
+      required: [worker_id, status]
+      properties:
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+        status:
+          $ref: '#/components/schemas/WorkerStatus'
+      additionalProperties: false
+    ArtifactPolicy:
+      type: object
+      additionalProperties:
+        type: string
+    JobCreateRequest:
+      type: object
+      required:
+        - workspace_key
+        - repo_url
+        - branch
+        - base_commit
+        - mode
+        - requirements
+        - prompt
+        - session_policy
+        - timeout_sec
+        - priority
+        - max_attempts
+      properties:
+        workspace_key:
+          $ref: '#/components/schemas/IdString'
+        session_key:
+          $ref: '#/components/schemas/IdString'
+        repo_url:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        branch:
+          type: string
+          minLength: 1
+          maxLength: 256
+        base_commit:
+          type: string
+          pattern: '^[a-f0-9]{7,64}$'
+        mode:
+          $ref: '#/components/schemas/JobMode'
+        requirements:
+          type: array
+          items:
+            $ref: '#/components/schemas/CapabilityToken'
+          uniqueItems: true
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 200000
+        target_files:
+          type: array
+          items:
+            type: string
+            minLength: 1
+          uniqueItems: true
+          default: []
+        session_policy:
+          $ref: '#/components/schemas/SessionPolicy'
+        artifact_policy:
+          $ref: '#/components/schemas/ArtifactPolicy'
+        timeout_sec:
+          type: integer
+          minimum: 30
+          maximum: 86400
+        priority:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 20
+      allOf:
+        - if:
+            properties:
+              session_policy:
+                enum: [prefer_reuse, require_reuse]
+            required: [session_policy]
+          then:
+            required: [session_key]
+      additionalProperties: false
+    JobCreateResponse:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          $ref: '#/components/schemas/IdString'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+      additionalProperties: false
+    JobClaimRequest:
+      type: object
+      required: [worker_id]
+      properties:
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+      additionalProperties: false
+    JobView:
+      type: object
+      required:
+        - job_id
+        - workspace_key
+        - repo_url
+        - branch
+        - base_commit
+        - mode
+        - requirements
+        - prompt
+        - status
+      properties:
+        job_id:
+          $ref: '#/components/schemas/IdString'
+        workspace_key:
+          $ref: '#/components/schemas/IdString'
+        session_key:
+          $ref: '#/components/schemas/IdString'
+        session_policy:
+          $ref: '#/components/schemas/SessionPolicy'
+        repo_url:
+          type: string
+        branch:
+          type: string
+        base_commit:
+          type: string
+        mode:
+          $ref: '#/components/schemas/JobMode'
+        requirements:
+          type: array
+          items:
+            $ref: '#/components/schemas/CapabilityToken'
+        prompt:
+          type: string
+        target_files:
+          type: array
+          items:
+            type: string
+        timeout_sec:
+          type: integer
+        priority:
+          type: integer
+        max_attempts:
+          type: integer
+        attempt_count:
+          type: integer
+        assigned_worker_id:
+          $ref: '#/components/schemas/IdString'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        cancel_requested:
+          type: boolean
+        cancel_reason:
+          type: string
+        result_summary:
+          type: string
+        result_json:
+          type: object
+          additionalProperties: true
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        claimed_at:
+          $ref: '#/components/schemas/Timestamp'
+        started_at:
+          $ref: '#/components/schemas/Timestamp'
+        finished_at:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    AttemptLease:
+      type: object
+      required:
+        - attempt_id
+        - lease_token
+        - heartbeat_interval_sec
+        - lease_ttl_sec
+      properties:
+        attempt_id:
+          $ref: '#/components/schemas/IdString'
+        lease_token:
+          type: string
+          minLength: 1
+        heartbeat_interval_sec:
+          type: integer
+          minimum: 1
+        lease_ttl_sec:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    SessionResume:
+      type: object
+      required: [provider, opaque_session_id]
+      properties:
+        provider:
+          $ref: '#/components/schemas/Provider'
+        opaque_session_id:
+          type: string
+          minLength: 1
+      additionalProperties: false
+    SessionContext:
+      type: object
+      required: [session_policy]
+      properties:
+        session_key:
+          $ref: '#/components/schemas/IdString'
+        session_policy:
+          $ref: '#/components/schemas/SessionPolicy'
+        resume:
+          oneOf:
+            - $ref: '#/components/schemas/SessionResume'
+            - type: 'null'
+      additionalProperties: false
+    JobClaimResponse:
+      type: object
+      required: [job, attempt, session]
+      properties:
+        job:
+          $ref: '#/components/schemas/JobView'
+        attempt:
+          $ref: '#/components/schemas/AttemptLease'
+        session:
+          $ref: '#/components/schemas/SessionContext'
+      additionalProperties: false
+    AttemptStartRequest:
+      type: object
+      required: [worker_id, provider, opaque_session_id, session_reused]
+      properties:
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+        provider:
+          $ref: '#/components/schemas/Provider'
+        opaque_session_id:
+          type: string
+          minLength: 1
+        session_reused:
+          type: boolean
+      additionalProperties: false
+    AttemptStartResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          const: running
+      additionalProperties: false
+    AttemptHeartbeatRequest:
+      type: object
+      required: [worker_id]
+      properties:
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+        progress_phase:
+          type: string
+          maxLength: 128
+        progress_message:
+          type: string
+          maxLength: 2000
+        session_touch:
+          type: boolean
+      additionalProperties: false
+    AttemptHeartbeatResponse:
+      type: object
+      required: [accepted, lease_expires_at, cancel_requested]
+      properties:
+        accepted:
+          type: boolean
+        lease_expires_at:
+          $ref: '#/components/schemas/Timestamp'
+        cancel_requested:
+          type: boolean
+        cancel_reason:
+          type: string
+        interrupt_deadline_at:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    AttemptCompleteRequest:
+      type: object
+      required: [worker_id, result_summary]
+      properties:
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+        result_summary:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        result_json:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    AttemptCompleteResponse:
+      type: object
+      required: [job_status]
+      properties:
+        job_status:
+          const: completed
+      additionalProperties: false
+    AttemptFailRequest:
+      type: object
+      required: [worker_id, failure_code, failure_message, retryable]
+      properties:
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+        failure_code:
+          type: string
+          minLength: 1
+          maxLength: 128
+        failure_message:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        retryable:
+          type: boolean
+        result_json:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    AttemptFailResponse:
+      type: object
+      required: [job_status]
+      properties:
+        job_status:
+          $ref: '#/components/schemas/JobStatus'
+      additionalProperties: false
+    AttemptCancelledRequest:
+      type: object
+      required: [worker_id]
+      properties:
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+        result_summary:
+          type: string
+          maxLength: 4000
+        result_json:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    AttemptCancelledResponse:
+      type: object
+      required: [job_status]
+      properties:
+        job_status:
+          const: cancelled
+      additionalProperties: false
+    ArtifactUploadInlineRequest:
+      type: object
+      required:
+        - kind
+        - storage_type
+        - content_base64
+        - content_type
+      properties:
+        kind:
+          $ref: '#/components/schemas/ArtifactKind'
+        storage_type:
+          const: inline
+        content_base64:
+          type: string
+          minLength: 1
+        content_type:
+          type: string
+          minLength: 1
+        sha256:
+          type: string
+        size_bytes:
+          type: integer
+          minimum: 0
+        metadata:
+          $ref: '#/components/schemas/MetadataObject'
+      additionalProperties: false
+    ArtifactUploadRemoteUrlRequest:
+      type: object
+      required:
+        - kind
+        - storage_type
+        - locator_url
+        - content_type
+      properties:
+        kind:
+          $ref: '#/components/schemas/ArtifactKind'
+        storage_type:
+          const: remote_url
+        locator_url:
+          type: string
+          format: uri
+        content_type:
+          type: string
+          minLength: 1
+        sha256:
+          type: string
+        size_bytes:
+          type: integer
+          minimum: 0
+        metadata:
+          $ref: '#/components/schemas/MetadataObject'
+      additionalProperties: false
+    ArtifactUploadRequest:
+      oneOf:
+        - $ref: '#/components/schemas/ArtifactUploadInlineRequest'
+        - $ref: '#/components/schemas/ArtifactUploadRemoteUrlRequest'
+    ArtifactUploadResponse:
+      type: object
+      required: [artifact_id]
+      properties:
+        artifact_id:
+          $ref: '#/components/schemas/IdString'
+      additionalProperties: false
+    JobCancelRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 1000
+      additionalProperties: false
+    JobCancelResponse:
+      type: object
+      required: [job_status, cancel_requested]
+      properties:
+        job_status:
+          $ref: '#/components/schemas/JobStatus'
+        cancel_requested:
+          type: boolean
+        interrupt_deadline_at:
+          $ref: '#/components/schemas/Timestamp'
+      additionalProperties: false
+    AttemptSummary:
+      type: object
+      required:
+        - attempt_id
+        - job_id
+        - attempt_no
+        - worker_id
+        - status
+        - claimed_at
+      properties:
+        attempt_id:
+          $ref: '#/components/schemas/IdString'
+        job_id:
+          $ref: '#/components/schemas/IdString'
+        attempt_no:
+          type: integer
+          minimum: 1
+        worker_id:
+          $ref: '#/components/schemas/IdString'
+        status:
+          $ref: '#/components/schemas/AttemptStatus'
+        claimed_at:
+          $ref: '#/components/schemas/Timestamp'
+        started_at:
+          $ref: '#/components/schemas/Timestamp'
+        last_heartbeat_at:
+          $ref: '#/components/schemas/Timestamp'
+        interrupt_deadline_at:
+          $ref: '#/components/schemas/Timestamp'
+        finished_at:
+          $ref: '#/components/schemas/Timestamp'
+        exit_code:
+          type: integer
+        failure_code:
+          type: string
+        failure_message:
+          type: string
+        result_summary:
+          type: string
+      additionalProperties: false
+    ArtifactSummary:
+      type: object
+      required:
+        - artifact_id
+        - kind
+        - storage_type
+        - created_at
+      properties:
+        artifact_id:
+          $ref: '#/components/schemas/IdString'
+        attempt_id:
+          $ref: '#/components/schemas/IdString'
+        kind:
+          $ref: '#/components/schemas/ArtifactKind'
+        storage_type:
+          type: string
+          enum: [inline, remote_url, local_file]
+        locator:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+        sha256:
+          type: string
+        created_at:
+          $ref: '#/components/schemas/Timestamp'
+        metadata:
+          $ref: '#/components/schemas/MetadataObject'
+      additionalProperties: false
+    JobStatusResponse:
+      type: object
+      required: [job, history_summary]
+      properties:
+        job:
+          $ref: '#/components/schemas/JobView'
+        latest_attempt:
+          oneOf:
+            - $ref: '#/components/schemas/AttemptSummary'
+            - type: 'null'
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArtifactSummary'
+        history_summary:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttemptSummary'
+      additionalProperties: false
