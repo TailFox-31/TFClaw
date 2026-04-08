@@ -50,6 +50,8 @@ export function buildClaudeUsageRows(
   claudeAccounts: ClaudeAccountUsage[],
 ): UsageRow[] {
   const isMultiAccount = claudeAccounts.length > 1;
+  const normalizePct = (utilization: number) =>
+    utilization >= 1 ? Math.round(utilization) : Math.round(utilization * 100);
 
   return claudeAccounts.map((account) => {
     const usage = account.usage;
@@ -63,17 +65,9 @@ export function buildClaudeUsageRows(
 
     return {
       name: label,
-      h5pct: h5
-        ? h5.utilization > 1
-          ? Math.round(h5.utilization)
-          : Math.round(h5.utilization * 100)
-        : -1,
+      h5pct: h5 ? normalizePct(h5.utilization) : -1,
       h5reset: h5 ? formatResetRemaining(h5.resets_at) : '',
-      d7pct: d7
-        ? d7.utilization > 1
-          ? Math.round(d7.utilization)
-          : Math.round(d7.utilization * 100)
-        : -1,
+      d7pct: d7 ? normalizePct(d7.utilization) : -1,
       d7reset: d7 ? formatResetRemaining(d7.resets_at) : '',
     };
   });

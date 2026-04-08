@@ -208,4 +208,31 @@ describe('dashboard Claude usage rows', () => {
       usage: liveAccounts[1].usage,
     });
   });
+
+  it('treats utilization=1 as 1 percent, not 100 percent', () => {
+    const rows = buildClaudeUsageRows([
+      {
+        index: 0,
+        masked: 'tok-a',
+        isActive: true,
+        isRateLimited: false,
+        usage: {
+          five_hour: {
+            utilization: 1,
+            resets_at: '2026-03-24T04:00:00+09:00',
+          },
+          seven_day: {
+            utilization: 1,
+            resets_at: '2026-03-29T04:00:00+09:00',
+          },
+        },
+      },
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      h5pct: 1,
+      d7pct: 1,
+    });
+  });
 });
