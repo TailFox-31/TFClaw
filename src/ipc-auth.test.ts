@@ -675,6 +675,39 @@ Managed by host-driven watcher.
     expect(tasks[0].max_duration_ms).toBe(DEFAULT_WATCH_CI_MAX_DURATION_MS);
   });
 
+  it('persists structured remote worker watch metadata for host-driven watchers', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+Remote worker job job_abc
+
+Check instructions:
+Managed by host-driven watcher.
+        `.trim(),
+        schedule_type: 'interval',
+        schedule_value: '15000',
+        ci_provider: 'remote-worker',
+        ci_metadata: JSON.stringify({
+          job_id: 'job_abc',
+        }),
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].ci_provider).toBe('remote-worker');
+    expect(tasks[0].ci_metadata).toContain('job_abc');
+    expect(tasks[0].max_duration_ms).toBe(DEFAULT_WATCH_CI_MAX_DURATION_MS);
+  });
+
   it('does not assign a max duration to regular scheduled tasks', async () => {
     await processTaskIpc(
       {
@@ -894,10 +927,9 @@ describe('assign_room success', () => {
       modeSource: 'explicit',
       name: 'Legacy Tribunal Renamed',
     });
-    expect(getRegisteredAgentTypesForJid('legacy-tribunal@g.us').sort()).toEqual([
-      'claude-code',
-      'codex',
-    ]);
+    expect(
+      getRegisteredAgentTypesForJid('legacy-tribunal@g.us').sort(),
+    ).toEqual(['claude-code', 'codex']);
   });
 
   it('main group can assign a tribunal room and materialize capability rows', async () => {

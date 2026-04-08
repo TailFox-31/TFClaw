@@ -6,7 +6,7 @@ export const MAX_WATCH_CI_INTERVAL_SECONDS = 3600;
 export const DEFAULT_WATCH_CI_CONTEXT_MODE = 'isolated';
 
 export interface NormalizeWatchCiIntervalOptions {
-  ciProvider?: 'github';
+  ciProvider?: 'github' | 'remote-worker';
 }
 
 export interface BuildCiWatchPromptArgs {
@@ -18,11 +18,13 @@ export function normalizeWatchCiIntervalSeconds(
   seconds?: number,
   options?: NormalizeWatchCiIntervalOptions,
 ): number {
-  const isGitHub = options?.ciProvider === 'github';
-  const defaultSeconds = isGitHub
+  const isHostDriven =
+    options?.ciProvider === 'github' ||
+    options?.ciProvider === 'remote-worker';
+  const defaultSeconds = isHostDriven
     ? DEFAULT_GITHUB_WATCH_CI_INTERVAL_SECONDS
     : DEFAULT_WATCH_CI_INTERVAL_SECONDS;
-  const minSeconds = isGitHub
+  const minSeconds = isHostDriven
     ? MIN_GITHUB_WATCH_CI_INTERVAL_SECONDS
     : MIN_WATCH_CI_INTERVAL_SECONDS;
 

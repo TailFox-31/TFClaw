@@ -22,6 +22,12 @@ export function isGitHubCiTask(
   return task.ci_provider === 'github';
 }
 
+export function isRemoteWorkerWatchTask(
+  task: Pick<ScheduledTask, 'ci_provider'>,
+): boolean {
+  return task.ci_provider === 'remote-worker';
+}
+
 export function isTaskStatusControlMessage(content: string): boolean {
   return content.startsWith(TASK_STATUS_MESSAGE_PREFIX);
 }

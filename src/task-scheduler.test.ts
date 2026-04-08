@@ -5,6 +5,7 @@ const {
   writeTasksSnapshotMock,
   loggerDebugMock,
   checkGitHubActionsRunMock,
+  checkRemoteWorkerJobMock,
 } = vi.hoisted(() => ({
   runAgentProcessMock: vi.fn(async () => ({
     status: 'success' as const,
@@ -20,6 +21,16 @@ const {
     }> => ({
       terminal: false,
       resultSummary: 'GitHub Actions run 123 is in_progress',
+    }),
+  ),
+  checkRemoteWorkerJobMock: vi.fn(
+    async (): Promise<{
+      terminal: boolean;
+      resultSummary: string;
+      completionMessage?: string;
+    }> => ({
+      terminal: false,
+      resultSummary: 'Remote worker job job_123 is running',
     }),
   ),
 }));
@@ -134,6 +145,26 @@ vi.mock('./github-ci.js', () => ({
   ),
 }));
 
+vi.mock('./remote-worker-watch.js', () => ({
+  checkRemoteWorkerJob: checkRemoteWorkerJobMock,
+  computeRemoteWorkerWatcherDelayMs: vi.fn(
+    (task: { schedule_value: string }) => {
+      const baseDelayMs = Number.parseInt(task.schedule_value, 10);
+      return Number.isFinite(baseDelayMs) && baseDelayMs > 0
+        ? baseDelayMs
+        : 15_000;
+    },
+  ),
+  MAX_REMOTE_WORKER_CONSECUTIVE_ERRORS: 5,
+  parseRemoteWorkerWatchMetadata: vi.fn((raw: string | null | undefined) => {
+    if (!raw) return null;
+    return JSON.parse(raw);
+  }),
+  serializeRemoteWorkerWatchMetadata: vi.fn((metadata: unknown) =>
+    JSON.stringify(metadata),
+  ),
+}));
+
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import { TIMEZONE } from './config.js';
@@ -175,6 +206,11 @@ describe('task scheduler', () => {
     checkGitHubActionsRunMock.mockResolvedValue({
       terminal: false,
       resultSummary: 'GitHub Actions run 123 is in_progress',
+    });
+    checkRemoteWorkerJobMock.mockClear();
+    checkRemoteWorkerJobMock.mockResolvedValue({
+      terminal: false,
+      resultSummary: 'Remote worker job job_123 is running',
     });
     // No fallback provider setup needed
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(1);
@@ -1147,6 +1183,143 @@ Managed by host-driven watcher.
     );
     expect(runAgentProcessMock).not.toHaveBeenCalled();
     expect(getTaskById('task-github-complete')).toBeUndefined();
+  });
+
+  it('uses the host-driven remote worker watcher path without spawning an agent', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-remote-worker-running',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      ci_provider: 'remote-worker',
+      ci_metadata: JSON.stringify({
+        job_id: 'job_123',
+      }),
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+Remote worker job job_123
+
+Check instructions:
+Managed by host-driven watcher.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '15000',
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(checkRemoteWorkerJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'task-remote-worker-running',
+        ci_provider: 'remote-worker',
+      }),
+    );
+    expect(runAgentProcessMock).not.toHaveBeenCalled();
+
+    const task = getTaskById('task-remote-worker-running');
+    expect(task).toBeDefined();
+    expect(task?.next_run).not.toBe(dueAt);
+    expect(task?.ci_metadata).toContain('"poll_count":1');
+    expect(task?.ci_metadata).toContain('"consecutive_errors":0');
+  });
+
+  it('sends a final message and deletes terminal remote worker watcher tasks', async () => {
+    checkRemoteWorkerJobMock.mockResolvedValueOnce({
+      terminal: true,
+      resultSummary: '성공: remote worker job job_456',
+      completionMessage:
+        '원격 작업 완료: Remote worker job job_456\n판정: 성공\n- PR: https://github.com/TailFox-31/idle-game/pull/99',
+    });
+
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-remote-worker-complete',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      ci_provider: 'remote-worker',
+      ci_metadata: JSON.stringify({
+        job_id: 'job_456',
+      }),
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+Remote worker job job_456
+
+Check instructions:
+Managed by host-driven watcher.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '15000',
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const sendMessage = vi.fn(async () => {});
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      '원격 작업 완료: Remote worker job job_456\n판정: 성공\n- PR: https://github.com/TailFox-31/idle-game/pull/99',
+    );
+    expect(runAgentProcessMock).not.toHaveBeenCalled();
+    expect(getTaskById('task-remote-worker-complete')).toBeUndefined();
   });
 
   it('backs off long-running GitHub watchers based on elapsed time', async () => {

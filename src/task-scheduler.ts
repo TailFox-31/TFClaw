@@ -58,6 +58,7 @@ import {
   getTaskQueueJid,
   getTaskRuntimeTaskId,
   isGitHubCiTask,
+  isRemoteWorkerWatchTask,
   shouldUseTaskScopedSession,
 } from './task-watch-status.js';
 import { AgentType, RegisteredGroup, ScheduledTask } from './types.js';
@@ -69,6 +70,13 @@ import {
   parseGitHubCiMetadata,
   serializeGitHubCiMetadata,
 } from './github-ci.js';
+import {
+  checkRemoteWorkerJob,
+  computeRemoteWorkerWatcherDelayMs,
+  MAX_REMOTE_WORKER_CONSECUTIVE_ERRORS,
+  parseRemoteWorkerWatchMetadata,
+  serializeRemoteWorkerWatchMetadata,
+} from './remote-worker-watch.js';
 export {
   extractWatchCiTarget,
   getTaskQueueJid,
@@ -844,6 +852,145 @@ async function runGithubCiTask(
   );
 }
 
+async function runRemoteWorkerWatchTask(
+  task: ScheduledTask,
+  deps: SchedulerDependencies,
+): Promise<void> {
+  const startTime = Date.now();
+  const runAtIso = new Date().toISOString();
+  let result: string | null = null;
+  let error: string | null = null;
+  let completedAndDeleted = false;
+  let paused = false;
+  const statusTracker = createTaskStatusTracker(task, {
+    sendTrackedMessage: deps.sendTrackedMessage,
+    editTrackedMessage: deps.editTrackedMessage,
+  });
+  const parsedMetadata = parseRemoteWorkerWatchMetadata(task.ci_metadata);
+  const metadata = parsedMetadata
+    ? {
+        ...parsedMetadata,
+        poll_count: (parsedMetadata.poll_count ?? 0) + 1,
+        last_checked_at: runAtIso,
+      }
+    : null;
+
+  try {
+    await statusTracker.update('checking');
+
+    const check = await checkRemoteWorkerJob(task);
+    result = check.resultSummary;
+
+    if (metadata) {
+      metadata.consecutive_errors = 0;
+    }
+
+    if (check.terminal) {
+      await statusTracker.update('completed');
+      if (check.completionMessage) {
+        const send =
+          hasReviewerLease(task.chat_jid) && deps.sendMessageViaReviewerBot
+            ? deps.sendMessageViaReviewerBot
+            : deps.sendMessage;
+        await send(task.chat_jid, check.completionMessage);
+      }
+      deleteTask(task.id);
+      completedAndDeleted = true;
+      logger.info(
+        {
+          taskId: task.id,
+          groupFolder: task.group_folder,
+          durationMs: Date.now() - startTime,
+        },
+        'Remote worker watcher completed and deleted',
+      );
+    } else {
+      logger.info(
+        {
+          taskId: task.id,
+          groupFolder: task.group_folder,
+          result,
+        },
+        'Remote worker watcher checked non-terminal job',
+      );
+    }
+  } catch (err) {
+    error = getErrorMessage(err);
+    if (metadata) {
+      metadata.consecutive_errors = (metadata.consecutive_errors ?? 0) + 1;
+    }
+    logger.error({ taskId: task.id, error }, 'Remote worker watcher failed');
+  }
+
+  const durationMs = Date.now() - startTime;
+  const currentTask = getTaskById(task.id);
+  const nextRun = currentTask
+    ? new Date(
+        Date.now() + computeRemoteWorkerWatcherDelayMs(currentTask),
+      ).toISOString()
+    : null;
+
+  if (!currentTask) {
+    if (!completedAndDeleted) {
+      await statusTracker.update('completed');
+    }
+    logger.debug(
+      { taskId: task.id },
+      'Remote worker watcher deleted during execution, skipping persistence',
+    );
+    return;
+  }
+
+  if (metadata) {
+    updateTask(task.id, {
+      ci_metadata: serializeRemoteWorkerWatchMetadata(metadata),
+    });
+  }
+
+  if (
+    error &&
+    metadata &&
+    (metadata.consecutive_errors ?? 0) >= MAX_REMOTE_WORKER_CONSECUTIVE_ERRORS
+  ) {
+    paused = true;
+    updateTask(task.id, { status: 'paused' });
+    await deps.sendMessage(
+      task.chat_jid,
+      [
+        `원격 작업 감시 일시정지: ${extractWatchCiTarget(task.prompt) || task.id}`,
+        `- 사유: control plane 연속 ${metadata.consecutive_errors}회 실패`,
+        `- 마지막 오류: ${error.slice(0, 200)}`,
+        `- 태스크 ID: \`${task.id}\``,
+      ].join('\n'),
+    );
+  }
+
+  if (error && !paused) {
+    await statusTracker.update('retrying', nextRun);
+  } else if (paused) {
+    // Paused tasks keep their current status message state; the pause notice is sent separately.
+  } else if (nextRun) {
+    await statusTracker.update('waiting', nextRun);
+  } else {
+    await statusTracker.update('completed');
+  }
+
+  logTaskRun({
+    task_id: task.id,
+    run_at: new Date().toISOString(),
+    duration_ms: durationMs,
+    status: error ? 'error' : 'success',
+    result,
+    error,
+  });
+
+  updateTaskAfterRun(
+    task.id,
+    nextRun,
+    error ? `Error: ${error}` : result || 'Completed',
+  );
+}
+
 /**
  * Execute one scheduler tick without timer/in-flight coordination.
  * This keeps the scheduler loop focused on timing while tests and debugging
@@ -893,7 +1040,9 @@ export async function runSchedulerTickOnce(
     deps.queue.enqueueTask(getTaskQueueJid(currentTask), currentTask.id, () =>
       isGitHubCiTask(currentTask)
         ? runGithubCiTask(currentTask, deps)
-        : runTask(currentTask, deps),
+        : isRemoteWorkerWatchTask(currentTask)
+          ? runRemoteWorkerWatchTask(currentTask, deps)
+          : runTask(currentTask, deps),
     );
   }
 }

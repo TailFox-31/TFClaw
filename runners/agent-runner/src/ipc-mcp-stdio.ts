@@ -337,6 +337,92 @@ server.tool(
 );
 
 server.tool(
+  'watch_remote_worker_job',
+  'Schedule a background watcher that polls a remote worker job until it reaches a terminal state, then sends one Discord message and stops itself.',
+  {
+    job_id: z
+      .string()
+      .min(1)
+      .describe('Remote worker job ID, for example "job_1234abcd-..."'),
+    poll_interval_seconds: z
+      .number()
+      .int()
+      .min(10)
+      .max(3600)
+      .optional()
+      .describe(
+        'How often to poll in seconds. Defaults to 15 for host-driven remote worker watchers.',
+      ),
+    context_mode: z
+      .enum(['group', 'isolated'])
+      .default(DEFAULT_WATCH_CI_CONTEXT_MODE)
+      .describe(
+        'group=runs with chat history and memory, isolated=fresh session. Default: isolated.',
+      ),
+    target_group_jid: z
+      .string()
+      .optional()
+      .describe(
+        '(Main group only) JID of the group to schedule the watcher for. Defaults to the current group.',
+      ),
+  },
+  async (args) => {
+    let pollSeconds: number;
+    try {
+      pollSeconds = normalizeWatchCiIntervalSeconds(args.poll_interval_seconds, {
+        ciProvider: 'remote-worker',
+      });
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: error instanceof Error ? error.message : String(error),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const targetJid =
+      isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const prompt = buildCiWatchPrompt({
+      target: `Remote worker job ${args.job_id}`,
+      checkInstructions:
+        'This watcher is handled by the host-driven remote worker path. Do not rely on the prompt for execution.',
+    });
+
+    const data = {
+      type: 'schedule_task',
+      taskId,
+      prompt,
+      schedule_type: 'interval' as const,
+      schedule_value: String(pollSeconds * 1000),
+      context_mode: args.context_mode || DEFAULT_WATCH_CI_CONTEXT_MODE,
+      ci_provider: 'remote-worker' as const,
+      ci_metadata: JSON.stringify({
+        job_id: args.job_id,
+      }),
+      targetJid,
+      createdBy: groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Remote worker watcher scheduled for ${args.job_id} (${pollSeconds}s interval)`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
   'list_tasks',
   "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
   {},

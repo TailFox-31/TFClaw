@@ -289,7 +289,7 @@ export async function processTaskIpc(
     schedule_type?: string;
     schedule_value?: string;
     context_mode?: string;
-    ci_provider?: 'github';
+    ci_provider?: 'github' | 'remote-worker';
     ci_metadata?: string;
     groupFolder?: string;
     chatJid?: string;
@@ -701,7 +701,10 @@ export async function processTaskIpc(
         break;
       }
 
-      if (Array.isArray(data.keywords) && !data.keywords.every((v) => typeof v === 'string')) {
+      if (
+        Array.isArray(data.keywords) &&
+        !data.keywords.every((v) => typeof v === 'string')
+      ) {
         logger.warn(
           { sourceGroup, keywords: data.keywords },
           'Invalid persist_memory request - keywords must be strings',
@@ -717,10 +720,13 @@ export async function processTaskIpc(
         memoryKind:
           typeof data.memory_kind === 'string' ? data.memory_kind : null,
         sourceKind:
-          (data.source_kind as 'compact' | 'explicit' | 'import' | 'system' | undefined) ??
-          'compact',
-        sourceRef:
-          typeof data.source_ref === 'string' ? data.source_ref : null,
+          (data.source_kind as
+            | 'compact'
+            | 'explicit'
+            | 'import'
+            | 'system'
+            | undefined) ?? 'compact',
+        sourceRef: typeof data.source_ref === 'string' ? data.source_ref : null,
       });
       logger.info(
         {
