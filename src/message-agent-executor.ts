@@ -63,6 +63,7 @@ import {
   evaluateStreamedOutput,
   type StreamedOutputState,
 } from './streamed-output-evaluator.js';
+import { getIpcOutputSnapshot } from './ipc-output-tracker.js';
 import {
   detectCodexRotationTrigger,
   rotateCodexToken,
@@ -306,6 +307,17 @@ export async function runAgentForGroup(
   let pairedExecutionCompleted = false;
   let pairedSawOutput = false;
   let pairedFailureHandledByHandoff = false;
+  const initialIpcOutputSnapshot = getIpcOutputSnapshot(group.folder, chatJid);
+
+  const getIpcOutputDelta = () => {
+    const current = getIpcOutputSnapshot(group.folder, chatJid);
+    const hasNewOutput = current.count > initialIpcOutputSnapshot.count;
+    return {
+      hasNewOutput,
+      latestText: hasNewOutput ? current.latestText : null,
+      countDelta: Math.max(0, current.count - initialIpcOutputSnapshot.count),
+    };
+  };
 
   const shouldHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -885,10 +897,27 @@ export async function runAgentForGroup(
           : null);
     }
 
+    const ipcOutputDelta = getIpcOutputDelta();
+    const sawVisibleOutput =
+      primaryAttempt.sawVisibleOutput || ipcOutputDelta.hasNewOutput;
+    const sawOutput = primaryAttempt.sawOutput || ipcOutputDelta.hasNewOutput;
+
+    if (ipcOutputDelta.latestText) {
+      pairedExecutionSummary = ipcOutputDelta.latestText.slice(0, 500);
+      pairedFullOutput = ipcOutputDelta.latestText;
+      log.info(
+        {
+          countDelta: ipcOutputDelta.countDelta,
+          textPreview: ipcOutputDelta.latestText.slice(0, 120),
+        },
+        'Detected IPC-delivered visible output for current agent run',
+      );
+    }
+
     if (
       canRotateToken &&
       provider === 'claude' &&
-      !primaryAttempt.sawOutput &&
+      !sawOutput &&
       primaryAttempt.streamedTriggerReason &&
       output.status !== 'error'
     ) {
@@ -920,7 +949,7 @@ export async function runAgentForGroup(
       if (
         canRotateToken &&
         provider === 'claude' &&
-        !primaryAttempt.sawOutput
+        !sawOutput
       ) {
         const trigger = primaryAttempt.streamedTriggerReason
           ? {
@@ -996,7 +1025,7 @@ export async function runAgentForGroup(
         isClaudeCodeAgent &&
         maybeHandoffToCodex(
           primaryAttempt.streamedTriggerReason.reason,
-          primaryAttempt.sawVisibleOutput,
+          sawVisibleOutput,
         )
       ) {
         return 'success';
@@ -1014,7 +1043,7 @@ export async function runAgentForGroup(
     // But if output was already delivered to Discord (sawOutput), treat as success.
     if (
       primaryAttempt.sawSuccessNullResultWithoutOutput &&
-      !primaryAttempt.sawOutput
+      !sawOutput
     ) {
       log.error(
         'Agent returned success with null result and no visible output',
@@ -1023,7 +1052,7 @@ export async function runAgentForGroup(
     }
 
     pairedExecutionStatus = 'succeeded';
-    pairedSawOutput = primaryAttempt.sawOutput;
+    pairedSawOutput = sawOutput;
     return 'success';
   } finally {
     if (pairedExecutionContext && !pairedExecutionCompleted) {

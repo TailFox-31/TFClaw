@@ -22,6 +22,7 @@ import {
   isWatchCiTask,
 } from './task-watch-status.js';
 import { AgentType, RegisteredGroup, RoomMode } from './types.js';
+import { recordIpcOutputDelivered } from './ipc-output-tracker.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
@@ -190,6 +191,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   await deps.sendMessage(msg.chatJid, msg.text);
+                  recordIpcOutputDelivered(
+                    sourceGroup,
+                    msg.chatJid,
+                    msg.text,
+                  );
                   logger.info(
                     {
                       transition: 'ipc:auth:allow',

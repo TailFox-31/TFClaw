@@ -155,6 +155,10 @@ import * as agentRunner from './agent-runner.js';
 import type { AgentOutput } from './agent-runner.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import * as db from './db.js';
+import {
+  recordIpcOutputDelivered,
+  resetIpcOutputTracker,
+} from './ipc-output-tracker.js';
 import { buildRoomMemoryBriefing } from './sqlite-memory-store.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import * as pairedExecutionContext from './paired-execution-context.js';
@@ -187,6 +191,10 @@ function makeDeps() {
     clearSession: vi.fn(),
   };
 }
+
+beforeEach(() => {
+  resetIpcOutputTracker();
+});
 
 describe('runAgentForGroup room memory', () => {
   beforeEach(() => {
@@ -830,6 +838,85 @@ describe('runAgentForGroup room memory', () => {
       undefined,
     );
   });
+
+  it('uses IPC-delivered reviewer text as the paired execution summary', async () => {
+    const deps = makeDeps();
+    const pairedTask = {
+      id: 'paired-task-ipc-review',
+      chat_jid: 'group@test',
+      group_folder: 'test-claude',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-04-09T00:00:00.000Z',
+      status: 'in_review' as const,
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-09T00:00:00.000Z',
+      updated_at: '2026-04-09T00:00:00.000Z',
+    };
+
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      ...pairedTask,
+      status: 'review_ready',
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue(pairedTask);
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: pairedTask,
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '검증 진행 중...',
+        });
+        recordIpcOutputDelivered(
+          'test-claude',
+          'group@test',
+          'DONE reviewer IPC 완료',
+        );
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(deps, {
+      group: makeGroup(),
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-ipc-review-summary',
+    });
+
+    expect(result).toBe('success');
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'paired-task-ipc-review',
+        role: 'reviewer',
+        status: 'succeeded',
+        summary: 'DONE reviewer IPC 완료',
+      }),
+    );
+    expect(deps.queue.enqueueMessageCheck).toHaveBeenCalledWith('group@test');
+    expect(db.insertPairedTurnOutput).toHaveBeenCalledWith(
+      'paired-task-ipc-review',
+      1,
+      'reviewer',
+      'DONE reviewer IPC 완료',
+    );
+  });
 });
 
 describe('runAgentForGroup Claude rotation', () => {
@@ -1187,6 +1274,44 @@ describe('runAgentForGroup Claude rotation', () => {
 
     expect(result).toBe('error');
     expect(outputs).toEqual(['대화 요약 중...']);
+    expect(db.createServiceHandoff).not.toHaveBeenCalled();
+  });
+
+  it('treats IPC-delivered reviewer output as visible output for success-null-result completion', async () => {
+    const outputs: string[] = [];
+    const deps = makeDeps();
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '검증 진행 중...',
+        });
+        recordIpcOutputDelivered(
+          'test-claude',
+          'group@test',
+          'DONE reviewer IPC 완료',
+        );
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(deps, {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-ipc-output-counts-as-visible-output',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(outputs).toEqual(['검증 진행 중...']);
     expect(db.createServiceHandoff).not.toHaveBeenCalled();
   });
 
