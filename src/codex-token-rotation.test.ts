@@ -56,6 +56,18 @@ function createFakeAccounts(homeDir: string, count: number): void {
   }
 }
 
+function createDefaultAccount(homeDir: string): void {
+  const dir = path.join(homeDir, '.codex');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'auth.json'),
+    JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: { account_id: 'acct-default', access_token: 'token-default' },
+    }),
+  );
+}
+
 describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
   let tempHome: string;
 
@@ -120,5 +132,53 @@ describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
     const active = accounts.find((a) => a.isActive);
     expect(active).toBeDefined();
     expect(active!.index).toBe(1); // fallback picks next non-rate-limited
+  });
+});
+
+describe('codex-token-rotation default account fallback', () => {
+  let tempHome: string;
+
+  beforeEach(() => {
+    vi.resetModules();
+    tempHome = fs.mkdtempSync(path.join('/tmp', 'ejclaw-codex-default-'));
+    process.env.CODEX_ROT_TEST_HOME = tempHome;
+  });
+
+  afterEach(() => {
+    delete process.env.CODEX_ROT_TEST_HOME;
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it('registers ~/.codex as a single fallback account when .codex-accounts is missing', async () => {
+    createDefaultAccount(tempHome);
+
+    const mod = await import('./codex-token-rotation.js');
+    mod.initCodexTokenRotation();
+
+    expect(mod.getCodexAccountCount()).toBe(1);
+    expect(mod.getActiveCodexAuthPath()).toBe(
+      path.join(tempHome, '.codex', 'auth.json'),
+    );
+    expect(mod.getAllCodexAccounts()).toEqual([
+      expect.objectContaining({
+        index: 0,
+        accountId: 'acct-default',
+        homeDir: path.join(tempHome, '.codex'),
+        isActive: true,
+      }),
+    ]);
+  });
+
+  it('prefers numbered rotation accounts over the default ~/.codex fallback', async () => {
+    createFakeAccounts(tempHome, 2);
+    createDefaultAccount(tempHome);
+
+    const mod = await import('./codex-token-rotation.js');
+    mod.initCodexTokenRotation();
+
+    expect(mod.getCodexAccountCount()).toBe(2);
+    expect(mod.getActiveCodexAuthPath()).toBe(
+      path.join(tempHome, '.codex-accounts', '0', 'auth.json'),
+    );
   });
 });

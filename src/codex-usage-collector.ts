@@ -27,16 +27,22 @@ export interface CodexUsageRefreshResult {
   fetchedAt: string | null;
 }
 
-const CODEX_ACCOUNTS_DIR = path.join(os.homedir(), '.codex-accounts');
-
 /** Full scan interval — exported so the orchestrator can schedule it. */
 export const CODEX_FULL_SCAN_INTERVAL = 3_600_000; // 1 hour
 
 export async function fetchCodexUsage(
   codexHomeOverride?: string,
 ): Promise<CodexRateLimit[] | null> {
+  const voltaBin = path.join(os.homedir(), '.volta', 'bin', 'codex');
+  const bunBin = path.join(os.homedir(), '.bun', 'bin', 'codex');
   const npmGlobalBin = path.join(os.homedir(), '.npm-global', 'bin', 'codex');
-  const codexBin = fs.existsSync(npmGlobalBin) ? npmGlobalBin : 'codex';
+  const codexBin = fs.existsSync(voltaBin)
+    ? voltaBin
+    : fs.existsSync(bunBin)
+      ? bunBin
+      : fs.existsSync(npmGlobalBin)
+        ? npmGlobalBin
+        : 'codex';
 
   return new Promise((resolve) => {
     let done = false;
@@ -61,6 +67,8 @@ export async function fetchCodexUsage(
       ...(process.env as Record<string, string>),
       PATH: [
         path.dirname(process.execPath),
+        path.join(os.homedir(), '.volta', 'bin'),
+        path.join(os.homedir(), '.bun', 'bin'),
         path.join(os.homedir(), '.npm-global', 'bin'),
         process.env.PATH || '',
       ].join(':'),
@@ -232,8 +240,8 @@ export function buildCodexUsageRowsFromState(): UsageRow[] {
  */
 export async function refreshAllCodexAccountUsage(): Promise<CodexUsageRefreshResult> {
   const codexAccounts = getAllCodexAccounts();
-  if (codexAccounts.length <= 1) {
-    return { rows: buildCodexUsageRowsFromState(), fetchedAt: null };
+  if (codexAccounts.length === 0) {
+    return { rows: [], fetchedAt: null };
   }
 
   logger.info(
@@ -243,7 +251,7 @@ export async function refreshAllCodexAccountUsage(): Promise<CodexUsageRefreshRe
 
   let anySuccess = false;
   for (const acct of codexAccounts) {
-    const accountDir = path.join(CODEX_ACCOUNTS_DIR, String(acct.index + 1));
+    const accountDir = acct.homeDir;
     if (!fs.existsSync(accountDir)) continue;
 
     try {
@@ -281,7 +289,7 @@ export async function refreshActiveCodexUsage(): Promise<CodexUsageRefreshResult
     return { rows: buildCodexUsageRowsFromState(), fetchedAt: null };
   }
 
-  const accountDir = path.join(CODEX_ACCOUNTS_DIR, String(active.index + 1));
+  const accountDir = active.homeDir;
   if (!fs.existsSync(accountDir)) {
     return { rows: buildCodexUsageRowsFromState(), fetchedAt: null };
   }
