@@ -10,6 +10,7 @@
     "build:container": "docker build -f container/Dockerfile -t ejclaw-reviewer:latest .",
     "build:all": "bun run build && bun run build:runners && bun run build:container",
     "deploy": "git pull --ff-only && bun run build:all && systemctl --user restart ejclaw",
+    "job:status": "node scripts/remote-worker-job-status.mjs",
     "start": "bun dist/index.js",
     "dev": "bun --watch src/index.ts",
     "test": "vitest run",
