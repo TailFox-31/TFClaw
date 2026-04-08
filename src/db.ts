@@ -1097,9 +1097,7 @@ function normalizeMemoryKeywords(keywords?: string[]): string[] {
   if (!Array.isArray(keywords)) return [];
   return [
     ...new Set(
-      keywords
-        .map((keyword) => keyword.trim().toLowerCase())
-        .filter(Boolean),
+      keywords.map((keyword) => keyword.trim().toLowerCase()).filter(Boolean),
     ),
   ];
 }
@@ -1188,7 +1186,9 @@ function queryFtsRowOrder(query: RecallMemoryQuery): Map<number, number> {
 }
 
 export function touchMemories(ids: number[]): void {
-  const uniqueIds = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))];
+  const uniqueIds = [
+    ...new Set(ids.filter((id) => Number.isInteger(id) && id > 0)),
+  ];
   if (uniqueIds.length === 0) return;
   const now = new Date().toISOString();
   const stmt = db.prepare(
@@ -1308,7 +1308,9 @@ export function rememberMemory(input: {
     input.sourceRef ?? null,
     createdAt,
   );
-  const row = db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number };
+  const row = db.prepare('SELECT last_insert_rowid() AS id').get() as {
+    id: number;
+  };
   expireStaleMemories({
     scopeKind: input.scopeKind,
     scopeKey: input.scopeKey,
@@ -1333,8 +1335,9 @@ export function recallMemories(query: RecallMemoryQuery): MemoryRecord[] {
   const scored = rows
     .map((row, index) => {
       const keywords = parseMemoryKeywords(row.keywords_json);
-      const exactMatches = keywords.filter((keyword) => exactKeywords.has(keyword))
-        .length;
+      const exactMatches = keywords.filter((keyword) =>
+        exactKeywords.has(keyword),
+      ).length;
       const ftsScore = ftsOrder.get(row.id) ?? 0;
       const recencyScore = rows.length - index;
       return {
@@ -2357,8 +2360,7 @@ function buildRegisteredGroupFromStoredSettings(
     name: stored.name || stored.chatJid,
     folder: stored.folder,
     trigger: stored.trigger || `@${ASSISTANT_NAME}`,
-    added_at:
-      capabilityMetadata?.added_at || new Date(0).toISOString(),
+    added_at: capabilityMetadata?.added_at || new Date(0).toISOString(),
     agentConfig: capabilityMetadata?.agentConfig,
     requiresTrigger: stored.requiresTrigger,
     isMain: stored.isMain ? true : undefined,
@@ -2436,12 +2438,16 @@ export function assignRoom(
   const roomMode = input.roomMode || existing?.roomMode || 'single';
   const ownerAgentType =
     input.ownerAgentType || existing?.ownerAgentType || OWNER_AGENT_TYPE;
-  const folder = resolveAssignedRoomFolder(db, chatJid, input.name, input.folder);
+  const folder = resolveAssignedRoomFolder(
+    db,
+    chatJid,
+    input.name,
+    input.folder,
+  );
   const snapshot: RoomRegistrationSnapshot = {
     name: input.name,
     folder,
-    triggerPattern:
-      input.trigger || existing?.trigger || `@${ASSISTANT_NAME}`,
+    triggerPattern: input.trigger || existing?.trigger || `@${ASSISTANT_NAME}`,
     requiresTrigger: input.requiresTrigger ?? existing?.requiresTrigger ?? true,
     isMain: input.isMain ?? existing?.isMain ?? false,
     ownerAgentType,
@@ -2655,7 +2661,9 @@ function getLegacyRegisteredGroup(
             'SELECT * FROM registered_groups WHERE jid = ? AND agent_type = ?',
           )
           .get(jid, agentType)
-      : database.prepare('SELECT * FROM registered_groups WHERE jid = ?').get(jid)
+      : database
+          .prepare('SELECT * FROM registered_groups WHERE jid = ?')
+          .get(jid)
   ) as RegisteredGroupDatabaseRow | undefined;
   return parseRegisteredGroupRow(row);
 }
@@ -2693,7 +2701,9 @@ function getRegisteredGroupCapabilityMetadata(
   };
 }
 
-function getStoredRoomRowsFromDatabase(database: Database): StoredRoomSettings[] {
+function getStoredRoomRowsFromDatabase(
+  database: Database,
+): StoredRoomSettings[] {
   return database
     .prepare(
       `SELECT chat_jid
@@ -2702,7 +2712,10 @@ function getStoredRoomRowsFromDatabase(database: Database): StoredRoomSettings[]
     )
     .all()
     .map((row) =>
-      getStoredRoomSettingsRowFromDatabase(database, (row as { chat_jid: string }).chat_jid),
+      getStoredRoomSettingsRowFromDatabase(
+        database,
+        (row as { chat_jid: string }).chat_jid,
+      ),
     )
     .filter((row): row is StoredRoomSettings => Boolean(row));
 }
@@ -2739,7 +2752,12 @@ function collectReservedFolders(
        FROM registered_groups
        WHERE ? IS NULL OR jid != ?`,
     )
-    .all(exceptChatJid ?? null, exceptChatJid ?? null, exceptChatJid ?? null, exceptChatJid ?? null) as Array<{
+    .all(
+      exceptChatJid ?? null,
+      exceptChatJid ?? null,
+      exceptChatJid ?? null,
+      exceptChatJid ?? null,
+    ) as Array<{
     folder: string | null;
   }>;
 
@@ -2786,7 +2804,9 @@ function resolveAssignedRoomFolder(
   const reserved = collectReservedFolders(database, chatJid);
   if (explicitFolder) {
     if (!isValidGroupFolder(explicitFolder)) {
-      throw new Error(`Invalid group folder "${explicitFolder}" for JID ${chatJid}`);
+      throw new Error(
+        `Invalid group folder "${explicitFolder}" for JID ${chatJid}`,
+      );
     }
     if (reserved.has(explicitFolder)) {
       throw new Error(`Group folder "${explicitFolder}" is already assigned`);
@@ -2794,7 +2814,10 @@ function resolveAssignedRoomFolder(
     return explicitFolder;
   }
 
-  const existingFolder = getStoredRoomSettingsRowFromDatabase(database, chatJid)?.folder;
+  const existingFolder = getStoredRoomSettingsRowFromDatabase(
+    database,
+    chatJid,
+  )?.folder;
   if (existingFolder) return existingFolder;
 
   return buildGeneratedRoomFolder(database, chatJid, name);
@@ -2833,7 +2856,10 @@ function materializeRegisteredGroupsForRoom(
     added_at: string;
     agent_config: string | null;
   }>;
-  const existingByType = new Map<AgentType, { added_at: string; agent_config: string | null }>();
+  const existingByType = new Map<
+    AgentType,
+    { added_at: string; agent_config: string | null }
+  >();
   for (const row of existingRows) {
     const agentType = normalizeStoredAgentType(row.agent_type);
     if (agentType) {
@@ -2845,8 +2871,10 @@ function materializeRegisteredGroupsForRoom(
     const existing = existingByType.get(agentType);
     const agentConfig =
       agentType === ownerAgentType
-        ? ownerAgentConfig ??
-          (existing?.agent_config ? JSON.parse(existing.agent_config) : undefined)
+        ? (ownerAgentConfig ??
+          (existing?.agent_config
+            ? JSON.parse(existing.agent_config)
+            : undefined))
         : existing?.agent_config
           ? JSON.parse(existing.agent_config)
           : undefined;
@@ -3002,7 +3030,8 @@ function collectRoomRegistrationSnapshot(
   }
 
   const agentTypes = collectRegisteredAgentTypes(database, jid);
-  const ownerAgentType = inferOwnerAgentTypeFromRegisteredAgentTypes(agentTypes);
+  const ownerAgentType =
+    inferOwnerAgentTypeFromRegisteredAgentTypes(agentTypes);
   const ownerRow =
     rows.find(
       (row) => normalizeStoredAgentType(row.agent_type) === ownerAgentType,
@@ -3097,7 +3126,9 @@ function syncStoredRoomRegistrationSnapshotForJid(chatJid: string): void {
     insertStoredRoomSettings(
       db,
       chatJid,
-      inferRoomModeFromRegisteredAgentTypes(getRegisteredAgentTypesForJid(chatJid)),
+      inferRoomModeFromRegisteredAgentTypes(
+        getRegisteredAgentTypesForJid(chatJid),
+      ),
       'inferred',
       snapshot,
     );
@@ -3705,28 +3736,28 @@ export function completeServiceHandoffAndAdvanceTargetCursor(input: {
   target_service_id: string;
   chat_jid: string;
   end_seq?: number | null;
+  cursor_key?: string | null;
 }): string | null {
   return db.transaction(() => {
     let appliedCursor: string | null = null;
 
     if (input.end_seq != null) {
+      const cursorKey = input.cursor_key || input.chat_jid;
       const currentState = parseLastAgentSeqState(
         getRouterStateForService('last_agent_seq', input.target_service_id),
         input.target_service_id,
       );
       const existingSeq = normalizeStoredLastAgentSeqCursor(
-        currentState[input.chat_jid],
-        input.chat_jid,
+        currentState[cursorKey],
+        cursorKey,
       );
-      currentState[input.chat_jid] = String(
-        Math.max(existingSeq, input.end_seq),
-      );
+      currentState[cursorKey] = String(Math.max(existingSeq, input.end_seq));
       setRouterStateForService(
         'last_agent_seq',
         JSON.stringify(currentState),
         input.target_service_id,
       );
-      appliedCursor = currentState[input.chat_jid];
+      appliedCursor = currentState[cursorKey];
     }
 
     db.prepare(

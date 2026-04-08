@@ -1228,6 +1228,39 @@ describe('service handoff completion', () => {
     });
   });
 
+  it('advances a role-specific target cursor when provided', () => {
+    storeChatMetadata('dc:handoff', '2024-01-01T00:00:00.000Z');
+    const handoff = createServiceHandoff({
+      chat_jid: 'dc:handoff',
+      group_folder: 'test-group',
+      source_service_id: 'claude',
+      target_service_id: 'codex-review',
+      target_agent_type: 'codex',
+      prompt: 'review',
+      end_seq: 7,
+      reason: 'reviewer-claude-usage-exhausted',
+    });
+
+    expect(claimServiceHandoff(handoff.id)).toBe(true);
+
+    const appliedCursor = completeServiceHandoffAndAdvanceTargetCursor({
+      id: handoff.id,
+      target_service_id: 'codex-review',
+      chat_jid: 'dc:handoff',
+      end_seq: 7,
+      cursor_key: 'dc:handoff:reviewer',
+    });
+
+    expect(appliedCursor).toBe('7');
+    expect(
+      JSON.parse(
+        getRouterStateForService('last_agent_seq', 'codex-review') || '{}',
+      ),
+    ).toMatchObject({
+      'dc:handoff:reviewer': '7',
+    });
+  });
+
   it('stores the intended handoff role when provided', () => {
     const handoff = createServiceHandoff({
       chat_jid: 'dc:handoff-role',
@@ -1362,8 +1395,12 @@ describe('memories', () => {
     });
 
     expect(recalled).toHaveLength(300);
-    expect(recalled.some((memory) => memory.content === 'memory-0')).toBe(false);
-    expect(recalled.some((memory) => memory.content === 'memory-304')).toBe(true);
+    expect(recalled.some((memory) => memory.content === 'memory-0')).toBe(
+      false,
+    );
+    expect(recalled.some((memory) => memory.content === 'memory-304')).toBe(
+      true,
+    );
   });
 
   it('archives stale compact memories before recall using last_used_at TTL', () => {
@@ -1395,9 +1432,13 @@ describe('memories', () => {
       limit: 10,
     });
 
-    expect(recalled.some((memory) => memory.content === '오래된 compact memory')).toBe(false);
     expect(
-      recalled.some((memory) => memory.content === '최근에 다시 쓰인 compact memory'),
+      recalled.some((memory) => memory.content === '오래된 compact memory'),
+    ).toBe(false);
+    expect(
+      recalled.some(
+        (memory) => memory.content === '최근에 다시 쓰인 compact memory',
+      ),
     ).toBe(true);
   });
 

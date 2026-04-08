@@ -715,6 +715,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       handoffChannel =
         findChannelByName(deps.channels, 'discord-review') || channel;
     }
+    const isReviewerHandoff = handoffRole === 'reviewer';
+    const isArbiterHandoff = handoffRole === 'arbiter';
+    const handoffCursorKey = isReviewerHandoff
+      ? `${handoff.chat_jid}:reviewer`
+      : isArbiterHandoff
+        ? `${handoff.chat_jid}:arbiter`
+        : handoff.chat_jid;
 
     const runId = `handoff-${handoff.id}`;
     try {
@@ -754,9 +761,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         target_service_id: handoff.target_service_id,
         chat_jid: handoff.chat_jid,
         end_seq: handoff.end_seq,
+        cursor_key: handoffCursorKey,
       });
       if (appliedCursor) {
-        deps.getLastAgentTimestamps()[handoff.chat_jid] = appliedCursor;
+        deps.getLastAgentTimestamps()[handoffCursorKey] = appliedCursor;
       }
       logger.info(
         {
@@ -766,6 +774,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           outputStatus: result.outputStatus,
           visiblePhase: result.visiblePhase,
           appliedCursor,
+          cursorKey: handoffCursorKey,
         },
         'Completed claimed service handoff',
       );
