@@ -1391,13 +1391,31 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               pendingMessages.length > 0
                 ? pendingMessages
                 : processableGroupMessages;
+            const watcherCompletionTextForBotOnlyFollowUp =
+              loopPendingTask &&
+              resolveActiveRole(loopPendingTask.status) === 'owner'
+                ? getLatestWatcherCompletionText(
+                    rawPendingMessages.length > 0
+                      ? rawPendingMessages
+                      : messagesToSend,
+                  )
+                : null;
             const formatted = loopPendingTask
-              ? buildPairedTurnPrompt(
-                  loopPendingTask.id,
-                  chatJid,
-                  deps.timezone,
-                  messagesToSend,
-                )
+              ? watcherCompletionTextForBotOnlyFollowUp
+                ? buildOwnerPendingPrompt(
+                    loopPendingTask,
+                    chatJid,
+                    deps.timezone,
+                    {
+                      watcherCompletionText: watcherCompletionTextForBotOnlyFollowUp,
+                    },
+                  )
+                : buildPairedTurnPrompt(
+                    loopPendingTask.id,
+                    chatJid,
+                    deps.timezone,
+                    messagesToSend,
+                  )
               : formatMessages(
                   labelPairedSenders(chatJid, messagesToSend),
                   deps.timezone,
@@ -1407,7 +1425,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               messagesToSend,
             );
 
-            if (isBotOnlyPairedFollowUp) {
+            if (
+              isBotOnlyPairedFollowUp &&
+              !watcherCompletionTextForBotOnlyFollowUp
+            ) {
               const hasPendingBotOnlyTurn = loopPendingTask
                 ? hasPendingPairedTurn(loopPendingTask)
                 : false;
