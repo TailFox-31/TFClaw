@@ -314,7 +314,10 @@ export function claimRemoteWorkerJob(workerId: string): JobClaimResult | null {
         continue;
       }
 
-      const sessionResume = resolveSessionResume(workerId, jobRow);
+      const sessionResume =
+        jobRow.session_policy === 'fresh'
+          ? null
+          : resolveSessionResume(workerId, jobRow);
       if (jobRow.session_policy === 'require_reuse' && !sessionResume) {
         continue;
       }

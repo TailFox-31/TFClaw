@@ -3,6 +3,7 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import { _initTestDatabase, getDatabaseHandle } from './db.js';
 import {
   claimRemoteWorkerJob,
+  completeRemoteWorkerAttempt,
   createRemoteWorkerJob,
   getRemoteWorkerJobStatus,
   heartbeatRemoteWorkerAttempt,
@@ -144,5 +145,151 @@ describe('remote worker db', () => {
     expect(heartbeat.cancel_requested).toBe(true);
     expect(heartbeat.cancel_reason).toBe('user requested cancel');
     expect(heartbeat.interrupt_deadline_at).toBeTruthy();
+  });
+
+  it('does not return resume metadata for fresh jobs even when an active session exists', () => {
+    registerRemoteWorker({
+      worker_id: 'worker-a',
+      display_name: 'Worker A',
+      capability_tokens: ['os:linux', 'tool:codex'],
+      max_concurrency: 1,
+    });
+
+    const seedJob = createRemoteWorkerJob({
+      workspace_key: 'repo:game-main',
+      session_key: 'discord:room:1',
+      session_policy: 'fresh',
+      repo_url: 'git@example.com:org/game.git',
+      branch: 'main',
+      base_commit: 'abc1234',
+      mode: 'edit',
+      requirements: ['tool:codex', 'os:linux'],
+      prompt: 'Seed reusable session',
+      timeout_sec: 1800,
+      priority: 100,
+      max_attempts: 3,
+    });
+    const seedClaim = claimRemoteWorkerJob('worker-a');
+    expect(seedClaim).not.toBeNull();
+
+    startRemoteWorkerAttempt(seedClaim!.attempt.attempt_id, seedClaim!.attempt.lease_token, {
+      worker_id: 'worker-a',
+      provider: 'codex',
+      opaque_session_id: 'sess-existing',
+      session_reused: false,
+    });
+    completeRemoteWorkerAttempt(seedClaim!.attempt.attempt_id, seedClaim!.attempt.lease_token, {
+      worker_id: 'worker-a',
+      result_summary: 'seed complete',
+      result_json: { ok: true, seedJobId: seedJob.job_id },
+    });
+
+    createRemoteWorkerJob({
+      workspace_key: 'repo:game-main',
+      session_key: 'discord:room:1',
+      session_policy: 'fresh',
+      repo_url: 'git@example.com:org/game.git',
+      branch: 'main',
+      base_commit: 'def5678',
+      mode: 'edit',
+      requirements: ['tool:codex', 'os:linux'],
+      prompt: 'Should start fresh',
+      timeout_sec: 1800,
+      priority: 100,
+      max_attempts: 3,
+    });
+
+    const claim = claimRemoteWorkerJob('worker-a');
+    expect(claim).not.toBeNull();
+    expect(claim!.session.session_policy).toBe('fresh');
+    expect(claim!.session.resume).toBeNull();
+  });
+
+  it('returns resume metadata for prefer_reuse jobs when an active session exists', () => {
+    registerRemoteWorker({
+      worker_id: 'worker-a',
+      display_name: 'Worker A',
+      capability_tokens: ['os:linux', 'tool:codex'],
+      max_concurrency: 1,
+    });
+
+    createRemoteWorkerJob({
+      workspace_key: 'repo:game-main',
+      session_key: 'discord:room:2',
+      session_policy: 'fresh',
+      repo_url: 'git@example.com:org/game.git',
+      branch: 'main',
+      base_commit: 'abc1234',
+      mode: 'edit',
+      requirements: ['tool:codex', 'os:linux'],
+      prompt: 'Seed reusable session',
+      timeout_sec: 1800,
+      priority: 100,
+      max_attempts: 3,
+    });
+    const seedClaim = claimRemoteWorkerJob('worker-a');
+    expect(seedClaim).not.toBeNull();
+
+    startRemoteWorkerAttempt(seedClaim!.attempt.attempt_id, seedClaim!.attempt.lease_token, {
+      worker_id: 'worker-a',
+      provider: 'codex',
+      opaque_session_id: 'sess-reuse-123',
+      session_reused: false,
+    });
+    completeRemoteWorkerAttempt(seedClaim!.attempt.attempt_id, seedClaim!.attempt.lease_token, {
+      worker_id: 'worker-a',
+      result_summary: 'seed complete',
+      result_json: { ok: true },
+    });
+
+    createRemoteWorkerJob({
+      workspace_key: 'repo:game-main',
+      session_key: 'discord:room:2',
+      session_policy: 'prefer_reuse',
+      repo_url: 'git@example.com:org/game.git',
+      branch: 'main',
+      base_commit: 'def5678',
+      mode: 'edit',
+      requirements: ['tool:codex', 'os:linux'],
+      prompt: 'Must reuse existing session',
+      timeout_sec: 1800,
+      priority: 100,
+      max_attempts: 3,
+    });
+
+    const claim = claimRemoteWorkerJob('worker-a');
+    expect(claim).not.toBeNull();
+    expect(claim!.session.session_policy).toBe('prefer_reuse');
+    expect(claim!.session.resume).toEqual({
+      provider: 'codex',
+      opaque_session_id: 'sess-reuse-123',
+    });
+  });
+
+  it('does not claim require_reuse jobs when no active session exists', () => {
+    registerRemoteWorker({
+      worker_id: 'worker-a',
+      display_name: 'Worker A',
+      capability_tokens: ['os:linux', 'tool:codex'],
+      max_concurrency: 1,
+    });
+
+    createRemoteWorkerJob({
+      workspace_key: 'repo:game-main',
+      session_key: 'discord:room:3',
+      session_policy: 'require_reuse',
+      repo_url: 'git@example.com:org/game.git',
+      branch: 'main',
+      base_commit: 'def5678',
+      mode: 'edit',
+      requirements: ['tool:codex', 'os:linux'],
+      prompt: 'Must reuse existing session',
+      timeout_sec: 1800,
+      priority: 100,
+      max_attempts: 3,
+    });
+
+    const claim = claimRemoteWorkerJob('worker-a');
+    expect(claim).toBeNull();
   });
 });
