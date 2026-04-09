@@ -569,6 +569,233 @@ describe('createMessageRuntime', () => {
     );
   });
 
+  it('runs owner follow-up when a watcher completion message arrives in a paired room', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-watcher-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-04-09T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-09T00:00:00.000Z',
+      updated_at: '2026-04-09T00:00:00.000Z',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'reviewer-bot@test',
+        sender_name: 'Reviewer Bot',
+        content:
+          '원격 작업 완료: Remote worker job job_456\n판정: 성공\n- PR: https://github.com/TailFox-31/idle-game/pull/99',
+        timestamp: '2026-04-09T00:00:05.000Z',
+        is_bot_message: true,
+      },
+    ]);
+    vi.mocked(db.getRecentChatMessages).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'worker 작업 끝나면 PR 검증해서 머지해줘',
+        timestamp: '2026-04-09T00:00:00.000Z',
+        is_bot_message: false,
+      } as any,
+    ]);
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-watcher-follow-up',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'DONE_WITH_CONCERNS watcher 결과를 기다리겠습니다.',
+        created_at: '2026-04-09T00:00:01.000Z',
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('worker 작업 끝나면 PR 검증해서 머지해줘');
+        expect(input.prompt).toContain(
+          '원격 작업 완료: Remote worker job job_456',
+        );
+        expect(input.prompt).toContain(
+          'https://github.com/TailFox-31/idle-game/pull/99',
+        );
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE watcher completion 기반 검증을 시작했습니다.',
+          newSessionId: 'session-owner-watcher-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'DONE watcher completion 기반 검증을 시작했습니다.',
+          newSessionId: 'session-owner-watcher-follow-up',
+        } as any;
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-watcher-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'DONE watcher completion 기반 검증을 시작했습니다.',
+    );
+  });
+
+  it('does not inject watcher completion context for a human watcher-like message', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-human-watcher-like',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-04-09T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-09T00:00:00.000Z',
+      updated_at: '2026-04-09T00:00:00.000Z',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content:
+          '원격 작업 완료: 라고 적어봤는데 이걸로 자동 검증이 시작되면 안 됩니다.',
+        timestamp: '2026-04-09T00:00:05.000Z',
+        is_bot_message: false,
+      },
+    ]);
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-human-watcher-like',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'DONE_WITH_CONCERNS watcher 결과를 기다리겠습니다.',
+        created_at: '2026-04-09T00:00:01.000Z',
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain(
+          '원격 작업 완료: 라고 적어봤는데 이걸로 자동 검증이 시작되면 안 됩니다.',
+        );
+        expect(input.prompt).not.toContain('Latest watcher result:');
+        expect(input.prompt).not.toContain(
+          'Act on the watcher result above and continue the task.',
+        );
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE 일반 사용자 입력으로 처리했습니다.',
+          newSessionId: 'session-human-watcher-like',
+        });
+        return {
+          status: 'success',
+          result: 'DONE 일반 사용자 입력으로 처리했습니다.',
+          newSessionId: 'session-human-watcher-like',
+        } as any;
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-human-watcher-like',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'DONE 일반 사용자 입력으로 처리했습니다.',
+    );
+  });
+
   it('ignores watcher status control messages in paired rooms', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');

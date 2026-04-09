@@ -362,6 +362,33 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     return turnOutputs.length > 0 ? turnOutputs[turnOutputs.length - 1] : null;
   };
 
+  const normalizeWatcherCompletionContent = (content: string): string =>
+    content.replace(/^\u2063+/, '').trim();
+
+  const isWatcherCompletionMessage = (
+    message: Pick<NewMessage, 'content' | 'is_bot_message'>,
+  ): boolean => {
+    if (!message.is_bot_message) {
+      return false;
+    }
+    const normalized = normalizeWatcherCompletionContent(message.content);
+    return (
+      normalized.startsWith('CI 완료:') ||
+      normalized.startsWith('원격 작업 완료:')
+    );
+  };
+
+  const getLatestWatcherCompletionText = (
+    messages: NewMessage[],
+  ): string | null => {
+    const latestWatcherMessage = [...messages]
+      .reverse()
+      .find((message) => isWatcherCompletionMessage(message));
+    return latestWatcherMessage
+      ? normalizeWatcherCompletionContent(latestWatcherMessage.content)
+      : null;
+  };
+
   const hasPendingPairedTurn = (task: PairedTask): boolean => {
     const taskStatus = task.status;
     const pendingRole = resolveActiveRole(taskStatus);
@@ -389,24 +416,33 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     task: PairedTask,
     chatJid: string,
     timezone: string,
+    options?: {
+      watcherCompletionText?: string | null;
+    },
   ): string => {
     const turnOutputs = getPairedTurnOutputs(task.id);
+    let basePrompt: string;
     if (turnOutputs.length > 0) {
       const humanMessages = getRecentChatMessages(chatJid, 20).filter(
         (message) => !message.is_bot_message,
       );
-      return formatMessages(
+      basePrompt = formatMessages(
         mergeHumanAndTurnOutputMessages(chatJid, humanMessages, turnOutputs),
         timezone,
       );
+    } else {
+      const userMessage = getLastHumanMessageContent(chatJid);
+      basePrompt = userMessage
+        ? `User request:\n---\n${userMessage}\n---\n\nContinue the task and address the latest reviewer feedback.`
+        : 'Continue the task and address the latest reviewer feedback.';
     }
 
-    const userMessage = getLastHumanMessageContent(chatJid);
-    if (!userMessage) {
-      return 'Continue the task and address the latest reviewer feedback.';
+    const watcherCompletionText = options?.watcherCompletionText?.trim();
+    if (!watcherCompletionText) {
+      return basePrompt;
     }
 
-    return `User request:\n---\n${userMessage}\n---\n\nContinue the task and address the latest reviewer feedback.`;
+    return `${basePrompt}\n\nLatest watcher result:\n---\n${watcherCompletionText}\n---\n\nAct on the watcher result above and continue the task.`;
   };
 
   const isBotOnlyPairedRoomTurn = (
@@ -879,6 +915,19 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       }
 
       if (pendingRole === 'owner') {
+        const watcherCompletionText =
+          getLatestWatcherCompletionText(rawMissedMessages);
+        if (watcherCompletionText) {
+          return {
+            prompt: buildOwnerPendingPrompt(task, chatJid, deps.timezone, {
+              watcherCompletionText,
+            }),
+            channel: resolveChannel(taskStatus),
+            cursor,
+            cursorKey: resolveCursorKey(chatJid, taskStatus),
+          };
+        }
+
         const latestTurnOutput = getLatestTurnOutput(task.id);
         if (
           latestTurnOutput &&
