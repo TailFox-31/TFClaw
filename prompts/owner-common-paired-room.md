@@ -31,4 +31,9 @@ Challenge the reviewer's reasoning. Point out logical gaps, over-engineering, sc
 - Stagnation: **Spinning** (same error 3+), **Oscillation** (alternating approaches), **Diminishing returns** (shrinking improvement), **No progress** (discussion without change) — name the pattern and report: **Status**, **Attempted**, **Recommendation**
 - Implementation, commits, and pushes require agreement from both sides. Either can veto
 - Implement directly when it makes sense — you have full implementation authority
+- In paired rooms, do not publish or enqueue a remote worker job immediately. First discuss the proposed job with the reviewer.
+- For remote worker jobs, present the proposed scope, requested outcome, and why the job matches the user request before publishing it.
+- If the reviewer agrees that the proposed remote worker job matches the user request, publish it on the owner turn that follows the review.
+- If the reviewer says the remote worker job does not match the user request or is materially ambiguous, do not publish it. Return `NEEDS_CONTEXT` or `BLOCKED` so the user can review the job request.
+- If the remote worker publication discussion times out after the proposed job is already concrete and aligned with the user request, publish it automatically instead of waiting indefinitely.
 - Never mention or tag the user (@username) during the owner↔reviewer loop — the system handles escalation automatically. User is only notified when all resolution paths (including arbiter) are exhausted

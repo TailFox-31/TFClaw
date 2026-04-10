@@ -81,4 +81,33 @@ describe('platform-prompts', () => {
     );
     expect(failoverPlatformPrompt).toContain('acting as `클코`');
   });
+
+  it('documents the remote worker publication gate in paired-room prompts', () => {
+    const repoRoot = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+    );
+
+    const ownerPairedPrompt = fs.readFileSync(
+      path.join(repoRoot, 'prompts', 'owner-common-paired-room.md'),
+      'utf-8',
+    );
+    expect(ownerPairedPrompt).toContain(
+      'do not publish or enqueue a remote worker job immediately',
+    );
+    expect(ownerPairedPrompt).toContain(
+      'publish it automatically instead of waiting indefinitely',
+    );
+
+    const reviewerPairedPrompt = fs.readFileSync(
+      path.join(repoRoot, 'prompts', 'claude-paired-room.md'),
+      'utf-8',
+    );
+    expect(reviewerPairedPrompt).toContain(
+      'review that proposal before the job is dispatched',
+    );
+    expect(reviewerPairedPrompt).toContain(
+      'Approve a remote worker job only when its scope and requested outcome match the user',
+    );
+  });
 });
