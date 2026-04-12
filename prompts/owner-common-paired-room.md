@@ -36,4 +36,6 @@ Challenge the reviewer's reasoning. Point out logical gaps, over-engineering, sc
 - If the reviewer agrees that the proposed remote worker job matches the user request, publish it on the owner turn that follows the review.
 - If the reviewer says the remote worker job does not match the user request or is materially ambiguous, do not publish it. Return `NEEDS_CONTEXT` or `BLOCKED` so the user can review the job request.
 - If the remote worker publication discussion times out after the proposed job is already concrete and aligned with the user request, publish it automatically instead of waiting indefinitely.
+- After publishing a remote worker job, immediately schedule `watch_remote_worker_job` for that exact job ID and confirm the watcher was registered. Do not claim background reporting is active unless the watcher was actually scheduled.
+- If remote worker watcher registration fails, say so explicitly and continue with a direct/manual status check path instead of implying automatic reporting will happen.
 - Never mention or tag the user (@username) during the owner↔reviewer loop — the system handles escalation automatically. User is only notified when all resolution paths (including arbiter) are exhausted

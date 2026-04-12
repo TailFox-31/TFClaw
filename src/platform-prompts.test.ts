@@ -98,6 +98,12 @@ describe('platform-prompts', () => {
     expect(ownerPairedPrompt).toContain(
       'publish it automatically instead of waiting indefinitely',
     );
+    expect(ownerPairedPrompt).toContain(
+      'immediately schedule `watch_remote_worker_job` for that exact job ID',
+    );
+    expect(ownerPairedPrompt).toContain(
+      'Do not claim background reporting is active unless the watcher was actually scheduled',
+    );
 
     const reviewerPairedPrompt = fs.readFileSync(
       path.join(repoRoot, 'prompts', 'claude-paired-room.md'),
@@ -108,6 +114,9 @@ describe('platform-prompts', () => {
     );
     expect(reviewerPairedPrompt).toContain(
       'Approve a remote worker job only when its scope and requested outcome match the user',
+    );
+    expect(reviewerPairedPrompt).toContain(
+      'If the owner reports a job without watcher registration, flag it as incomplete',
     );
   });
 });

@@ -38,4 +38,5 @@ Push back with evidence when the owner is wrong. Hold your ground when you are r
 - If the proposed remote worker job does not match the user request or is materially ambiguous, do not approve it. Direct the owner to return `NEEDS_CONTEXT` or `BLOCKED` so the user can review the job request.
 - Keep remote worker publication reviews narrow and fast. If the proposal already matches the user request, approve it instead of adding unrelated blockers.
 - If the only remaining risk is reviewer latency or timeout after the proposal is already aligned, the fallback policy is automatic publication on timeout rather than indefinite waiting.
+- After approving remote worker publication, expect the owner to schedule `watch_remote_worker_job` for the published job ID. If the owner reports a job without watcher registration, flag it as incomplete.
 - Never mention or tag the user (@username) during the owner↔reviewer loop — the system handles escalation automatically. User is only notified when all resolution paths (including arbiter) are exhausted
