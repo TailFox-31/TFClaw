@@ -381,12 +381,34 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const getLatestWatcherCompletionText = (
     messages: NewMessage[],
   ): string | null => {
-    const latestWatcherMessage = [...messages]
-      .reverse()
-      .find((message) => isWatcherCompletionMessage(message));
-    return latestWatcherMessage
-      ? normalizeWatcherCompletionContent(latestWatcherMessage.content)
-      : null;
+    let latestWatcherIndex = -1;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (isWatcherCompletionMessage(messages[index])) {
+        latestWatcherIndex = index;
+        break;
+      }
+    }
+    if (latestWatcherIndex < 0) {
+      return null;
+    }
+
+    const latestWatcherMessage = messages[latestWatcherIndex];
+    const completionParts: string[] = [];
+    for (const message of messages.slice(latestWatcherIndex)) {
+      if (!message.is_bot_message) break;
+      if (
+        message.sender !== latestWatcherMessage.sender &&
+        message.sender_name !== latestWatcherMessage.sender_name
+      ) {
+        break;
+      }
+      const normalized = normalizeWatcherCompletionContent(message.content);
+      if (normalized) {
+        completionParts.push(normalized);
+      }
+    }
+
+    return completionParts.length > 0 ? completionParts.join('\n\n') : null;
   };
 
   const hasPendingPairedTurn = (task: PairedTask): boolean => {
@@ -443,6 +465,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }
 
     return `${basePrompt}\n\nLatest watcher result:\n---\n${watcherCompletionText}\n---\n\nAct on the watcher result above and continue the task.`;
+  };
+
+  const buildFreshWatcherCompletionPrompt = (
+    chatJid: string,
+    watcherCompletionText: string,
+  ): string => {
+    const userMessage = getLastHumanMessageContent(chatJid);
+    const basePrompt = userMessage
+      ? `User request:\n---\n${userMessage}\n---`
+      : 'Continue from the latest watcher result.';
+
+    return `${basePrompt}\n\nLatest watcher result:\n---\n${watcherCompletionText.trim()}\n---\n\nAct on the watcher result above and continue the task.`;
   };
 
   const isBotOnlyPairedRoomTurn = (
@@ -951,6 +985,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       channel: Channel;
       cursor: string | number | null;
       cursorKey?: string;
+      hasHumanMessage?: boolean;
     }): Promise<boolean> => {
       if (args.cursor != null) {
         advanceLastAgentCursor(
@@ -970,6 +1005,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         channel: args.channel,
         startSeq: null,
         endSeq: null,
+        hasHumanMessage: args.hasHumanMessage,
       });
 
       return deliverySucceeded;
@@ -1041,6 +1077,25 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           : null;
         if (pendingTurn) {
           return executePendingPairedTurn(pendingTurn);
+        }
+
+        const watcherCompletionText =
+          getLatestWatcherCompletionText(rawMissedMessages);
+        if (!pendingPairedTask && watcherCompletionText) {
+          const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
+          const cursor = lastRaw?.seq ?? lastRaw?.timestamp ?? null;
+          return executePendingPairedTurn({
+            prompt: buildFreshWatcherCompletionPrompt(
+              chatJid,
+              watcherCompletionText,
+            ),
+            channel,
+            cursor,
+            cursorKey: resolveCursorKey(chatJid),
+            // Watcher completions are bot-authored but intentionally start a
+            // new owner validation cycle after the worker task finishes.
+            hasHumanMessage: true,
+          });
         }
 
         const lastIgnored =
@@ -1392,14 +1447,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 ? pendingMessages
                 : processableGroupMessages;
             const watcherCompletionTextForBotOnlyFollowUp =
-              loopPendingTask &&
-              resolveActiveRole(loopPendingTask.status) === 'owner'
-                ? getLatestWatcherCompletionText(
-                    rawPendingMessages.length > 0
-                      ? rawPendingMessages
-                      : messagesToSend,
-                  )
-                : null;
+              getLatestWatcherCompletionText(
+                rawPendingMessages.length > 0
+                  ? rawPendingMessages
+                  : messagesToSend,
+              );
             const formatted = loopPendingTask
               ? watcherCompletionTextForBotOnlyFollowUp
                 ? buildOwnerPendingPrompt(
@@ -1407,7 +1459,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                     chatJid,
                     deps.timezone,
                     {
-                      watcherCompletionText: watcherCompletionTextForBotOnlyFollowUp,
+                      watcherCompletionText:
+                        watcherCompletionTextForBotOnlyFollowUp,
                     },
                   )
                 : buildPairedTurnPrompt(
@@ -1416,10 +1469,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                     deps.timezone,
                     messagesToSend,
                   )
-              : formatMessages(
-                  labelPairedSenders(chatJid, messagesToSend),
-                  deps.timezone,
-                );
+              : watcherCompletionTextForBotOnlyFollowUp
+                ? buildFreshWatcherCompletionPrompt(
+                    chatJid,
+                    watcherCompletionTextForBotOnlyFollowUp,
+                  )
+                : formatMessages(
+                    labelPairedSenders(chatJid, messagesToSend),
+                    deps.timezone,
+                  );
             const isBotOnlyPairedFollowUp = isBotOnlyPairedRoomTurn(
               chatJid,
               messagesToSend,

@@ -190,6 +190,7 @@ import {
   resolveHandoffRoleOverride,
 } from './message-runtime.js';
 import * as config from './config.js';
+import * as pairedExecutionContext from './paired-execution-context.js';
 import * as serviceRouting from './service-routing.js';
 import type { Channel, RegisteredGroup } from './types.js';
 
@@ -632,7 +633,9 @@ describe('createMessageRuntime', () => {
     ]);
     vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
       async (_group, input, _onProcess, onOutput) => {
-        expect(input.prompt).toContain('worker 작업 끝나면 PR 검증해서 머지해줘');
+        expect(input.prompt).toContain(
+          'worker 작업 끝나면 PR 검증해서 머지해줘',
+        );
         expect(input.prompt).toContain(
           '원격 작업 완료: Remote worker job job_456',
         );
@@ -685,6 +688,111 @@ describe('createMessageRuntime', () => {
     expect(channel.sendMessage).toHaveBeenCalledWith(
       chatJid,
       'DONE watcher completion 기반 검증을 시작했습니다.',
+    );
+  });
+
+  it('starts owner validation from a split watcher completion after the paired task is closed', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(undefined);
+    vi.mocked(db.getLastHumanMessageContent).mockReturnValue(
+      'Frenzy 기능을 적당한 수치로 구현해줘',
+    );
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'reviewer-bot@test',
+        sender_name: 'Reviewer Bot',
+        content:
+          '원격 작업 완료: Remote worker job job_789\n판정: 성공\n- PR: https://github.com/TailFox-31/idle-game/pull/37',
+        timestamp: '2026-04-13T03:49:46.000Z',
+        is_bot_message: true,
+      },
+      {
+        id: 'msg-2',
+        chat_jid: chatJid,
+        sender: 'reviewer-bot@test',
+        sender_name: 'Reviewer Bot',
+        content:
+          'Frenzy runtime state resets on wave travel, player death, and reset-save paths.',
+        timestamp: '2026-04-13T03:49:47.000Z',
+        is_bot_message: true,
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('Frenzy 기능을 적당한 수치로 구현해줘');
+        expect(input.prompt).toContain(
+          '원격 작업 완료: Remote worker job job_789',
+        );
+        expect(input.prompt).toContain(
+          'https://github.com/TailFox-31/idle-game/pull/37',
+        );
+        expect(input.prompt).toContain(
+          'Frenzy runtime state resets on wave travel',
+        );
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE split watcher completion 기반 검증을 시작했습니다.',
+          newSessionId: 'session-split-watcher-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'DONE split watcher completion 기반 검증을 시작했습니다.',
+          newSessionId: 'session-split-watcher-follow-up',
+        } as any;
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-split-watcher-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        hasHumanMessage: true,
+      }),
+    );
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'DONE split watcher completion 기반 검증을 시작했습니다.',
     );
   });
 
