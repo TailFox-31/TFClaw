@@ -1,7 +1,7 @@
 {
   "name": "ejclaw",
-  "version": "0.1.0",
-  "description": "Personal Claude assistant. Lightweight, secure, customizable.",
+  "version": "1.2.0",
+  "description": "Tribunal multi-agent AI assistant (Owner + Reviewer + Arbiter) over Discord.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
