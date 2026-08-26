@@ -19,13 +19,13 @@ REVIEWER_AGENT_TYPE=claude-code   # claude-code | codex
 ARBITER_AGENT_TYPE=codex          # codex | claude-code (optional, enables 3rd agent)
 
 # Per-role model overrides
-OWNER_MODEL=gpt-5.4
-REVIEWER_MODEL=claude-opus-4-6
-ARBITER_MODEL=gpt-5.4
+OWNER_MODEL=gpt-5.6-sol
+REVIEWER_MODEL=claude-opus-5
+ARBITER_MODEL=gpt-5.6-sol
 
 # Per-role effort level
 OWNER_EFFORT=xhigh
-REVIEWER_EFFORT=high
+REVIEWER_EFFORT=xhigh
 ARBITER_EFFORT=xhigh
 
 # Per-role fallback toggle

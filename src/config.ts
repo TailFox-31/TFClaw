@@ -131,7 +131,7 @@ export function isArbiterEnabled(): boolean {
 // ── Per-role model configuration ─────────────────────────────────
 
 export interface RoleModelConfig {
-  /** Model name override (e.g. 'claude-opus-4-6', 'gpt-5.4'). */
+  /** Model name override (e.g. 'claude-opus-5', 'gpt-5.6-sol'). */
   model?: string;
   /** Effort level override. */
   effort?: string;

@@ -47,7 +47,7 @@ ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Install Claude Code and Codex CLI globally (requires Node.js)
-RUN npm install -g @anthropic-ai/claude-code @openai/codex
+RUN npm install -g @anthropic-ai/claude-code @openai/codex@0.149.1
 
 # Install Bun runtime (EJClaw runner uses bun:sqlite and runs via bun)
 ENV BUN_INSTALL="/usr/local"

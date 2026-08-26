@@ -127,27 +127,35 @@ export function refreshChannelOwnerCache(force = false): void {
   lastLeaseRefreshAt = now;
 }
 
-export function getEffectiveChannelLease(
+function getEffectiveChannelLeaseWithoutGlobalFailover(
   chatJid: string,
 ): EffectiveChannelLease {
-  // Global failover overrides all per-channel leases
-  if (globalFailoverActive) {
-    return {
-      chat_jid: chatJid,
-      owner_service_id: CODEX_REVIEW_SERVICE_ID,
-      reviewer_service_id: CODEX_MAIN_SERVICE_ID,
-      arbiter_service_id: null,
-      activated_at: globalFailoverActivatedAt,
-      reason: globalFailoverReason,
-      explicit: true,
-    };
-  }
   refreshChannelOwnerCache();
   const row = leaseCache.get(chatJid);
   if (row) {
     return normalizeLeaseRow(row, true);
   }
   return getDefaultLease(chatJid);
+}
+
+export function getEffectiveChannelLease(
+  chatJid: string,
+): EffectiveChannelLease {
+  if (globalFailoverActive) {
+    const baseLease = getEffectiveChannelLeaseWithoutGlobalFailover(chatJid);
+    return {
+      chat_jid: chatJid,
+      owner_service_id: CODEX_REVIEW_SERVICE_ID,
+      reviewer_service_id: baseLease.reviewer_service_id
+        ? CODEX_MAIN_SERVICE_ID
+        : null,
+      arbiter_service_id: null,
+      activated_at: globalFailoverActivatedAt,
+      reason: globalFailoverReason,
+      explicit: true,
+    };
+  }
+  return getEffectiveChannelLeaseWithoutGlobalFailover(chatJid);
 }
 
 export function isOwnerServiceForChat(

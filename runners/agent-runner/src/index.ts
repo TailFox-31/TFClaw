@@ -16,7 +16,13 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  type EffortLevel,
+  type HookCallback,
+  type PreCompactHookInput,
+  type PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 import {
@@ -611,7 +617,7 @@ async function runQuery(
   const thinkingBudget = process.env.CLAUDE_THINKING_BUDGET
     ? parseInt(process.env.CLAUDE_THINKING_BUDGET, 10)
     : undefined;
-  const effort = (process.env.CLAUDE_EFFORT as 'low' | 'medium' | 'high' | 'max') || undefined;
+  const effort = (process.env.CLAUDE_EFFORT as EffortLevel) || undefined;
   const thinking = thinkingType === 'adaptive' ? { type: 'adaptive' as const }
     : thinkingType === 'enabled' ? { type: 'enabled' as const, budgetTokens: thinkingBudget }
     : thinkingType === 'disabled' ? { type: 'disabled' as const }

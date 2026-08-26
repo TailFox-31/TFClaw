@@ -213,7 +213,7 @@ export async function runAgentForGroup(
   });
   // Inject role-specific model overrides into envOverrides.
   // When running a forced agent type (failover), skip the role's configured
-  // model — it belongs to the primary agent type (e.g. claude-opus-4-6 for
+  // model — it belongs to the primary agent type (e.g. claude-opus-5 for
   // a claude-code reviewer) and would be rejected by the fallback runtime.
   if (pairedExecutionContext && !args.forcedAgentType) {
     const roleConfig = getRoleModelConfig(activeRole);
@@ -343,9 +343,6 @@ export async function runAgentForGroup(
     if (!shouldHandoffToCodex(reason, sawVisibleOutput)) {
       return false;
     }
-    if (currentLease.reviewer_service_id === null) {
-      return false;
-    }
     // Per-role fallback toggle
     const roleConfig = getRoleModelConfig(activeRole);
     if (!roleConfig.fallbackEnabled) {
@@ -376,6 +373,9 @@ export async function runAgentForGroup(
     }
 
     if (reviewerMode) {
+      if (currentLease.reviewer_service_id === null) {
+        return false;
+      }
       // Reviewer failed (e.g. Claude 401/429) — re-trigger review with codex
       // instead of swapping owner/reviewer roles.
       createServiceHandoff({

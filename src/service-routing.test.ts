@@ -39,7 +39,7 @@ describe('service-routing global failover', () => {
 
     activateCodexFailover('dc:paired', 'claude-429');
 
-    // Global failover applies to ALL channels
+    // Global failover applies to owner routing for all channels.
     expect(getGlobalFailoverInfo().active).toBe(true);
     expect(getEffectiveChannelLease('dc:paired')).toMatchObject({
       chat_jid: 'dc:paired',
@@ -48,10 +48,38 @@ describe('service-routing global failover', () => {
       reason: 'claude-429',
       explicit: true,
     });
-    // Any other channel is also affected
+    // Unpaired channels should not gain a reviewer during failover.
     expect(getEffectiveChannelLease('dc:other')).toMatchObject({
       owner_service_id: 'codex-review',
-      reviewer_service_id: 'codex-main',
+      reviewer_service_id: null,
+      explicit: true,
+    });
+  });
+
+  it('keeps explicit single rooms unpaired during global failover', () => {
+    _setRegisteredGroupForTests('dc:single', {
+      name: 'Single Room',
+      folder: 'single-room',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    _setRegisteredGroupForTests('dc:single', {
+      name: 'Single Room',
+      folder: 'single-room',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+    setExplicitRoomMode('dc:single', 'single');
+
+    activateCodexFailover('dc:single', 'claude-session-failure');
+
+    expect(getEffectiveChannelLease('dc:single')).toMatchObject({
+      chat_jid: 'dc:single',
+      owner_service_id: 'codex-review',
+      reviewer_service_id: null,
+      reason: 'claude-session-failure',
       explicit: true,
     });
   });

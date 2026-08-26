@@ -1122,7 +1122,7 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(outputs).toEqual(['fresh Claude retry success']);
   });
 
-  it('returns error when the fresh Claude retry also hits the same retryable thinking 400', async () => {
+  it('hands off when the fresh Claude retry also hits the same retryable thinking 400', async () => {
     const outputs: string[] = [];
     const deps = makeDeps();
 
@@ -1166,13 +1166,26 @@ describe('runAgentForGroup Claude rotation', () => {
       },
     });
 
-    expect(result).toBe('error');
+    expect(result).toBe('success');
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
     expect(deps.clearSession).toHaveBeenCalledTimes(2);
     expect(outputs).toEqual([]);
+    expect(serviceRouting.activateCodexFailover).toHaveBeenCalledWith(
+      'group@test',
+      'claude-session-failure',
+    );
+    expect(db.createServiceHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_jid: 'group@test',
+        target_service_id: 'codex-review',
+        target_agent_type: 'codex',
+        reason: 'claude-session-failure',
+        intended_role: 'owner',
+      }),
+    );
   });
 
-  it('returns error after all Claude accounts are usage-exhausted', async () => {
+  it('hands off after all Claude accounts are usage-exhausted', async () => {
     const outputs: string[] = [];
 
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
@@ -1238,6 +1251,66 @@ describe('runAgentForGroup Claude rotation', () => {
     );
   });
 
+  it('hands off an owner turn to codex even when the room has no reviewer lease', async () => {
+    const outputs: string[] = [];
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'claude',
+      reviewer_service_id: null,
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(1);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result:
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-single-owner-auth-expired',
+      startSeq: 10,
+      endSeq: 12,
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(outputs).toEqual([]);
+    expect(serviceRouting.activateCodexFailover).toHaveBeenCalledWith(
+      'group@test',
+      'claude-auth-expired',
+    );
+    expect(db.createServiceHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_jid: 'group@test',
+        target_service_id: 'codex-review',
+        target_agent_type: 'codex',
+        start_seq: 10,
+        end_seq: 12,
+        reason: 'claude-auth-expired',
+        intended_role: 'owner',
+      }),
+    );
+  });
+
   it('suppresses a usage-exhausted banner even when Claude already emitted progress text', async () => {
     const outputs: string[] = [];
 
@@ -1272,9 +1345,21 @@ describe('runAgentForGroup Claude rotation', () => {
       },
     });
 
-    expect(result).toBe('error');
+    expect(result).toBe('success');
     expect(outputs).toEqual(['대화 요약 중...']);
-    expect(db.createServiceHandoff).not.toHaveBeenCalled();
+    expect(serviceRouting.activateCodexFailover).toHaveBeenCalledWith(
+      'group@test',
+      'claude-usage-exhausted',
+    );
+    expect(db.createServiceHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_jid: 'group@test',
+        target_service_id: 'codex-review',
+        target_agent_type: 'codex',
+        reason: 'claude-usage-exhausted',
+        intended_role: 'owner',
+      }),
+    );
   });
 
   it('treats IPC-delivered reviewer output as visible output for success-null-result completion', async () => {
