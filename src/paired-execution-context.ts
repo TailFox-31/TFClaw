@@ -162,7 +162,7 @@ function ensurePairedProject(
 // ensureActiveTask
 // ---------------------------------------------------------------------------
 
-function ensureActiveTask(
+export function ensureActivePairedTask(
   group: RegisteredGroup,
   chatJid: string,
   roomRoleContext: RoomRoleContext,
@@ -249,7 +249,7 @@ export function preparePairedExecutionContext(args: {
     return undefined;
   }
 
-  const task = ensureActiveTask(
+  const task = ensureActivePairedTask(
     group,
     chatJid,
     roomRoleContext,

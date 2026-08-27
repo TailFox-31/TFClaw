@@ -32,6 +32,7 @@ vi.mock('./config.js', () => ({
 }));
 
 vi.mock('./paired-execution-context.js', () => ({
+  ensureActivePairedTask: vi.fn(() => undefined),
   preparePairedExecutionContext: vi.fn(() => undefined),
   completePairedExecutionContext: vi.fn(),
 }));
@@ -3501,6 +3502,136 @@ describe('createMessageRuntime', () => {
     });
 
     expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates a fresh owner task before carrying over escalated reviewer context', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const freshTask = {
+      id: 'task-created-before-prompt',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active' as const,
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-08-27T00:22:22.225Z',
+      updated_at: '2026-08-27T00:22:22.225Z',
+    };
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: chatJid,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(undefined);
+    vi.mocked(pairedExecutionContext.ensureActivePairedTask).mockReturnValue(
+      freshTask,
+    );
+    vi.mocked(db.getPairedTaskById).mockReturnValue(freshTask);
+    vi.mocked(db.getLatestCompletedEscalatedPairedTaskForChat).mockReturnValue({
+      ...freshTask,
+      id: 'task-prior-needs-context',
+      status: 'completed',
+      completion_reason: 'escalated',
+      round_trip_count: 1,
+      created_at: '2026-08-27T00:18:04.000Z',
+      updated_at: '2026-08-27T00:20:12.073Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockImplementation((taskId: string) =>
+      taskId === 'task-prior-needs-context'
+        ? [
+            {
+              id: 1,
+              task_id: taskId,
+              turn_number: 2,
+              role: 'reviewer',
+              output_text:
+                'NEEDS_CONTEXT 실제 run.bat diff와 검증 출력을 제공해 주세요.',
+              created_at: '2026-08-27T00:20:12.073Z',
+            },
+          ]
+        : [],
+    );
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-followup',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'needs_context인데 왜 응답안해줘',
+        timestamp: '2026-08-27T00:22:18.000Z',
+        is_bot_message: false,
+      },
+    ] as any);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('needs_context인데 왜 응답안해줘');
+        expect(input.prompt).toContain(
+          'NEEDS_CONTEXT 실제 run.bat diff와 검증 출력을 제공해 주세요.',
+        );
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE reviewer 요청을 확인했습니다.',
+          newSessionId: 'session-owner-no-open-task-carryover',
+        });
+        return {
+          status: 'success',
+          result: 'DONE reviewer 요청을 확인했습니다.',
+          newSessionId: 'session-owner-no-open-task-carryover',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-no-open-task-carryover',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(pairedExecutionContext.ensureActivePairedTask).toHaveBeenCalledWith(
+      group,
+      chatJid,
+      expect.objectContaining({ role: 'owner' }),
+      true,
+    );
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
   });
 

@@ -51,6 +51,8 @@ import {
 import { buildArbiterContextPrompt } from './arbiter-context.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
+import { ensureActivePairedTask } from './paired-execution-context.js';
+import { buildRoomRoleContext } from './room-role-context.js';
 import {
   extractSessionCommand,
   handleSessionCommand,
@@ -1213,9 +1215,27 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       // Determine role BEFORE advancing cursor — paired rooms use
       // separate cursors for owner and reviewer so neither misses
       // the other's messages.
-      const pendingTaskForChannel = hasReviewerLease(chatJid)
+      const isPairedRoom = hasReviewerLease(chatJid);
+      const hasHumanMsg = !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
+      let pendingTaskForChannel = isPairedRoom
         ? getLatestOpenPairedTaskForChat(chatJid)
         : null;
+      if (!pendingTaskForChannel && isPairedRoom && hasHumanMsg) {
+        const lease = getEffectiveChannelLease(chatJid);
+        const ownerRoleContext = buildRoomRoleContext(
+          lease,
+          lease.owner_service_id,
+          'owner',
+        );
+        if (ownerRoleContext) {
+          pendingTaskForChannel = ensureActivePairedTask(
+            group,
+            chatJid,
+            ownerRoleContext,
+            true,
+          );
+        }
+      }
       const taskStatus = pendingTaskForChannel?.status;
       const turnChannel = resolveChannel(taskStatus);
       const cursorKey = resolveCursorKey(chatJid, taskStatus);
@@ -1263,7 +1283,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         'Dispatching queued messages to agent',
       );
 
-      const hasHumanMsg = !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
       const { deliverySucceeded, visiblePhase } = await executeTurn({
         group,
         prompt,
